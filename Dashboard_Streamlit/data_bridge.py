@@ -26,7 +26,7 @@ class DataBridge:
 
     def get_longterm_metrics(self) -> dict:
         """获取长线绩效指标"""
-        report_file = os.path.join(self.longterm_dir, "portfolio_report.html")
+        report_file = os.path.join(self.longterm_dir, "reports", "portfolio_report.html")
         if os.path.exists(report_file):
             return {
                 'report_exists': True,

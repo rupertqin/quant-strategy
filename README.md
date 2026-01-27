@@ -66,7 +66,8 @@ streamlit run app.py
 | 目录 | 输出文件 | 说明 |
 |------|----------|------|
 | Strategy_Value_LongTerm | output_weights.csv | 最优权重配置 |
-| Strategy_Value_LongTerm | portfolio_report.md | 绩效报告 |
+| Strategy_Value_LongTerm/reports | portfolio_report.md | 绩效报告 (Markdown) |
+| Strategy_Value_LongTerm/reports | portfolio_report.html | 绩效报告 (HTML) |
 | Strategy_Event_ShortTerm | daily_signals.json | 每日热点信号 |
 | Dashboard_Streamlit | - | 实时看板 |
 

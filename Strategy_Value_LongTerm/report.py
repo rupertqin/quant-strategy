@@ -25,9 +25,11 @@ class PortfolioReport:
 
     def __init__(self, config_path: str = "config.yaml"):
         self.config = self._load_config(config_path)
-        self.data_dir = os.path.join(os.path.dirname(config_path), "data")
-        self.output_dir = os.path.join(self.data_dir, "..")
-        self.charts_dir = os.path.join(self.output_dir, "charts")
+        self.base_dir = os.path.dirname(config_path)
+        self.data_dir = os.path.join(self.base_dir, "data")
+        self.reports_dir = os.path.join(self.base_dir, "reports")
+        self.charts_dir = os.path.join(self.reports_dir, "charts")
+        os.makedirs(self.reports_dir, exist_ok=True)
         os.makedirs(self.charts_dir, exist_ok=True)
 
     def _load_config(self, path: str) -> dict:
@@ -36,7 +38,7 @@ class PortfolioReport:
 
     def load_weights(self) -> pd.DataFrame:
         """加载优化后的权重"""
-        weights = pd.read_csv(os.path.join(self.output_dir, "output_weights.csv"))
+        weights = pd.read_csv(os.path.join(self.base_dir, "output_weights.csv"))
         # 过滤零权重
         weights = weights[weights['weight'] > 0.001]
         return weights.sort_values('weight', ascending=False)
@@ -218,7 +220,7 @@ class PortfolioReport:
 </html>
 """
 
-        html_path = os.path.join(self.output_dir, "portfolio_report.html")
+        html_path = os.path.join(self.reports_dir, "portfolio_report.html")
         with open(html_path, 'w', encoding='utf-8') as f:
             f.write(html)
 
@@ -251,7 +253,7 @@ class PortfolioReport:
 
         # 生成报告
         text_report = self.generate_text_report(weights, metrics)
-        text_path = os.path.join(self.output_dir, "portfolio_report.md")
+        text_path = os.path.join(self.reports_dir, "portfolio_report.md")
         with open(text_path, 'w', encoding='utf-8') as f:
             f.write(text_report)
         print(f"  - 文本报告: {text_path}")

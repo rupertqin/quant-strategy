@@ -47,7 +47,7 @@ streamlit run app.py
 | 数据 | 来源 | 更新频率 |
 |------|------|----------|
 | 资产权重 | `../Strategy_Value_LongTerm/output_weights.csv` | 手动 |
-| 绩效指标 | `../Strategy_Value_LongTerm/portfolio_report.html` | 手动 |
+| 绩效指标 | `../Strategy_Value_LongTerm/reports/portfolio_report.html` | 手动 |
 | 短线信号 | `../Strategy_Event_ShortTerm/daily_signals.json` | 每日 |
 | 市场状态 | `../Strategy_Event_ShortTerm/market_regime.py` | 实时 |
 
