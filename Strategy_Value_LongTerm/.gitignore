@@ -19,11 +19,7 @@ reports/
 *.parquet
 *.db
 
-# Output files
-output_weights.csv
-portfolio_report.md
-daily_signals.json
-sector_heat_history.csv
+.claude/
 
 # OS
 .DS_Store

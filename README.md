@@ -1,4 +1,4 @@
-# Quant Strategies - 量化交易系统
+# Quant Strategy - 量化交易系统
 
 模块化量化交易系统，长短策略结合：
 
@@ -9,7 +9,7 @@
 ## 项目结构
 
 ```
-quant-strategies/
+quant-Strategy/
 ├── README.md                      # 主说明文档
 ├── Strategy_Value_LongTerm/       # 长线策略 (战略配置)
 ├── Strategy_Event_ShortTerm/      # 短线策略 (战术扫描)
@@ -20,11 +20,11 @@ quant-strategies/
 
 **上帝的归上帝，凯撒的归凯撒**
 
-| 组件 | 职责 | 技术栈 |
-|------|------|--------|
+| 组件     | 职责                            | 技术栈               |
+| -------- | ------------------------------- | -------------------- |
 | 长线策略 | 均值-方差优化，计算最优资产配置 | scipy, numpy, pandas |
-| 短线策略 | 涨停板分析，板块热度扫描 | akshare, pandas |
-| 看板 | 整合展示，信号汇总 | streamlit, plotly |
+| 短线策略 | 涨停板分析，板块热度扫描        | akshare, pandas      |
+| 看板     | 整合展示，信号汇总              | streamlit, plotly    |
 
 ## 快速开始
 
@@ -44,18 +44,21 @@ pip install streamlit plotly
 ### 2. 运行策略
 
 **长线优化 (每月/季度运行)**
+
 ```bash
 cd Strategy_Value_LongTerm
 python run_optimization.py
 ```
 
 **短线扫描 (每日收盘后运行)**
+
 ```bash
 cd Strategy_Event_ShortTerm
 python run_scanner.py
 ```
 
 **启动看板**
+
 ```bash
 cd Dashboard_Streamlit
 streamlit run app.py
@@ -63,13 +66,13 @@ streamlit run app.py
 
 ## 输出文件
 
-| 目录 | 输出文件 | 说明 |
-|------|----------|------|
-| Strategy_Value_LongTerm | output_weights.csv | 最优权重配置 |
-| Strategy_Value_LongTerm/reports | portfolio_report.md | 绩效报告 (Markdown) |
-| Strategy_Value_LongTerm/reports | portfolio_report.html | 绩效报告 (HTML) |
-| Strategy_Event_ShortTerm | daily_signals.json | 每日热点信号 |
-| Dashboard_Streamlit | - | 实时看板 |
+| 目录                            | 输出文件              | 说明                |
+| ------------------------------- | --------------------- | ------------------- |
+| Strategy_Value_LongTerm         | output_weights.csv    | 最优权重配置        |
+| Strategy_Value_LongTerm/reports | portfolio_report.md   | 绩效报告 (Markdown) |
+| Strategy_Value_LongTerm/reports | portfolio_report.html | 绩效报告 (HTML)     |
+| Strategy_Event_ShortTerm        | daily_signals.json    | 每日热点信号        |
+| Dashboard_Streamlit             | -                     | 实时看板            |
 
 ## 注意事项
 
