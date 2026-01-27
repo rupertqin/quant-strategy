@@ -1,0 +1,22 @@
+# 短线事件驱动配置
+# 策略参数
+event_params:
+  min_zt_count: 5      # 最小涨停家数触发热点板块
+  lookback_days: 20    # 回看历史天数
+  min_industry_stocks: 10  # 行业最小股票数量
+
+# 数据缓存
+cache:
+  dir: "cache"
+  expire_hours: 4
+
+# 输出配置
+output:
+  signals_file: "daily_signals.json"
+  history_file: "sector_heat_history.csv"
+
+# 分析参数
+analysis:
+  correlation_window: 10   # 相关性计算窗口
+  win_rate_threshold: 0.6  # 胜率阈值
+  avg_return_threshold: 0.005  # 平均收益阈值

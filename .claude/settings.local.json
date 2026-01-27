@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Users/rupert/miniconda3/bin/python:*)",
+      "Bash(/Users/rupert/miniconda3/bin/pip install baostock -q)",
+      "Bash(python:*)",
+      "Bash(tree:*)",
+      "Bash(pkill:*)",
+      "Bash(streamlit run:*)"
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+# 长线配置参数
+# 策略参数
+risk_aversion: 0.05  # 风险厌恶系数
+target_return: null  # 目标收益 (null = 最大化夏普)
+constraints:
+  max_weight: 0.20   # 单只股票最大权重
+  min_weight: 0.02   # 单只股票最小权重
+  sector_limits:     # 行业限制
+    银行: 0.25
+    消费: 0.25
+    科技: 0.30
+
+# 回测参数
+benchmark: "000300.SH"  # 沪深300
+lookback_period: 252    # 回看天数 (交易日)
+rebalance_freq: "Q"     # 再平衡频率: M/月, Q/季
+
+# 数据源
+data_source:
+  stock_list:
+    - "600519.SH"  # 茅台
+    - "601398.SH"  # 工商银行
+    - "600036.SH"  # 招商银行
+    - "000001.SH"  # 上证50ETF
+    - "510300.SH"  # 沪深300ETF
