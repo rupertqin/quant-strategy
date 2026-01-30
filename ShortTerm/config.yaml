@@ -10,10 +10,12 @@ cache:
   dir: "cache"
   expire_hours: 4
 
-# 输出配置
+# 输出配置 (统一到 storage/outputs)
 output:
-  signals_file: "daily_signals.json"
-  history_file: "sector_heat_history.csv"
+  signals_file: "../storage/outputs/shortterm/signals/daily_signals.json"
+  history_file: "../storage/outputs/shortterm/history/sector_heat_history.csv"
+  database_file: "../storage/outputs/shortterm/database/signals.db"
+  charts_dir: "../storage/outputs/shortterm/charts"
 
 # 分析参数
 analysis:

@@ -1,26 +1,60 @@
 """
 涨停板扫描器
 每日收盘后扫描全市场涨停板，分析板块热度
+使用 DataHub 统一数据管理
 """
+
+import os
+import sys
+from pathlib import Path
+
+# 添加父目录到路径以便导入 DataHub
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import akshare as ak
 import pandas as pd
 import numpy as np
 import json
-import os
 from datetime import datetime, timedelta
 from collections import defaultdict
 import warnings
+import logging
+
 warnings.filterwarnings('ignore')
+logger = logging.getLogger(__name__)
+
+# 尝试导入 DataHub
+try:
+    from DataHub.services.data_service import DataService
+    DATAHUB_AVAILABLE = True
+except ImportError:
+    DATAHUB_AVAILABLE = False
 
 
 class LimitUpScanner:
     """涨停板扫描器"""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", use_datahub: bool = True):
+        self.config_path = config_path
         self.config = self._load_config(config_path)
+        self.base_dir = os.path.dirname(config_path)
         self.cache_dir = self.config['cache']['dir']
+        if not os.path.isabs(self.cache_dir):
+            self.cache_dir = os.path.join(self.base_dir, self.cache_dir)
         os.makedirs(self.cache_dir, exist_ok=True)
+
+        # DataHub 集成
+        self.use_datahub = use_datahub and DATAHUB_AVAILABLE
+        if self.use_datahub:
+            try:
+                self.datahub_service = DataService()
+                logger.info("LimitUpScanner initialized with DataHub support")
+            except Exception as e:
+                logger.warning(f"DataHub initialization failed: {e}, using local mode")
+                self.use_datahub = False
+                self.datahub_service = None
+        else:
+            self.datahub_service = None
 
     def _load_config(self, path: str) -> dict:
         import yaml
@@ -40,17 +74,38 @@ class LimitUpScanner:
         if date is None:
             date = datetime.now().strftime('%Y%m%d')
 
+        # 优先从 DataHub 获取
+        if self.use_datahub and self.datahub_service:
+            try:
+                df = self.datahub_service.get_zt_pool(date)
+                if not df.empty:
+                    logger.info(f"Loaded ZT pool from DataHub for {date}")
+                    return df
+            except Exception as e:
+                logger.warning(f"DataHub unavailable: {e}")
+
+        # 回退到本地缓存
         cache_file = os.path.join(self.cache_dir, f"zt_pool_{date}.csv")
 
         # 尝试从缓存读取
         if os.path.exists(cache_file):
             df = pd.read_csv(cache_file)
-            return df
+            if not df.empty:
+                return df
 
+        # 从网络获取
         try:
             # AkShare 接口获取涨停池
             df = ak.stock_zt_pool_em(date=date)
             df.to_csv(cache_file, index=False, encoding='utf-8-sig')
+
+            # 同时保存到 DataHub
+            if self.use_datahub and self.datahub_service:
+                try:
+                    self.datahub_service.storage.save_zt_pool(df, date)
+                except Exception as e:
+                    logger.warning(f"Failed to save ZT pool to DataHub: {e}")
+
             return df
         except Exception as e:
             print(f"获取 {date} 涨停数据失败: {e}")
@@ -214,6 +269,9 @@ class LimitUpScanner:
         }
 
         output_file = self.config['output']['signals_file']
+        if not os.path.isabs(output_file):
+            output_file = os.path.join(self.base_dir, output_file)
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
@@ -224,6 +282,9 @@ class LimitUpScanner:
     def save_to_history(self, heat: pd.DataFrame):
         """保存板块热度历史数据"""
         history_file = self.config['output']['history_file']
+        if not os.path.isabs(history_file):
+            history_file = os.path.join(self.base_dir, history_file)
+        os.makedirs(os.path.dirname(history_file), exist_ok=True)
 
         if os.path.exists(history_file):
             history = pd.read_csv(history_file)

@@ -1,17 +1,26 @@
 """
 数据更新模块
 下载并清洗股票数据，用于长线组合优化
+使用 DataHub 统一数据管理
 """
+
+import os
+import sys
+from pathlib import Path
+
+# 添加父目录到路径以便导入 DataHub
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import akshare as ak
 import baostock as bs  # 备用数据源
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import os
 import time
 import yaml
 from scipy import stats
+
+from DataHub.services.data_service import DataService
 
 # 尝试导入可选库
 try:
@@ -171,10 +180,24 @@ class TrendAnalyzer:
 class DataUpdater:
     """股票数据更新器"""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", use_datahub: bool = True):
         self.config = self._load_config(config_path)
         self.data_dir = os.path.join(os.path.dirname(config_path), "data")
         os.makedirs(self.data_dir, exist_ok=True)
+
+        # 初始化 DataHub
+        self.use_datahub = use_datahub
+        if self.use_datahub:
+            try:
+                self.datahub = DataService()
+                print("DataUpdater initialized with DataHub support")
+            except Exception as e:
+                print(f"DataHub initialization failed: {e}, using local mode")
+                self.use_datahub = False
+                self.datahub = None
+        else:
+            self.datahub = None
+
         # 初始化 baostock
         bs.login()
 
@@ -286,6 +309,19 @@ class DataUpdater:
         下载所有配置中的股票数据
         返回合并的收盘价序列
         """
+        # 如果启用 DataHub，使用 DataHub 获取数据
+        if self.use_datahub and self.datahub:
+            print("使用 DataHub 获取价格数据...")
+            prices = self.datahub.get_prices(use_cache=False)
+            if not prices.empty:
+                # 保存到本地目录
+                prices.to_csv(os.path.join(self.data_dir, "prices.csv"))
+                print(f"数据已保存至 {self.data_dir}/prices.csv")
+                return prices
+            else:
+                print("DataHub 获取数据为空，回退到本地下载")
+
+        # 本地下载
         price_data = {}
         symbols = self.config['data_source']['stock_list']
 
@@ -304,7 +340,10 @@ class DataUpdater:
             # 兼容中文和英文列名
             close_col = '收盘' if '收盘' in df.columns else 'close'
             if close_col in df.columns:
-                price_data[symbol] = df[close_col]
+                # 统一转换为 datetime，防止混合索引类型导致 DataFrame 创建失败
+                series = df[close_col].copy()
+                series.index = pd.to_datetime(series.index)
+                price_data[symbol] = series
                 print(f"  成功获取 {len(df)} 条数据")
             else:
                 print(f"  无收盘价列，可用列: {list(df.columns)}")
@@ -315,8 +354,6 @@ class DataUpdater:
         if prices.empty:
             print("警告: 未获取到任何数据")
             return prices
-
-        prices.index = pd.to_datetime(prices.index)
 
         # 保存
         prices.to_csv(os.path.join(self.data_dir, "prices.csv"))
@@ -334,6 +371,11 @@ class DataUpdater:
 
         returns = prices.pct_change().dropna()
         returns.to_csv(os.path.join(self.data_dir, "returns.csv"))
+
+        # 如果启用 DataHub，同步到 DataHub
+        if self.use_datahub and self.datahub and not returns.empty:
+            self.datahub.storage.save_returns(returns)
+
         return returns
 
     def get_risk_free_rate(self) -> float:

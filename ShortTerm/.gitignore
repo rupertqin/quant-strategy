@@ -11,16 +11,6 @@ ENV/
 dist/
 build/
 
-# Data files
-data/
-cache/
-reports/
-*.csv
-*.parquet
-*.db
-
-.claude/
-
 # OS
 .DS_Store
 Thumbs.db

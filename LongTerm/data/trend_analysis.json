@@ -1,0 +1,142 @@
+{
+  "600519.SH": {
+    "status": "WATCH_LIST",
+    "value_score": 1,
+    "trend_score": 0.3333333333333333,
+    "details": {
+      "ma_price": 1401.0,
+      "ma_250": 1436.46,
+      "ma_ok": 0,
+      "rsrs_zscore": 0.13,
+      "rsrs_ok": 0,
+      "llt_ok": 1
+    },
+    "pe_percentile": 0.3
+  },
+  "601398.SH": {
+    "status": "WATCH_LIST",
+    "value_score": 1,
+    "trend_score": 0.3333333333333333,
+    "details": {
+      "ma_price": 7.25,
+      "ma_250": 7.24,
+      "ma_ok": 1,
+      "rsrs_zscore": -0.5,
+      "rsrs_ok": 0,
+      "llt_ok": 0
+    },
+    "pe_percentile": 0.3
+  },
+  "513310.SH": {
+    "status": "WAIT",
+    "value_score": 1,
+    "trend_score": 0.0,
+    "details": {
+      "ma_price": 3.74,
+      "ma_250": NaN,
+      "ma_ok": 0,
+      "rsrs_zscore": NaN,
+      "rsrs_ok": 0,
+      "llt_ok": 0
+    },
+    "pe_percentile": 0.3
+  },
+  "588080.SH": {
+    "status": "WAIT",
+    "value_score": 1,
+    "trend_score": 0.0,
+    "details": {
+      "ma_price": 1.54,
+      "ma_250": NaN,
+      "ma_ok": 0,
+      "rsrs_zscore": NaN,
+      "rsrs_ok": 0,
+      "llt_ok": 0
+    },
+    "pe_percentile": 0.3
+  },
+  "510720.SH": {
+    "status": "WAIT",
+    "value_score": 1,
+    "trend_score": 0.0,
+    "details": {
+      "ma_price": 0.99,
+      "ma_250": NaN,
+      "ma_ok": 0,
+      "rsrs_zscore": NaN,
+      "rsrs_ok": 0,
+      "llt_ok": 0
+    },
+    "pe_percentile": 0.3
+  },
+  "510050.SH": {
+    "status": "WAIT",
+    "value_score": 1,
+    "trend_score": 0.0,
+    "details": {
+      "ma_price": 3.15,
+      "ma_250": NaN,
+      "ma_ok": 0,
+      "rsrs_zscore": NaN,
+      "rsrs_ok": 0,
+      "llt_ok": 0
+    },
+    "pe_percentile": 0.3
+  },
+  "510300.SH": {
+    "status": "WAIT",
+    "value_score": 1,
+    "trend_score": 0.0,
+    "details": {
+      "ma_price": 4.71,
+      "ma_250": NaN,
+      "ma_ok": 0,
+      "rsrs_zscore": NaN,
+      "rsrs_ok": 0,
+      "llt_ok": 0
+    },
+    "pe_percentile": 0.3
+  },
+  "000858.SZ": {
+    "status": "STRONG_BUY",
+    "value_score": 1,
+    "trend_score": 0.6666666666666666,
+    "details": {
+      "ma_price": 105.0,
+      "ma_250": 118.95,
+      "ma_ok": 0,
+      "rsrs_zscore": 0.9,
+      "rsrs_ok": 1,
+      "llt_ok": 1
+    },
+    "pe_percentile": 0.3
+  },
+  "002563.SZ": {
+    "status": "WATCH_LIST",
+    "value_score": 1,
+    "trend_score": 0.3333333333333333,
+    "details": {
+      "ma_price": 5.54,
+      "ma_250": 5.58,
+      "ma_ok": 0,
+      "rsrs_zscore": 0.38,
+      "rsrs_ok": 0,
+      "llt_ok": 1
+    },
+    "pe_percentile": 0.3
+  },
+  "600438.SH": {
+    "status": "WAIT",
+    "value_score": 1,
+    "trend_score": 0.0,
+    "details": {
+      "ma_price": 18.2,
+      "ma_250": 20.42,
+      "ma_ok": 0,
+      "rsrs_zscore": -0.87,
+      "rsrs_ok": 0,
+      "llt_ok": 0
+    },
+    "pe_percentile": 0.3
+  }
+}

@@ -5,14 +5,30 @@
 - Parquet 格式存储行情数据 (prices, returns)
 - SQLite 存储信号和元数据
 - 向后兼容 CSV 读取
+- DataHub 集成
 """
 
 import os
+import sys
 import json
+import logging
 import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+from pathlib import Path
 import pandas as pd
+
+# 添加父目录到路径以便导入 DataHub
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+logger = logging.getLogger(__name__)
+
+# 尝试导入 DataHub
+try:
+    from DataHub.services.data_service import DataService
+    DATAHUB_AVAILABLE = True
+except ImportError:
+    DATAHUB_AVAILABLE = False
 
 try:
     import pyarrow as pa
@@ -25,12 +41,13 @@ except ImportError:
 class DataManager:
     """统一数据管理器"""
 
-    def __init__(self, base_dir: Optional[str] = None):
+    def __init__(self, base_dir: Optional[str] = None, use_datahub: bool = True):
         """
         初始化 DataManager
 
         Args:
             base_dir: 基础目录，默认为当前文件所在目录
+            use_datahub: 是否使用 DataHub (默认 True)
         """
         if base_dir is None:
             base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +68,15 @@ class DataManager:
             self.db_path = os.path.join(base_dir, "signals.db")
         else:
             self.db_path = os.path.join(shortterm_dir, "Strategy_Event_ShortTerm", "signals.db")
+
+        # 初始化 DataHub
+        self.use_datahub = use_datahub and DATAHUB_AVAILABLE
+        if self.use_datahub:
+            self.datahub_service = DataService()
+            logger.info("DataManager initialized with DataHub support")
+        else:
+            self.datahub_service = None
+            logger.info("DataManager initialized without DataHub (local mode)")
 
         self._init_db()
 
@@ -131,17 +157,37 @@ class DataManager:
             return False
 
     def get_prices(self, start_date: Optional[str] = None,
-                   end_date: Optional[str] = None) -> pd.DataFrame:
+                   end_date: Optional[str] = None,
+                   use_datahub: bool = None) -> pd.DataFrame:
         """
         读取价格数据
 
         Args:
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
+            use_datahub: 是否使用 DataHub (None=使用默认设置)
 
         Returns:
             pd.DataFrame: 价格数据
         """
+        # 优先使用 DataHub
+        if use_datahub is None:
+            use_datahub = self.use_datahub
+
+        if use_datahub and self.datahub_service:
+            try:
+                df = self.datahub_service.get_prices(
+                    start_date=start_date,
+                    end_date=end_date,
+                    use_cache=True
+                )
+                if not df.empty:
+                    logger.info(f"Loaded prices from DataHub: {len(df)} rows")
+                    return df
+            except Exception as e:
+                logger.warning(f"DataHub unavailable: {e}")
+
+        # 回退到本地文件
         parquet_path = self._get_parquet_path("prices")
         csv_path = os.path.join(self.data_dir, "prices.csv")
 
@@ -193,17 +239,37 @@ class DataManager:
             return False
 
     def get_returns(self, start_date: Optional[str] = None,
-                    end_date: Optional[str] = None) -> pd.DataFrame:
+                    end_date: Optional[str] = None,
+                    use_datahub: bool = None) -> pd.DataFrame:
         """
         读取收益率数据
 
         Args:
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
+            use_datahub: 是否使用 DataHub (None=使用默认设置)
 
         Returns:
             pd.DataFrame: 收益率数据
         """
+        # 优先使用 DataHub
+        if use_datahub is None:
+            use_datahub = self.use_datahub
+
+        if use_datahub and self.datahub_service:
+            try:
+                df = self.datahub_service.get_returns(
+                    start_date=start_date,
+                    end_date=end_date,
+                    use_cache=True
+                )
+                if not df.empty:
+                    logger.info(f"Loaded returns from DataHub: {len(df)} rows")
+                    return df
+            except Exception as e:
+                logger.warning(f"DataHub unavailable: {e}")
+
+        # 回退到本地文件
         parquet_path = self._get_parquet_path("returns")
         csv_path = os.path.join(self.data_dir, "returns.csv")
 

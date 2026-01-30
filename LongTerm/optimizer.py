@@ -19,8 +19,10 @@ class PortfolioOptimizer:
     """组合优化器"""
 
     def __init__(self, config_path: str = "config.yaml"):
+        self.config_path = config_path
         self.config = self._load_config(config_path)
-        self.data_dir = os.path.join(os.path.dirname(config_path), "data")
+        self.base_dir = os.path.dirname(config_path)
+        self.data_dir = os.path.join(self.base_dir, "data")
         self.updater = DataUpdater(config_path)
 
     def _load_config(self, path: str) -> dict:
@@ -190,8 +192,12 @@ class PortfolioOptimizer:
         returns_filtered = returns[filtered_symbols]
         weights = self.optimize_portfolio(returns_filtered)
 
-        # 保存结果
-        output_path = os.path.join(self.data_dir, "..", "output_weights.csv")
+        # 保存结果到 storage/outputs
+        output_config = self.config.get('output', {})
+        output_path = output_config.get('weights_file', '../storage/outputs/longterm/weights/output_weights.csv')
+        if not os.path.isabs(output_path):
+            output_path = os.path.join(os.path.dirname(self.config_path), output_path)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         weights.to_csv(output_path, index=False)
         print(f"    权重已保存至 {output_path}")
 

@@ -15,15 +15,17 @@ from report import PortfolioReport
 
 
 def main():
-    optimizer = PortfolioOptimizer()
+    # 使用当前目录下的 config.yaml
+    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    optimizer = PortfolioOptimizer(config_path=config_path)
     weights, metrics, _ = optimizer.run()
 
     # 生成报告
-    report = PortfolioReport()
+    report = PortfolioReport(config_path=config_path)
     report.run(metrics)
 
     print("\n下一步操作:")
-    print("1. 手动检查 output_weights.csv")
+    print("1. 手动检查 storage/outputs/longterm/weights/output_weights.csv")
     print("2. 根据推荐调整持仓")
     print("3. 运行 Dashboard 看板查看结果")
 

@@ -1,0 +1,11 @@
+# DataHub Data Refresh Crontab Configuration
+# Install with: crontab /Users/rupert/code/quant-strategy/DataHub/crontab.txt
+#
+# 每天 16:30 更新价格数据 (周一至周五)
+30 16 * * 1-5 cd /Users/rupert/code/quant-strategy && python DataHub/scripts/refresh_data.py prices >> storage/logs/refresh_prices.log 2>&1
+#
+# 每天 15:15 更新涨停池 (周一至周五)
+15 15 * * 1-5 cd /Users/rupert/code/quant-strategy && python DataHub/scripts/refresh_data.py zt_pool >> storage/logs/refresh_zt_pool.log 2>&1
+#
+# 每天 17:00 清理旧数据 (周日)
+0 17 * * 0 cd /Users/rupert/code/quant-strategy && python DataHub/scripts/refresh_data.py cleanup --days 90 >> storage/logs/cleanup.log 2>&1

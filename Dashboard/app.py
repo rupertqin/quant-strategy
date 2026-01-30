@@ -72,9 +72,9 @@ def get_base_dir():
 
 
 def load_longterm_data():
-    """加载长线数据"""
+    """加载长线数据 - 从 storage/outputs 读取"""
     base = get_base_dir()
-    weights_file = os.path.join(base, "Strategy_Value_LongTerm", "output_weights.csv")
+    weights_file = os.path.join(base, "storage", "outputs", "longterm", "weights", "output_weights.csv")
 
     if os.path.exists(weights_file):
         return pd.read_csv(weights_file)
@@ -82,9 +82,9 @@ def load_longterm_data():
 
 
 def load_shortterm_signals():
-    """加载短线信号"""
+    """加载短线信号 - 从 storage/outputs 读取"""
     base = get_base_dir()
-    signals_file = os.path.join(base, "Strategy_Event_ShortTerm", "daily_signals.json")
+    signals_file = os.path.join(base, "storage", "outputs", "shortterm", "signals", "daily_signals.json")
 
     if os.path.exists(signals_file):
         with open(signals_file, 'r', encoding='utf-8') as f:
@@ -96,7 +96,7 @@ def get_market_regime():
     """获取市场状态"""
     try:
         base = get_base_dir()
-        sys.path.insert(0, os.path.join(base, "Strategy_Event_ShortTerm"))
+        sys.path.insert(0, os.path.join(base, "ShortTerm"))
         from market_regime import MarketRegime
         regime = MarketRegime()
         return regime.get_market_status()
@@ -107,6 +107,10 @@ def get_market_regime():
             'reasons': [str(e)],
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
+    finally:
+        shortterm_dir = os.path.join(base, "ShortTerm")
+        if shortterm_dir in sys.path:
+            sys.path.remove(shortterm_dir)
 
 
 # ============= 主界面 =============
@@ -176,7 +180,7 @@ with col_left:
             width='stretch'
         )
     else:
-        st.info("长线策略未运行，请先运行 Strategy_Value_LongTerm/run_optimization.py")
+        st.info("长线策略未运行，请先运行 LongTerm/run_optimization.py")
 
 # ========== 右侧: 短线雷达 ==========
 with col_right:
@@ -210,7 +214,7 @@ with col_right:
 
         st.caption(f"生成时间: {signals.get('generated_at', 'N/A')}")
     else:
-        st.info("短线策略未运行，请先运行 Strategy_Event_ShortTerm/run_scanner.py")
+        st.info("短线策略未运行，请先运行 ShortTerm/run_scanner.py")
 
 st.divider()
 
@@ -224,7 +228,7 @@ with col1:
     multiplier = 1.0
     try:
         base = get_base_dir()
-        sys.path.insert(0, os.path.join(base, "Strategy_Event_ShortTerm"))
+        sys.path.insert(0, os.path.join(base, "ShortTerm"))
         from market_regime import MarketRegime
         multiplier = MarketRegime().get_position_multiplier()
     except:
@@ -245,7 +249,7 @@ with col2:
 
     try:
         base = get_base_dir()
-        sys.path.insert(0, os.path.join(base, "Strategy_Event_ShortTerm"))
+        sys.path.insert(0, os.path.join(base, "ShortTerm"))
         from market_regime import MarketRegime
         preferred = MarketRegime().get_sector_preference()
         st.write("推荐关注板块:")
@@ -253,6 +257,10 @@ with col2:
             st.markdown(f"<span class='hot-sector'>{sector}</span>", unsafe_allow_html=True)
     except:
         st.write("请运行短线策略获取板块推荐")
+    finally:
+        shortterm_dir = os.path.join(base, "ShortTerm")
+        if shortterm_dir in sys.path:
+            sys.path.remove(shortterm_dir)
 
 # ============= 侧边栏 =============
 with st.sidebar:
@@ -260,11 +268,11 @@ with st.sidebar:
 
     st.write("长线策略")
     if st.button("运行长线优化"):
-        st.info("请在终端运行: cd Strategy_Value_LongTerm && python run_optimization.py")
+        st.info("请在终端运行: cd LongTerm && python run_optimization.py")
 
     st.write("短线策略")
     if st.button("运行短线扫描"):
-        st.info("请在终端运行: cd Strategy_Event_ShortTerm && python run_scanner.py")
+        st.info("请在终端运行: cd ShortTerm && python run_scanner.py")
 
     st.write("刷新看板")
     if st.button("刷新"):
@@ -274,7 +282,8 @@ with st.sidebar:
 
     st.write("说明")
     st.caption("""
-    - 长线: Riskfolio 优化
+    - 长线: 均值-方差优化
     - 短线: 事件驱动分析
+    - 数据: storage/outputs/
     - 建议: 仅供参考，不构成投资建议
     """)

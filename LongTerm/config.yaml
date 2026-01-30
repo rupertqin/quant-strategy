@@ -23,6 +23,12 @@ benchmark: "000300.SH"  # 沪深300
 lookback_period: 252    # 回看天数 (交易日)
 rebalance_freq: "Q"     # 再平衡频率: M/月, Q/季
 
+# 输出配置
+output:
+  weights_file: "../storage/outputs/longterm/weights/output_weights.csv"
+  reports_dir: "../storage/outputs/longterm/reports"
+  charts_dir: "../storage/outputs/longterm/reports/charts"
+
 # 数据源
 data_source:
   stock_list:

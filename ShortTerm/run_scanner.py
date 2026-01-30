@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 主入口: 短线事件驱动扫描
-运行方式: python scanner.py
+运行方式: python run_scanner.py
 """
 
 import sys
@@ -15,6 +15,9 @@ from market_regime import MarketRegime
 
 
 def main():
+    # 使用当前目录下的 config.yaml
+    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+
     print("\n" + "=" * 60)
     print("短线雷达 - 每日扫描")
     print("=" * 60)
@@ -33,7 +36,7 @@ def main():
 
     # 2. 板块热度扫描
     print("\n[2/2] 扫描板块热度...")
-    scanner = LimitUpScanner()
+    scanner = LimitUpScanner(config_path=config_path)
     signals = scanner.generate_daily_signals()
 
     print("\n" + "=" * 60)

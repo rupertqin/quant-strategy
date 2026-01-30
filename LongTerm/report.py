@@ -29,11 +29,20 @@ class PortfolioReport:
     """组合报告生成器"""
 
     def __init__(self, config_path: str = "config.yaml"):
+        self.config_path = config_path
         self.config = self._load_config(config_path)
         self.base_dir = os.path.dirname(config_path)
         self.data_dir = os.path.join(self.base_dir, "data")
-        self.reports_dir = os.path.join(self.base_dir, "reports")
-        self.charts_dir = os.path.join(self.reports_dir, "charts")
+
+        # 从配置读取输出路径，默认到 storage
+        output_config = self.config.get('output', {})
+        self.reports_dir = output_config.get('reports_dir', '../storage/outputs/longterm/reports')
+        self.charts_dir = output_config.get('charts_dir', '../storage/outputs/longterm/reports/charts')
+        if not os.path.isabs(self.reports_dir):
+            self.reports_dir = os.path.join(self.base_dir, self.reports_dir)
+        if not os.path.isabs(self.charts_dir):
+            self.charts_dir = os.path.join(self.base_dir, self.charts_dir)
+
         os.makedirs(self.reports_dir, exist_ok=True)
         os.makedirs(self.charts_dir, exist_ok=True)
 
@@ -43,7 +52,11 @@ class PortfolioReport:
 
     def load_weights(self) -> pd.DataFrame:
         """加载优化后的权重"""
-        weights = pd.read_csv(os.path.join(self.base_dir, "output_weights.csv"))
+        output_config = self.config.get('output', {})
+        weights_file = output_config.get('weights_file', '../storage/outputs/longterm/weights/output_weights.csv')
+        if not os.path.isabs(weights_file):
+            weights_file = os.path.join(self.base_dir, weights_file)
+        weights = pd.read_csv(weights_file)
         # 过滤零权重
         weights = weights[weights['weight'] > 0.001]
         return weights.sort_values('weight', ascending=False)
