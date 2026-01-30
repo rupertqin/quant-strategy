@@ -1,4 +1,4 @@
-# Strategy_Value_LongTerm - 长线组合优化
+# LongTerm - 长线组合优化
 
 均值-方差优化模块，计算最优资产配置权重。
 
@@ -13,7 +13,7 @@
 ## 快速开始
 
 ```bash
-cd Strategy_Value_LongTerm
+cd LongTerm
 python run_optimization.py
 ```
 
@@ -37,6 +37,11 @@ benchmark: "000300.SH"       # 沪深300
 lookback_period: 252         # 回看天数 (交易日)
 rebalance_freq: "Q"          # 再平衡频率: M/月, Q/季
 
+# 输出配置
+output:
+  weights_file: "../storage/outputs/longterm/weights/output_weights.csv"
+  reports_dir: "../storage/outputs/longterm/reports"
+
 # 数据源
 data_source:
   stock_list:
@@ -58,11 +63,17 @@ data_source:
 
 ## 输出文件
 
-- `output_weights.csv` - 最优权重配置
-- `portfolio_report.md` - Markdown 格式报告
-- `portfolio_report.html` - HTML 格式报告 (带图表)
-- `data/prices.csv` - 原始价格数据
-- `data/returns.csv` - 收益率数据
+输出统一保存到 `storage/outputs/longterm/` 目录:
+
+| 子目录 | 文件 | 说明 |
+|--------|------|------|
+| `data/` | prices.csv | 处理后的价格数据 |
+| `data/` | returns.csv | 收益率数据 |
+| `data/` | trend_analysis.json | 趋势分析结果 |
+| `weights/` | output_weights.csv | 最优权重配置 |
+| `reports/` | portfolio_report.md | 绩效报告 (Markdown) |
+| `reports/` | portfolio_report.html | 绩效报告 (HTML) |
+| `reports/charts/` | *.png | 图表 |
 
 ## 优化目标
 

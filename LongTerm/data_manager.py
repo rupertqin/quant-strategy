@@ -62,12 +62,11 @@ class DataManager:
         os.makedirs(self.cache_dir, exist_ok=True)
         os.makedirs(self.metadata_dir, exist_ok=True)
 
-        # SQLite 数据库路径 (放在 ShortTerm 目录)
-        shortterm_dir = os.path.dirname(base_dir)
-        if "ShortTerm" in base_dir:
-            self.db_path = os.path.join(base_dir, "signals.db")
-        else:
-            self.db_path = os.path.join(shortterm_dir, "Strategy_Event_ShortTerm", "signals.db")
+        # SQLite 数据库路径 (统一到 storage/outputs)
+        self.db_path = os.path.join(
+            os.path.dirname(os.path.dirname(base_dir)),
+            "storage", "outputs", "shortterm", "database", "signals.db"
+        )
 
         # 初始化 DataHub
         self.use_datahub = use_datahub and DATAHUB_AVAILABLE

@@ -32,7 +32,13 @@ class PortfolioReport:
         self.config_path = config_path
         self.config = self._load_config(config_path)
         self.base_dir = os.path.dirname(config_path)
-        self.data_dir = os.path.join(self.base_dir, "data")
+
+        # 数据目录: 从配置读取，默认到 storage/processed
+        data_config = self.config.get('data_dir', '../storage/processed')
+        if os.path.isabs(data_config):
+            self.data_dir = data_config
+        else:
+            self.data_dir = os.path.join(self.base_dir, data_config)
 
         # 从配置读取输出路径，默认到 storage
         output_config = self.config.get('output', {})

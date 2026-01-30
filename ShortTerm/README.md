@@ -1,4 +1,4 @@
-# Strategy_Event_ShortTerm - 短线事件驱动
+# ShortTerm - 短线事件驱动
 
 涨停板分析模块，扫描板块热度，生成交易信号。
 
@@ -13,7 +13,7 @@
 ## 快速开始
 
 ```bash
-cd Strategy_Event_ShortTerm
+cd ShortTerm
 python run_scanner.py
 ```
 
@@ -33,8 +33,9 @@ cache:
 
 # 输出配置
 output:
-  signals_file: "daily_signals.json"
-  history_file: "sector_heat_history.csv"
+  signals_file: "../storage/outputs/shortterm/signals/daily_signals.json"
+  history_file: "../storage/outputs/shortterm/history/sector_heat_history.csv"
+  database_file: "../storage/outputs/shortterm/database/signals.db"
 
 # 分析参数
 analysis:
@@ -55,9 +56,15 @@ analysis:
 
 ## 输出文件
 
-- `daily_signals.json` - 每日热点信号
-- `sector_heat_history.csv` - 板块热度历史
-- `cache/zt_pool_*.csv` - 涨停池缓存
+输出统一保存到 `storage/outputs/shortterm/`:
+
+| 文件 | 路径 |
+|------|------|
+| 每日信号 | `signals/daily_signals.json` |
+| 热度历史 | `history/sector_heat_history.csv` |
+| 信号数据库 | `database/signals.db` |
+| 事件分析图表 | `charts/event_study_analysis.png` |
+| 涨停池缓存 | `cache/zt_pool/` |
 
 ## 信号规则
 

@@ -181,8 +181,16 @@ class DataUpdater:
     """股票数据更新器"""
 
     def __init__(self, config_path: str = "config.yaml", use_datahub: bool = True):
+        self.config_path = config_path
         self.config = self._load_config(config_path)
-        self.data_dir = os.path.join(os.path.dirname(config_path), "data")
+        self.base_dir = os.path.dirname(config_path)
+
+        # 数据目录: 从配置读取，默认到 storage/processed
+        data_config = self.config.get('data_dir', '../storage/processed')
+        if os.path.isabs(data_config):
+            self.data_dir = data_config
+        else:
+            self.data_dir = os.path.join(self.base_dir, data_config)
         os.makedirs(self.data_dir, exist_ok=True)
 
         # 初始化 DataHub

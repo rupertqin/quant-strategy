@@ -42,14 +42,14 @@ streamlit run app.py
 
 ## 数据来源
 
-看板数据来自以下文件:
+看板数据统一从 `storage/outputs/` 读取:
 
 | 数据 | 来源 | 更新频率 |
 |------|------|----------|
-| 资产权重 | `../Strategy_Value_LongTerm/output_weights.csv` | 手动 |
-| 绩效指标 | `../Strategy_Value_LongTerm/reports/portfolio_report.html` | 手动 |
-| 短线信号 | `../Strategy_Event_ShortTerm/daily_signals.json` | 每日 |
-| 市场状态 | `../Strategy_Event_ShortTerm/market_regime.py` | 实时 |
+| 资产权重 | `../storage/outputs/longterm/weights/output_weights.csv` | 手动 |
+| 绩效指标 | `../storage/outputs/longterm/reports/portfolio_report.html` | 手动 |
+| 短线信号 | `../storage/outputs/shortterm/signals/daily_signals.json` | 每日 |
+| 市场状态 | `../ShortTerm/market_regime.py` | 实时 |
 
 ## 模块说明
 

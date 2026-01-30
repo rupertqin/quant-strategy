@@ -20,8 +20,19 @@ class EventStudyBacktest:
 
     def __init__(self, config_path: str = "config.yaml"):
         self.config = self._load_config(config_path)
-        self.cache_dir = self.config['cache']['dir']
+        self.base_dir = os.path.dirname(config_path) if config_path else os.path.dirname(__file__)
+
+        # 缓存目录
+        cache_config = self.config.get('cache', {}).get('dir', 'cache')
+        self.cache_dir = cache_config if os.path.isabs(cache_config) else os.path.join(self.base_dir, cache_config)
         os.makedirs(self.cache_dir, exist_ok=True)
+
+        # 图表输出目录
+        output_config = self.config.get('output', {})
+        self.charts_dir = output_config.get('charts_dir', '../storage/outputs/shortterm/charts')
+        if not os.path.isabs(self.charts_dir):
+            self.charts_dir = os.path.join(self.base_dir, self.charts_dir)
+        os.makedirs(self.charts_dir, exist_ok=True)
 
     def _load_config(self, path: str) -> dict:
         import yaml
@@ -212,8 +223,10 @@ class EventStudyBacktest:
         ax4.set_title('Continuation Rate by ZT Threshold')
 
         plt.tight_layout()
-        plt.savefig('event_study_analysis.png', dpi=150)
+        chart_path = os.path.join(self.charts_dir, 'event_study_analysis.png')
+        plt.savefig(chart_path, dpi=150)
         plt.show()
+        print(f"图表已保存至: {chart_path}")
 
     def validate_strategy(self):
         """

@@ -54,21 +54,29 @@ quant-strategy/
 
 ```
 storage/
-├── raw/prices/prices.parquet          # 价格数据
-├── raw/zt_pool/zt_pool_YYYYMMDD.parquet  # 涨停池
-├── processed/returns/returns.parquet  # 收益率
-├── database/datahub.db                # SQLite 元数据
-└── outputs/                           # 策略输出 (统一管理)
+├── raw/                                    # 原始数据 (DataHub)
+│   ├── prices/prices.parquet              # 价格数据
+│   └── zt_pool/zt_pool_YYYYMMDD.parquet   # 涨停池
+├── database/
+│   └── datahub.db                         # SQLite 元数据
+└── outputs/                                # 策略输出 (统一管理)
     ├── longterm/
-    │   ├── weights/output_weights.csv     # 最优权重配置
-    │   └── reports/
-    │       ├── portfolio_report.md        # 绩效报告 (Markdown)
-    │       ├── portfolio_report.html      # 绩效报告 (HTML)
-    │       └── charts/*.png               # 图表
+    │   ├── data/                          # 处理数据
+    │   │   ├── prices.csv                # 价格数据
+    │   │   ├── returns.csv               # 收益率数据
+    │   │   └── trend_analysis.json       # 趋势分析
+    │   ├── weights/                       # 权重输出
+    │   │   └── output_weights.csv
+    │   └── reports/                       # 绩效报告
+    │       ├── portfolio_report.md
+    │       ├── portfolio_report.html
+    │       └── charts/*.png
     └── shortterm/
-        ├── signals/daily_signals.json     # 每日热点信号
-        ├── history/sector_heat_history.csv # 热度历史
-        └── database/signals.db            # 信号数据库
+        ├── cache/                         # 缓存
+        └── outputs/                       # 信号输出
+            ├── signals/daily_signals.json
+            ├── history/sector_heat_history.csv
+            └── database/signals.db
 ```
 
 ### 数据刷新

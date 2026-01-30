@@ -5,9 +5,9 @@ event_params:
   lookback_days: 20    # 回看历史天数
   min_industry_stocks: 10  # 行业最小股票数量
 
-# 数据缓存
+# 数据缓存 (统一到 storage/outputs)
 cache:
-  dir: "cache"
+  dir: "../storage/outputs/shortterm/cache"
   expire_hours: 4
 
 # 输出配置 (统一到 storage/outputs)

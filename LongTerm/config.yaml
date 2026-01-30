@@ -29,6 +29,9 @@ output:
   reports_dir: "../storage/outputs/longterm/reports"
   charts_dir: "../storage/outputs/longterm/reports/charts"
 
+# 数据目录
+data_dir: "../storage/outputs/longterm/data"
+
 # 数据源
 data_source:
   stock_list:

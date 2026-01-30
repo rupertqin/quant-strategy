@@ -41,8 +41,11 @@ class ShortTermDataManager:
         # 输出路径
         output_config = self.config.get('output', {})
         self.signals_file = output_config.get('signals_file', '../storage/outputs/shortterm/signals/daily_signals.json')
+        self.database_file = output_config.get('database_file', '../storage/outputs/shortterm/database/signals.db')
         if not os.path.isabs(self.signals_file):
             self.signals_file = os.path.join(self.base_dir, self.signals_file)
+        if not os.path.isabs(self.database_file):
+            self.database_file = os.path.join(self.base_dir, self.database_file)
 
         # 初始化 DataHub
         self.use_datahub = use_datahub and DATAHUB_AVAILABLE

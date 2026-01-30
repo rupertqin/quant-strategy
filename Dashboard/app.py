@@ -11,6 +11,7 @@ import json
 import os
 from datetime import datetime
 import sys
+import subprocess
 
 # 添加项目路径
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -111,6 +112,75 @@ def get_market_regime():
         shortterm_dir = os.path.join(base, "ShortTerm")
         if shortterm_dir in sys.path:
             sys.path.remove(shortterm_dir)
+
+
+def run_longterm_optimization():
+    """运行长线优化"""
+    base = get_base_dir()
+    longterm_dir = os.path.join(base, "LongTerm")
+    try:
+        result = subprocess.run(
+            [sys.executable, "run_optimization.py"],
+            cwd=longterm_dir,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        return {
+            'success': result.returncode == 0,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'stderr': '执行超时'}
+    except Exception as e:
+        return {'success': False, 'stderr': str(e)}
+
+
+def run_shortterm_scanner():
+    """运行短线扫描"""
+    base = get_base_dir()
+    shortterm_dir = os.path.join(base, "ShortTerm")
+    try:
+        result = subprocess.run(
+            [sys.executable, "run_scanner.py"],
+            cwd=shortterm_dir,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        return {
+            'success': result.returncode == 0,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'stderr': '执行超时'}
+    except Exception as e:
+        return {'success': False, 'stderr': str(e)}
+
+
+def refresh_data():
+    """刷新数据"""
+    base = get_base_dir()
+    datahub_dir = os.path.join(base, "DataHub")
+    try:
+        result = subprocess.run(
+            [sys.executable, "scripts/refresh_data.py", "prices"],
+            cwd=datahub_dir,
+            capture_output=True,
+            text=True,
+            timeout=180
+        )
+        return {
+            'success': result.returncode == 0,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'stderr': '执行超时'}
+    except Exception as e:
+        return {'success': False, 'stderr': str(e)}
 
 
 # ============= 主界面 =============
@@ -266,16 +336,46 @@ with col2:
 with st.sidebar:
     st.header("快捷操作")
 
+    # 长线策略
     st.write("长线策略")
-    if st.button("运行长线优化"):
-        st.info("请在终端运行: cd LongTerm && python run_optimization.py")
+    if st.button("运行长线优化", type="primary"):
+        with st.spinner("正在运行长线优化..."):
+            result = run_longterm_optimization()
+            if result['success']:
+                st.success("长线优化完成!")
+                st.rerun()
+            else:
+                st.error(f"运行失败: {result.get('stderr', '未知错误')}")
+                with st.expander("查看输出"):
+                    st.text(result.get('stdout', '') or result.get('stderr', ''))
 
+    # 短线策略
     st.write("短线策略")
-    if st.button("运行短线扫描"):
-        st.info("请在终端运行: cd ShortTerm && python run_scanner.py")
+    if st.button("运行短线扫描", type="primary"):
+        with st.spinner("正在运行短线扫描..."):
+            result = run_shortterm_scanner()
+            if result['success']:
+                st.success("短线扫描完成!")
+                st.rerun()
+            else:
+                st.error(f"运行失败: {result.get('stderr', '未知错误')}")
+                with st.expander("查看输出"):
+                    st.text(result.get('stdout', '') or result.get('stderr', ''))
 
-    st.write("刷新看板")
-    if st.button("刷新"):
+    # 数据刷新
+    st.write("数据管理")
+    if st.button("刷新价格数据"):
+        with st.spinner("正在刷新价格数据..."):
+            result = refresh_data()
+            if result['success']:
+                st.success("数据刷新完成!")
+            else:
+                st.warning(f"刷新失败: {result.get('stderr', '未知错误')}")
+
+    st.divider()
+
+    # 刷新看板
+    if st.button("刷新看板"):
         st.rerun()
 
     st.divider()
