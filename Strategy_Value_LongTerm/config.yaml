@@ -10,6 +10,14 @@ constraints:
     消费: 0.25
     科技: 0.30
 
+# 趋势过滤参数 (基本面 + 技术面双重确认)
+trend_filter:
+  enabled: true           # 是否启用趋势过滤
+  min_trend_score: 0.33   # 最小趋势得分 (0~1)
+  ma_period: 250          # 均线周期 (年线)
+  rsrs_threshold: 0.7     # RSRS Z-Score 阈值
+  pe_percentile_threshold: 0.4  # PE 分位数阈值 (40%)
+
 # 回测参数
 benchmark: "000300.SH"  # 沪深300
 lookback_period: 252    # 回看天数 (交易日)
@@ -20,6 +28,12 @@ data_source:
   stock_list:
     - "600519.SH"  # 茅台
     - "601398.SH"  # 工商银行
-    - "600036.SH"  # 招商银行
-    - "000001.SH"  # 上证50ETF
+    - "513310.SH"  # 中韩半导体ETF
+    - "588080.SH"  # 科创50ETF
+    - "159949.SH"  # 创业板50ETF
+    - "510720.SH"  # 红利国企ETF
+    - "510050.SH"  # 上证50ETF
     - "510300.SH"  # 沪深300ETF
+    - "000858.SZ"  # 五粮液
+    - "002563.SZ"  # 森马服饰
+    - "600438.SH"  # 通威股份

@@ -15,6 +15,11 @@ try:
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+
+    # 设置中文字体 (macOS 系统字体优先)
+    plt.rcParams['font.sans-serif'] = ['PingFang SC', 'STHeiti', 'Songti SC', 'Arial Unicode MS']
+    plt.rcParams['axes.unicode_minus'] = False
+
     HAS_MATPLOTLIB = True
 except:
     HAS_MATPLOTLIB = False

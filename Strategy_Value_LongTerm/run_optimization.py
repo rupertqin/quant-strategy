@@ -16,7 +16,7 @@ from report import PortfolioReport
 
 def main():
     optimizer = PortfolioOptimizer()
-    weights, metrics = optimizer.run()
+    weights, metrics, _ = optimizer.run()
 
     # 生成报告
     report = PortfolioReport()

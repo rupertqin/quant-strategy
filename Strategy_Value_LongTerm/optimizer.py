@@ -1,12 +1,13 @@
 """
 组合优化模块
-使用 scipy 进行均值-方差优化
+使用 scipy 进行均值-方差优化 + 趋势过滤
 """
 
 import pandas as pd
 import numpy as np
 import yaml
 import os
+import json
 from datetime import datetime
 from scipy.optimize import minimize
 
@@ -113,24 +114,81 @@ class PortfolioOptimizer:
             'max_drawdown': max_drawdown
         }
 
-    def run(self):
-        """运行完整优化流程"""
+    def run(self, apply_trend_filter: bool = None):
+        """
+        运行完整优化流程
+
+        Args:
+            apply_trend_filter: 是否应用趋势过滤，None 表示根据配置自动判断
+        """
         print("=" * 50)
         print("组合优化开始")
         print("=" * 50)
 
         # 更新数据
-        print("\n[1/3] 更新数据...")
+        print("\n[1/4] 更新数据...")
         self.updater.download_all_data()
         self.updater.calculate_returns()
 
         # 加载数据
         returns, prices = self.load_data()
         print(f"    数据范围: {returns.index[0].date()} ~ {returns.index[-1].date()}")
+        print(f"    原始资产数量: {len(prices.columns)}")
+
+        # 趋势过滤
+        trend_config = self.updater.get_trend_filter_config()
+        if apply_trend_filter is None:
+            apply_trend_filter = trend_config.get('enabled', False)
+
+        filtered_symbols = list(prices.columns)
+        analysis_results = {}
+
+        if apply_trend_filter:
+            print("\n[2/4] 趋势分析 (基本面 + 技术面)...")
+            analysis_results = self.updater.analyze_all_stocks(prices)
+
+            # 过滤：通过趋势得分筛选
+            min_score = trend_config.get('min_trend_score', 0.33)
+            min_pe_pct = trend_config.get('pe_percentile_threshold', 0.4)
+
+            filtered_symbols = []
+            for symbol, result in analysis_results.items():
+                # 价值 + 趋势得分 >= 阈值
+                if result['value_score'] == 1 and result['trend_score'] >= min_score:
+                    filtered_symbols.append(symbol)
+                # PE 分位数特别低 (价值陷阱风险低) 也通过
+                elif result.get('pe_percentile', 1.0) < 0.2:
+                    filtered_symbols.append(symbol)
+
+            # 只保留有足够数据的股票
+            valid_symbols = []
+            for s in filtered_symbols:
+                if len(returns[s].dropna()) >= 250:
+                    valid_symbols.append(s)
+            filtered_symbols = valid_symbols
+
+            print(f"    趋势过滤后资产数量: {len(filtered_symbols)}")
+
+            if len(filtered_symbols) < 2:
+                print("    警告: 过滤后资产不足，使用全部资产")
+                filtered_symbols = list(prices.columns)
+
+            # 保存分析结果
+            analysis_path = os.path.join(self.data_dir, "trend_analysis.json")
+            with open(analysis_path, 'w', encoding='utf-8') as f:
+                json.dump(analysis_results, f, ensure_ascii=False, indent=2)
+            print(f"    分析结果已保存至 {analysis_path}")
+
+            # 打印过滤详情
+            print("\n    入选股票:")
+            for s in filtered_symbols:
+                r = analysis_results.get(s, {})
+                print(f"      {s}: {r.get('status', 'N/A')} (趋势分: {r.get('trend_score', 0):.2f})")
 
         # 优化
-        print("\n[2/3] 运行优化...")
-        weights = self.optimize_portfolio(returns)
+        print(f"\n[3/4] 运行优化 ({len(filtered_symbols)} 只股票)...")
+        returns_filtered = returns[filtered_symbols]
+        weights = self.optimize_portfolio(returns_filtered)
 
         # 保存结果
         output_path = os.path.join(self.data_dir, "..", "output_weights.csv")
@@ -138,9 +196,9 @@ class PortfolioOptimizer:
         print(f"    权重已保存至 {output_path}")
 
         # 绩效指标
-        print("\n[3/3] 绩效指标...")
+        print("\n[4/4] 绩效指标...")
         w_array = weights.set_index('symbol')['weight'].values
-        metrics = self.compute_metrics(returns, w_array)
+        metrics = self.compute_metrics(returns_filtered, w_array)
 
         print(f"    年化收益: {metrics['annualized_return']:.2%}")
         print(f"    年化波动: {metrics['annualized_vol']:.2%}")
@@ -151,9 +209,9 @@ class PortfolioOptimizer:
         print("优化完成")
         print("=" * 50)
 
-        return weights, metrics
+        return weights, metrics, analysis_results
 
 
 if __name__ == "__main__":
     optimizer = PortfolioOptimizer()
-    weights, metrics = optimizer.run()
+    weights, metrics, analysis = optimizer.run(apply_trend_filter=True)
