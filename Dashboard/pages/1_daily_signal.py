@@ -140,52 +140,82 @@ with col4:
     st.metric("热点板块", len(hot_sectors))
 
 with col5:
-    # 涨跌家数
-    tech = regime.get('technical', {})
-    breadth = tech.get('breadth', {})
-    up_ratio = breadth.get('up_ratio', 0.5) * 100
-    st.metric("涨跌比", f"{up_ratio:.0f}%", f"↑{breadth.get('up', 0)} ↓{breadth.get('down', 0)}")
+    # 技术面展望
+    tech_indicators = signals.get('technical_indicators', {})
+    outlook = tech_indicators.get('technical_outlook', '未知')
+    st.metric("技术面", outlook)
 
 # 第二行：详细信息
-tech = regime.get('technical', {})
-if tech:
-    st.markdown("### 📊 技术面指标")
+tech_indicators = signals.get('technical_indicators', {})
+# ============= 技术面指标展示（从scanner输出读取）=============
+if tech_indicators:
+    st.markdown("### 📊 技术面分析")
+    
+    # 第一行：综合评分和主要指标
     tcol1, tcol2, tcol3, tcol4 = st.columns(4)
     
     with tcol1:
-        indices = tech.get('indices', {})
-        index_display = []
-        for name, data in list(indices.items())[:3]:
-            change = data.get('change', 0)
-            emoji = "🟢" if change > 0 else "🔴" if change < 0 else "⚪"
-            index_display.append(f"{emoji} {name}: {change:+.2f}%")
-        st.markdown("**主要指数**" + "<br>".join(index_display), unsafe_allow_html=True)
+        score = tech_indicators.get('composite_score', 50)
+        outlook = tech_indicators.get('technical_outlook', '中性')
+        color = "🟢" if score >= 70 else "🟡" if score >= 50 else "🔴"
+        st.metric("技术面评分", f"{score}/100", f"{color} {outlook}")
     
     with tcol2:
-        sectors = tech.get('sectors', {})
-        leader = sectors.get('leader', '中性')
-        bias = sectors.get('bias', 0)
-        st.metric("板块风格", leader, f"偏差{bias:.1f}%")
+        breadth = tech_indicators.get('market_breadth', {})
+        up = breadth.get('up_count', 0)
+        down = breadth.get('down_count', 0)
+        ratio = breadth.get('up_ratio', 0.5)
+        st.metric("涨跌家数", f"↑{up} ↓{down}", f"上涨比例 {ratio:.1%}")
     
     with tcol3:
-        zt_stats = tech.get('zt_stats', {})
-        sentiment = zt_stats.get('sentiment', '未知')
-        hot_count = zt_stats.get('hot_sectors', 0)
-        st.metric("涨停情绪", sentiment, f"{hot_count}个热点")
+        sectors = tech_indicators.get('sector_strength', {})
+        leader = sectors.get('leader', '中性')
+        off_avg = sectors.get('offensive_avg', 0)
+        def_avg = sectors.get('defensive_avg', 0)
+        st.metric("板块风格", leader, f"进攻{off_avg:+.1f}% vs 防守{def_avg:+.1f}%")
     
     with tcol4:
-        st.markdown("**宏观因子**")
-        macro = regime.get('macro', {})
-        currency = macro.get('currency', {})
-        north = macro.get('north_money', {})
-        st.caption(f"汇率: {currency.get('current', 7.2):.3f} | 北向: {north.get('today', 0):+.0f}亿")
+        zt = tech_indicators.get('zt_sentiment', {})
+        zt_count = zt.get('zt_count', 0)
+        sentiment = zt.get('sentiment', '未知')
+        st.metric("涨停情绪", f"{zt_count}家", sentiment)
+    
+    # 第二行：指数表现
+    st.markdown("**主要指数表现**")
+    indices = tech_indicators.get('index_performance', {})
+    idx_cols = st.columns(len(indices))
+    for idx_col, (name, data) in zip(idx_cols, indices.items()):
+        with idx_col:
+            change = data.get('change_pct', 0)
+            trend = data.get('trend', 'NEUTRAL')
+            emoji = "🟢" if change > 0 else "🔴" if change < 0 else "⚪"
+            trend_emoji = "📈" if trend == "UP" else "📉" if trend == "DOWN" else "➡️"
+            st.caption(f"{emoji} {name}")
+            st.metric(label=f"{trend_emoji}", value=f"{change:+.2f}%")
+    
+    # 技术面理由
+    reasons = tech_indicators.get('technical_reasons', [])
+    if reasons:
+        st.info(f"📋 **技术面看点**: {', '.join(reasons)}")
+
+# 宏观指标（从regime读取）
+st.markdown("### 🌍 宏观环境")
+mcol1, mcol2, mcol3 = st.columns(3)
+with mcol1:
+    macro = regime.get('macro', {})
+    currency = macro.get('currency', {})
+    st.metric("汇率 USD/CNY", f"{currency.get('current', 7.2):.3f}")
+with mcol2:
+    north = macro.get('north_money', {})
+    st.metric("北向资金", f"{north.get('today', 0):+.0f}亿")
+with mcol3:
+    gold = macro.get('gold', {})
+    st.metric("黄金价格", f"{gold.get('current', 550):.0f}")
 
 # 风险/机会因素
-all_reasons = regime.get('reasons', []) + regime.get('tech_reasons', [])
-if regime.get('reasons'):
-    st.warning(f"⚠️ 风险因素: {', '.join(regime['reasons'])}")
-if regime.get('tech_reasons'):
-    st.success(f"✅ 积极因素: {', '.join(regime['tech_reasons'])}")
+all_reasons = regime.get('reasons', [])
+if all_reasons:
+    st.warning(f"⚠️ **宏观风险**: {', '.join(all_reasons)}")
 
 st.divider()
 

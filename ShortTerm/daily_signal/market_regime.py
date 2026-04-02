@@ -143,7 +143,7 @@ class MarketRegime:
             }
         except Exception as e:
             logger.warning(f"获取市场涨跌家数失败: {e}")
-            return {'up': 2500, 'down': 2500, 'total': 5000, 'up_ratio': 0.5, 'breadth_score': 0}
+            return {'up': 2500, 'down': 2500, 'flat': 0, 'total': 5000, 'up_ratio': 0.5, 'breadth_score': 0}
 
     def get_index_performance(self) -> dict:
         """
@@ -155,49 +155,83 @@ class MarketRegime:
         }
         """
         indices = {
-            '沪深300': '000300',
-            '中证1000': '000852', 
-            '创业板': '399006',
-            '上证指数': '000001'
+            '沪深300': ('000300', 'sh000300'),
+            '中证1000': ('000852', 'sh000852'),
+            '创业板': ('399006', 'sz399006'),
+            '上证指数': ('000001', 'sh000001')
         }
         
         result = {}
+        
+        # 方法1: 尝试使用新浪实时行情接口（更可靠）
         try:
             import akshare as ak
-            for name, code in indices.items():
+            spot_df = ak.stock_zh_index_spot_sina()
+            
+            for name, (em_code, sina_code) in indices.items():
                 try:
-                    if code.startswith('0'):
-                        # 上海指数
-                        df = ak.index_zh_a_hist(symbol=code, period="daily", start_date="20250328", end_date="20260402")
-                    else:
-                        # 深圳指数
-                        df = ak.index_zh_a_hist(symbol=code, period="daily", start_date="20250328", end_date="20260402")
-                    
-                    if not df.empty:
-                        latest = df.iloc[-1]
-                        prev = df.iloc[-2] if len(df) > 1 else latest
-                        change_pct = (latest['收盘'] - prev['收盘']) / prev['收盘'] * 100 if prev['收盘'] > 0 else 0
+                    # 新浪接口使用 sh/sz 前缀
+                    idx_row = spot_df[spot_df['代码'] == sina_code]
+                    if not idx_row.empty:
+                        row = idx_row.iloc[0]
+                        change_pct = float(row.get('涨跌幅', 0))
+                        close = float(row.get('最新价', 0))
+                        # 根据涨跌幅判断趋势
+                        trend = 'UP' if change_pct > 0 else 'DOWN' if change_pct < 0 else 'NEUTRAL'
                         
-                        # 判断趋势
-                        if len(df) >= 5:
-                            ma5 = df['收盘'].tail(5).mean()
-                            trend = 'UP' if latest['收盘'] > ma5 else 'DOWN'
-                        else:
-                            trend = 'NEUTRAL'
-                            
                         result[name] = {
                             'change': round(change_pct, 2),
                             'trend': trend,
-                            'close': latest['收盘']
+                            'close': close
                         }
+                        logger.debug(f"获取指数 {name}: {change_pct:+.2f}%")
                 except Exception as e:
-                    logger.warning(f"获取指数 {name} 失败: {e}")
-                    result[name] = {'change': 0, 'trend': 'NEUTRAL', 'close': 0}
-                    
+                    logger.debug(f"新浪接口获取 {name} 失败: {e}")
         except Exception as e:
-            logger.warning(f"获取指数数据失败: {e}")
-            # 默认值
-            for name in indices.keys():
+            logger.debug(f"新浪实时行情接口失败: {e}")
+        
+        # 方法2: 使用历史数据接口（备用）
+        if len(result) < len(indices):
+            try:
+                import akshare as ak
+                from datetime import datetime, timedelta
+                
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=30)
+                start_str = start_date.strftime('%Y%m%d')
+                end_str = end_date.strftime('%Y%m%d')
+                
+                for name, (em_code, _) in indices.items():
+                    if name in result:
+                        continue
+                    try:
+                        df = ak.index_zh_a_hist(symbol=em_code, period="daily", start_date=start_str, end_date=end_str)
+                        
+                        if not df.empty and len(df) >= 2:
+                            latest = df.iloc[-1]
+                            prev = df.iloc[-2]
+                            change_pct = (latest['收盘'] - prev['收盘']) / prev['收盘'] * 100 if prev['收盘'] > 0 else 0
+                            
+                            if len(df) >= 5:
+                                ma5 = df['收盘'].tail(5).mean()
+                                trend = 'UP' if latest['收盘'] > ma5 else 'DOWN'
+                            else:
+                                trend = 'NEUTRAL'
+                                
+                            result[name] = {
+                                'change': round(change_pct, 2),
+                                'trend': trend,
+                                'close': latest['收盘']
+                            }
+                    except Exception as e:
+                        logger.debug(f"历史数据获取 {name} 失败: {e}")
+                        
+            except Exception as e:
+                logger.debug(f"历史数据接口失败: {e}")
+        
+        # 填充缺失的指数
+        for name in indices.keys():
+            if name not in result:
                 result[name] = {'change': 0, 'trend': 'NEUTRAL', 'close': 0}
                 
         return result

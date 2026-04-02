@@ -21,6 +21,7 @@ import logging
 
 from DataHub.services.data_service import DataService
 from DataHub.core.data_client import UnifiedDataClient
+from .market_regime import MarketRegime
 
 warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
@@ -47,6 +48,10 @@ class LimitUpScanner:
         # DataHub 集成
         self.datahub_service = DataService()
         self.data_client = UnifiedDataClient()
+        
+        # 市场状态判断（宏观+技术）
+        self.market_regime = MarketRegime(config_path)
+        
         logger.info("LimitUpScanner initialized with DataHub")
 
     def _load_config(self, path: str) -> dict:
@@ -183,7 +188,7 @@ class LimitUpScanner:
 
     def generate_daily_signals(self, date: str = None) -> dict:
         """
-        生成每日信号
+        生成每日信号 - 宏观+技术面综合分析
 
         Returns:
             包含热点板块和推荐操作的字典
@@ -195,13 +200,47 @@ class LimitUpScanner:
         print(f"扫描日期: {date}")
         print('='*50)
 
-        # 1. 获取涨停数据
+        # ========== 1. 技术面指标采集 ==========
+        print("\n📊 采集技术面指标...")
+        
+        # 1.1 市场涨跌家数（广度）
+        breadth = self.market_regime.get_market_breadth()
+        print(f"  涨跌家数: 涨{breadth['up']}/跌{breadth['down']}/平{breadth['flat']}")
+        print(f"  涨跌比: {breadth['up_ratio']:.1%}")
+        
+        # 1.2 主要指数表现
+        indices = self.market_regime.get_index_performance()
+        print(f"  指数表现:")
+        for name, data in indices.items():
+            print(f"    {name}: {data['change']:+.2f}% ({data['trend']})")
+        
+        # 1.3 板块强度（进攻vs防守）
+        sectors = self.market_regime.get_sector_strength()
+        print(f"  板块风格: 进攻板块{sectors['offensive_avg']:+.2f}% vs 防守板块{sectors['defensive_avg']:+.2f}%")
+        print(f"  风格偏向: {sectors['leader']}")
+        
+        # 1.4 涨停统计（情绪）
+        zt_stats = self.market_regime.get_limit_up_stats()
+        print(f"  涨停情绪: {zt_stats['zt_count']}家涨停，{zt_stats['hot_sectors']}个热点板块")
+        print(f"  市场情绪: {zt_stats['sentiment']}")
+
+        # ========== 2. 获取涨停数据 ==========
         df_zt = self.get_today_zt_pool(date)
         if df_zt.empty:
-            print("未获取到涨停数据")
-            return {'date': date, 'hot_sectors': [], 'message': '无涨停数据'}
+            print("\n未获取到涨停数据")
+            return {
+                'date': date, 
+                'hot_sectors': [], 
+                'technical_indicators': {
+                    'breadth': breadth,
+                    'indices': indices,
+                    'sector_strength': sectors,
+                    'zt_stats': zt_stats
+                },
+                'message': '无涨停数据'
+            }
 
-        print(f"今日涨停家数: {len(df_zt)}")
+        print(f"\n今日涨停家数: {len(df_zt)}")
 
         # 2. 计算板块热度
         heat = self.calculate_sector_heat(df_zt)
@@ -266,37 +305,182 @@ class LimitUpScanner:
         else:
             market_type = '热点集中'
         
+        # 技术面综合评分
+        tech_score = self._calculate_technical_score(breadth, indices, sectors, zt_stats)
+        
+        # 转换 numpy 类型为 Python 原生类型（用于JSON序列化）
+        def convert_to_native(obj):
+            if hasattr(obj, 'item'):  # numpy types
+                return obj.item()
+            return obj
+        
         result = {
             'date': date,
-            'total_zt_count': len(df_zt),
+            'total_zt_count': int(len(df_zt)),
             'market_type': market_type,
             'hot_sectors': sector_details,
             'signals': signals,
+            # 新增：技术面指标
+            'technical_indicators': {
+                'market_breadth': {
+                    'up_count': int(breadth['up']),
+                    'down_count': int(breadth['down']),
+                    'flat_count': int(breadth['flat']),
+                    'total_count': int(breadth['total']),
+                    'up_ratio': round(float(breadth['up_ratio']), 4),
+                    'breadth_score': round(float(breadth['breadth_score']), 4),
+                    'interpretation': self._interpret_breadth(breadth)
+                },
+                'index_performance': {
+                    name: {
+                        'change_pct': round(float(data['change']), 2),
+                        'trend': str(data['trend']),
+                        'close': round(float(data['close']), 2)
+                    } for name, data in indices.items()
+                },
+                'sector_strength': {
+                    'offensive_avg': round(float(sectors['offensive_avg']), 2),
+                    'defensive_avg': round(float(sectors['defensive_avg']), 2),
+                    'bias': round(float(sectors['bias']), 2),
+                    'leader': str(sectors['leader']),
+                    'offensive_count': int(sectors.get('offensive_count', 0)),
+                    'defensive_count': int(sectors.get('defensive_count', 0))
+                },
+                'zt_sentiment': {
+                    'zt_count': int(zt_stats['zt_count']),
+                    'hot_sectors_count': int(zt_stats['hot_sectors']),
+                    'max_sector_zt': int(zt_stats['max_sector_zt']),
+                    'sentiment': str(zt_stats['sentiment']),
+                    'assessment': str(zt_stats['assessment'])
+                },
+                'composite_score': int(tech_score['score']),
+                'technical_outlook': str(tech_score['outlook']),
+                'technical_reasons': [str(r) for r in tech_score['reasons']]
+            },
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
 
-        # 确定输出目录 - 统一到 storage/outputs/shortterm/daily_signal
+        # 确定输出目录 - 按日期分文件夹，支持分钟级报告
         # base_dir 是 ShortTerm/, 所以只需要 parent 到项目根目录
-        output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "daily_signal"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        base_output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "daily_signal"
         
-        # 保存两份文件：带日期的历史文件 + 不带日期的最新文件
-        # 最新文件（Dashboard读取）
-        latest_file = output_dir / "daily_signals.json"
+        # 按日期创建子文件夹
+        date_folder = base_output_dir / date
+        date_folder.mkdir(parents=True, exist_ok=True)
+        
+        # 生成时间戳 (HHMMSS格式)
+        timestamp = datetime.now().strftime('%H%M%S')
+        
+        # 保存三份文件：
+        # 1. 最新文件（Dashboard读取）- 在根目录
+        latest_file = base_output_dir / "daily_signals.json"
         with open(latest_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         
-        # 历史文件（带日期）
-        dated_file = output_dir / f"daily_signals_{date}.json"
-        with open(dated_file, 'w', encoding='utf-8') as f:
+        # 2. 日期文件夹内的分钟级文件
+        timed_file = date_folder / f"daily_signals_{timestamp}.json"
+        with open(timed_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        
+        # 3. 日期文件夹内的最新文件（方便查看当天最新）
+        daily_latest_file = date_folder / "daily_signals_latest.json"
+        with open(daily_latest_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
         print(f"\n信号已保存至:")
         print(f"  最新: {latest_file}")
-        print(f"  历史: {dated_file}")
+        print(f"  当天: {daily_latest_file}")
+        print(f"  历史: {timed_file}")
 
         return result
 
+    def _calculate_technical_score(self, breadth: dict, indices: dict, sectors: dict, zt_stats: dict) -> dict:
+        """
+        计算技术面综合评分
+        
+        Returns:
+            {'score': 0-100, 'outlook': '看多/中性/看空', 'reasons': []}
+        """
+        score = 50  # 基准分
+        reasons = []
+        
+        # 1. 市场广度评分 (0-25分)
+        if breadth['up_ratio'] > 0.6:
+            score += 15
+            reasons.append(f"涨多跌少({breadth['up_ratio']:.1%})")
+        elif breadth['up_ratio'] > 0.5:
+            score += 5
+        elif breadth['up_ratio'] < 0.4:
+            score -= 15
+            reasons.append(f"跌多涨少({breadth['up_ratio']:.1%})")
+        elif breadth['up_ratio'] < 0.5:
+            score -= 5
+        
+        # 2. 指数趋势评分 (0-30分)
+        up_indices = sum(1 for d in indices.values() if d['trend'] == 'UP')
+        if up_indices >= 3:
+            score += 20
+            reasons.append(f"多指数上行({up_indices}/{len(indices)})")
+        elif up_indices >= 2:
+            score += 10
+        elif up_indices == 0:
+            score -= 15
+            reasons.append("指数全线走弱")
+        
+        # 3. 板块风格评分 (0-20分)
+        if sectors['leader'] == '进攻':
+            score += 15
+            reasons.append("进攻板块领涨")
+        elif sectors['leader'] == '防守':
+            score -= 10
+            reasons.append("防守板块领涨")
+        
+        # 4. 涨停情绪评分 (0-25分)
+        if zt_stats['sentiment'] == '极热':
+            score += 20
+            reasons.append("涨停情绪极热")
+        elif zt_stats['sentiment'] == '活跃':
+            score += 15
+            reasons.append("涨停情绪活跃")
+        elif zt_stats['sentiment'] == '正常':
+            score += 5
+        elif zt_stats['sentiment'] == '低迷':
+            score -= 10
+            reasons.append("涨停情绪低迷")
+        elif zt_stats['sentiment'] == '冷清':
+            score -= 20
+            reasons.append("涨停情绪冷清")
+        
+        # 确定 outlook
+        if score >= 70:
+            outlook = '看多'
+        elif score >= 50:
+            outlook = '中性偏多'
+        elif score >= 40:
+            outlook = '中性偏空'
+        else:
+            outlook = '看空'
+        
+        return {
+            'score': max(0, min(100, score)),
+            'outlook': outlook,
+            'reasons': reasons if reasons else ['技术面无明显信号']
+        }
+    
+    def _interpret_breadth(self, breadth: dict) -> str:
+        """解读市场广度"""
+        up_ratio = breadth['up_ratio']
+        if up_ratio > 0.7:
+            return "普涨格局，市场情绪高涨"
+        elif up_ratio > 0.6:
+            return "涨多跌少，市场情绪积极"
+        elif up_ratio > 0.5:
+            return "涨跌互现，市场情绪中性"
+        elif up_ratio > 0.4:
+            return "跌多涨少，市场情绪谨慎"
+        else:
+            return "普跌格局，市场情绪低迷"
+    
     def save_to_history(self, heat: pd.DataFrame):
         """保存板块热度历史数据"""
         # 统一到 storage/outputs/shortterm/daily_signal

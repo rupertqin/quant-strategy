@@ -373,7 +373,7 @@ class PoolMonitor:
     def save_report(self, report: PoolWatchReport, output_dir: str = None):
         """
         保存报告到文件
-        保存两份：带日期的历史文件 + 不带日期的最新文件
+        支持分钟级：按日期分文件夹，文件名带时间戳
         
         Args:
             report: 监控报告
@@ -382,20 +382,32 @@ class PoolMonitor:
         if output_dir is None:
             output_dir = Path(__file__).parent.parent.parent / "storage" / "outputs" / "shortterm" / "pool_watch"
         
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        base_output_dir = Path(output_dir)
         
-        date_str = report.date
+        # 按日期创建子文件夹
+        date_str = report.date  # YYYY-MM-DD 格式
+        date_folder = base_output_dir / date_str
+        date_folder.mkdir(parents=True, exist_ok=True)
+        
+        # 生成时间戳 (HHMMSS格式)
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%H%M%S')
+        
         report_dict = report.to_dict()
         
-        # 保存JSON报告 - 带日期的历史文件
-        json_file_dated = output_dir / f"pool_watch_{date_str}.json"
-        with open(json_file_dated, 'w', encoding='utf-8') as f:
+        # 1. 保存JSON报告 - 最新文件（在根目录，供Dashboard读取）
+        json_file_latest = base_output_dir / "pool_watch_latest.json"
+        with open(json_file_latest, 'w', encoding='utf-8') as f:
             json.dump(report_dict, f, ensure_ascii=False, indent=2)
         
-        # 保存JSON报告 - 不带日期的最新文件（供Dashboard读取）
-        json_file_latest = output_dir / "pool_watch_latest.json"
-        with open(json_file_latest, 'w', encoding='utf-8') as f:
+        # 2. 保存JSON报告 - 分钟级历史文件（在日期文件夹）
+        json_file_timed = date_folder / f"pool_watch_{timestamp}.json"
+        with open(json_file_timed, 'w', encoding='utf-8') as f:
+            json.dump(report_dict, f, ensure_ascii=False, indent=2)
+        
+        # 3. 保存JSON报告 - 当天最新文件（在日期文件夹）
+        json_file_daily = date_folder / "pool_watch_latest.json"
+        with open(json_file_daily, 'w', encoding='utf-8') as f:
             json.dump(report_dict, f, ensure_ascii=False, indent=2)
         
         # 准备CSV数据
@@ -419,19 +431,22 @@ class PoolMonitor:
         
         df = pd.DataFrame(rankings_data)
         
-        # 保存CSV排名 - 带日期的历史文件
-        csv_file_dated = output_dir / f"pool_ranking_{date_str}.csv"
-        df.to_csv(csv_file_dated, index=False, encoding='utf-8-sig')
-        
-        # 保存CSV排名 - 不带日期的最新文件
-        csv_file_latest = output_dir / "pool_ranking_latest.csv"
+        # 4. 保存CSV排名 - 最新文件（在根目录）
+        csv_file_latest = base_output_dir / "pool_ranking_latest.csv"
         df.to_csv(csv_file_latest, index=False, encoding='utf-8-sig')
         
+        # 5. 保存CSV排名 - 分钟级历史文件（在日期文件夹）
+        csv_file_timed = date_folder / f"pool_ranking_{timestamp}.csv"
+        df.to_csv(csv_file_timed, index=False, encoding='utf-8-sig')
+        
+        # 6. 保存CSV排名 - 当天最新文件（在日期文件夹）
+        csv_file_daily = date_folder / "pool_ranking_latest.csv"
+        df.to_csv(csv_file_daily, index=False, encoding='utf-8-sig')
+        
         print(f"\n报告已保存:")
-        print(f"  JSON (历史): {json_file_dated}")
-        print(f"  JSON (最新): {json_file_latest}")
-        print(f"  CSV (历史):  {csv_file_dated}")
-        print(f"  CSV (最新):  {csv_file_latest}")
+        print(f"  最新:     {json_file_latest}")
+        print(f"  当天:     {json_file_daily}")
+        print(f"  历史:     {json_file_timed}")
 
 
 def main():
