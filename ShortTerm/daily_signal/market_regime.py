@@ -145,13 +145,264 @@ class MarketRegime:
             logger.warning(f"获取市场涨跌家数失败: {e}")
             return {'up': 2500, 'down': 2500, 'flat': 0, 'total': 5000, 'up_ratio': 0.5, 'breadth_score': 0}
 
+    def _get_index_history(self, code: str, days: int = 120) -> pd.DataFrame:
+        """
+        获取指数历史数据（用于技术分析）
+        
+        Args:
+            code: 指数代码
+            days: 获取天数
+        
+        Returns:
+            DataFrame with columns: date, open, high, low, close, volume
+        """
+        try:
+            import akshare as ak
+            
+            # 方法1: 使用腾讯财经接口（新浪源）
+            try:
+                # 转换代码格式 000300 -> sh000300
+                if code.startswith('0'):
+                    tx_code = f'sh{code}'
+                else:
+                    tx_code = f'sz{code}'
+                
+                df = ak.stock_zh_index_daily_tx(symbol=tx_code)
+                if not df.empty and len(df) >= 20:
+                    df = df.rename(columns={
+                        'amount': 'volume'
+                    })
+                    df = df.tail(days).reset_index(drop=True)
+                    return df
+            except Exception as e:
+                logger.debug(f"stock_zh_index_daily_tx 失败: {e}")
+            
+            return pd.DataFrame()
+        except Exception as e:
+            logger.debug(f"获取指数历史数据失败 {code}: {e}")
+            return pd.DataFrame()
+
+    def _dow_theory_analysis(self, df: pd.DataFrame) -> dict:
+        """
+        道氏理论分析
+        
+        核心原则：
+        1. 三种趋势：主要趋势(数月-数年)、次要趋势(3周-3月)、短期趋势(<3周)
+        2. 指数相互验证：不同指数应相互确认
+        3. 成交量验证：趋势需要成交量配合
+        4. 收盘价最重要
+        """
+        if df.empty or len(df) < 60:
+            return {'primary_trend': 'UNKNOWN', 'secondary_trend': 'UNKNOWN', 'note': '数据不足'}
+        
+        closes = df['close'].values
+        volumes = df['volume'].values if 'volume' in df.columns else None
+        
+        # 1. 主要趋势判断 (使用60日均线)
+        ma60 = df['close'].rolling(60).mean().iloc[-1]
+        ma20 = df['close'].rolling(20).mean().iloc[-1]
+        current = closes[-1]
+        
+        if current > ma60 * 1.05:
+            primary_trend = 'BULL'  # 牛市（主要上升趋势）
+            primary_desc = '主要上升趋势'
+        elif current < ma60 * 0.95:
+            primary_trend = 'BEAR'  # 熊市（主要下降趋势）
+            primary_desc = '主要下降趋势'
+        else:
+            primary_trend = 'SIDEWAYS'  # 横盘整理
+            primary_desc = '主要趋势横盘'
+        
+        # 2. 次要趋势判断 (使用20日均线与60日均线的关系)
+        if ma20 > ma60 * 1.02:
+            secondary_trend = 'UP'
+            secondary_desc = '次要趋势上升'
+        elif ma20 < ma60 * 0.98:
+            secondary_trend = 'DOWN'
+            secondary_desc = '次要趋势下降'
+        else:
+            secondary_trend = 'SIDEWAYS'
+            secondary_desc = '次要趋势震荡'
+        
+        # 3. 计算趋势强度
+        high_60 = df['high'].tail(60).max()
+        low_60 = df['low'].tail(60).min()
+        range_60 = high_60 - low_60
+        
+        if range_60 > 0:
+            position_in_range = (current - low_60) / range_60
+        else:
+            position_in_range = 0.5
+        
+        # 4. 成交量分析（如果有数据）
+        volume_signal = 'neutral'
+        if volumes is not None and len(volumes) >= 20:
+            recent_vol = volumes[-5:].mean()
+            avg_vol = volumes[-20:].mean()
+            
+            if primary_trend == 'BULL' and recent_vol > avg_vol * 1.2:
+                volume_signal = 'confirming'  # 上涨放量，确认趋势
+            elif primary_trend == 'BULL' and recent_vol < avg_vol * 0.8:
+                volume_signal = 'warning'  # 上涨缩量，警示
+            elif primary_trend == 'BEAR' and recent_vol > avg_vol * 1.2:
+                volume_signal = 'confirming'  # 下跌放量，确认趋势
+            else:
+                volume_signal = 'neutral'
+        
+        return {
+            'primary_trend': primary_trend,
+            'primary_desc': primary_desc,
+            'secondary_trend': secondary_trend,
+            'secondary_desc': secondary_desc,
+            'position_in_range': round(float(position_in_range), 2),
+            'ma60': round(float(ma60), 2),
+            'ma20': round(float(ma20), 2),
+            'volume_signal': volume_signal,
+            'trend_strength': self._calculate_trend_strength(df)
+        }
+
+    def _calculate_trend_strength(self, df: pd.DataFrame) -> dict:
+        """计算趋势强度指标"""
+        if len(df) < 20:
+            return {'adx': 0, 'strength': 'weak'}
+        
+        closes = df['close'].values
+        highs = df['high'].values
+        lows = df['low'].values
+        
+        # 简化ADX计算
+        tr_list = []
+        plus_dm_list = []
+        minus_dm_list = []
+        
+        for i in range(1, min(15, len(closes))):
+            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+            tr_list.append(tr)
+            
+            plus_dm = highs[i] - highs[i-1] if highs[i] - highs[i-1] > lows[i-1] - lows[i] else 0
+            minus_dm = lows[i-1] - lows[i] if lows[i-1] - lows[i] > highs[i] - highs[i-1] else 0
+            
+            plus_dm_list.append(max(plus_dm, 0))
+            minus_dm_list.append(max(minus_dm, 0))
+        
+        if sum(tr_list) > 0:
+            plus_di = 100 * sum(plus_dm_list) / sum(tr_list)
+            minus_di = 100 * sum(minus_dm_list) / sum(tr_list)
+            dx = abs(plus_di - minus_di) / (plus_di + minus_di) * 100 if (plus_di + minus_di) > 0 else 0
+        else:
+            dx = 0
+        
+        if dx > 40:
+            strength = 'strong'
+        elif dx > 25:
+            strength = 'moderate'
+        else:
+            strength = 'weak'
+        
+        return {'adx': round(dx, 1), 'strength': strength}
+
+    def _elliott_wave_analysis(self, df: pd.DataFrame) -> dict:
+        """
+        波浪理论分析
+        
+        核心概念：
+        1. 5浪推动（1-2-3-4-5）
+        2. 3浪调整（A-B-C）
+        3. 斐波那契比例关系
+        4. 浪的识别基于高低点
+        """
+        if df.empty or len(df) < 30:
+            return {'wave_count': 'UNKNOWN', 'current_phase': 'unknown', 'note': '数据不足'}
+        
+        closes = df['close'].values
+        highs = df['high'].values
+        lows = df['low'].values
+        
+        # 识别局部极值点（简化版）
+        peaks = []
+        troughs = []
+        
+        window = 3
+        for i in range(window, len(closes) - window):
+            # 峰值
+            if highs[i] == max(highs[i-window:i+window+1]):
+                peaks.append((i, highs[i]))
+            # 谷值
+            if lows[i] == min(lows[i-window:i+window+1]):
+                troughs.append((i, lows[i]))
+        
+        # 分析最近的趋势结构
+        if len(peaks) < 2 or len(troughs) < 2:
+            return {'wave_count': 'INSUFFICIENT_DATA', 'current_phase': 'unknown'}
+        
+        # 获取最近的极值
+        recent_peaks = peaks[-3:]
+        recent_troughs = troughs[-3:]
+        
+        # 判断当前处于什么阶段
+        current_price = float(closes[-1])
+        last_peak_price = float(recent_peaks[-1][1]) if recent_peaks else current_price
+        last_trough_price = float(recent_troughs[-1][1]) if recent_troughs else current_price
+        
+        # 计算斐波那契回调位
+        if last_peak_price != last_trough_price:
+            fib_range = last_peak_price - last_trough_price
+            fib_382 = last_peak_price - fib_range * 0.382
+            fib_500 = last_peak_price - fib_range * 0.500
+            fib_618 = last_peak_price - fib_range * 0.618
+        else:
+            fib_382 = fib_500 = fib_618 = current_price
+        
+        # 判断当前位置
+        if current_price > last_peak_price * 0.98:
+            phase = '可能的第5浪或顶部'
+        elif current_price > fib_382:
+            phase = '可能的第3浪或第4浪调整'
+        elif current_price > fib_618:
+            phase = '可能的调整浪B或第2浪'
+        else:
+            phase = '可能的底部或调整浪C'
+        
+        # 计算浪的结构特征
+        if len(recent_peaks) >= 2 and len(recent_troughs) >= 2:
+            # 检查是否符合5浪结构特征
+            wave_1 = recent_troughs[0][1] if recent_troughs else 0
+            wave_2 = recent_peaks[0][1] if recent_peaks else 0
+            
+            # 计算波动幅度
+            recent_volatility = np.std(closes[-20:]) / np.mean(closes[-20:]) * 100 if len(closes) >= 20 else 0
+            
+            wave_structure = {
+                'recent_peaks': [(str(df.iloc[p[0]]['date']), round(float(p[1]), 2)) for p in recent_peaks],
+                'recent_troughs': [(str(df.iloc[t[0]]['date']), round(float(t[1]), 2)) for t in recent_troughs],
+                'volatility_pct': round(float(recent_volatility), 2),
+                'fib_382': round(float(fib_382), 2),
+                'fib_500': round(float(fib_500), 2),
+                'fib_618': round(float(fib_618), 2),
+            }
+        else:
+            wave_structure = {}
+        
+        return {
+            'wave_count': int(len(peaks) + len(troughs)),
+            'current_phase': phase,
+            'last_peak': round(float(last_peak_price), 2),
+            'last_trough': round(float(last_trough_price), 2),
+            'current_vs_peak': round(float((current_price - last_peak_price) / last_peak_price * 100), 2),
+            'structure': wave_structure
+        }
+
     def get_index_performance(self) -> dict:
         """
-        获取主要指数表现
+        获取主要指数表现（结合道氏理论和波浪理论）
         Returns: {
-            '沪深300': {'change': 涨跌幅, 'trend': 趋势},
-            '中证1000': {...},
-            '创业板': {...}
+            '沪深300': {
+                'change': 涨跌幅, 
+                'trend': 趋势,
+                'dow_theory': {...},      # 道氏理论分析
+                'elliott_wave': {...}     # 波浪理论分析
+            },
+            ...
         }
         """
         indices = {
@@ -229,12 +480,81 @@ class MarketRegime:
             except Exception as e:
                 logger.debug(f"历史数据接口失败: {e}")
         
+        # 添加道氏理论和波浪理论分析
+        for name, (em_code, _) in indices.items():
+            if name in result:
+                # 获取历史数据进行技术分析
+                hist_df = self._get_index_history(em_code, days=90)
+                
+                if not hist_df.empty:
+                    # 道氏理论分析
+                    result[name]['dow_theory'] = self._dow_theory_analysis(hist_df)
+                    
+                    # 波浪理论分析
+                    result[name]['elliott_wave'] = self._elliott_wave_analysis(hist_df)
+                else:
+                    result[name]['dow_theory'] = {'note': '无法获取历史数据'}
+                    result[name]['elliott_wave'] = {'note': '无法获取历史数据'}
+        
         # 填充缺失的指数
         for name in indices.keys():
             if name not in result:
-                result[name] = {'change': 0, 'trend': 'NEUTRAL', 'close': 0}
-                
+                result[name] = {
+                    'change': 0, 
+                    'trend': 'NEUTRAL', 
+                    'close': 0,
+                    'dow_theory': {'note': '数据缺失'},
+                    'elliott_wave': {'note': '数据缺失'}
+                }
+        
+        # 添加跨指数验证（道氏理论原则）
+        result['inter_index_validation'] = self._validate_across_indices(result)
+        
         return result
+
+    def _validate_across_indices(self, indices_data: dict) -> dict:
+        """
+        跨指数验证（道氏理论原则）
+        主要趋势应该被不同指数相互确认
+        """
+        # 排除非指数键
+        index_names = [k for k in indices_data.keys() if k not in ['inter_index_validation']]
+        
+        if len(index_names) < 2:
+            return {'validation': 'INSUFFICIENT_DATA', 'note': '指数数据不足'}
+        
+        # 统计各主要趋势方向
+        primary_trends = []
+        for name in index_names:
+            if 'dow_theory' in indices_data[name]:
+                trend = indices_data[name]['dow_theory'].get('primary_trend', 'UNKNOWN')
+                primary_trends.append((name, trend))
+        
+        # 判断是否一致
+        trend_counts = {}
+        for _, trend in primary_trends:
+            trend_counts[trend] = trend_counts.get(trend, 0) + 1
+        
+        dominant_trend = max(trend_counts.items(), key=lambda x: x[1]) if trend_counts else ('UNKNOWN', 0)
+        consistency = dominant_trend[1] / len(primary_trends) if primary_trends else 0
+        
+        if consistency >= 0.75:
+            validation = 'CONFIRMED'
+            note = f'主要趋势一致（{dominant_trend[0]}），相互确认'
+        elif consistency >= 0.5:
+            validation = 'PARTIAL'
+            note = '主要趋势部分确认，存在分歧'
+        else:
+            validation = 'DIVERGENCE'
+            note = '主要趋势分歧明显，信号不一致'
+        
+        return {
+            'validation': validation,
+            'consistency': round(consistency, 2),
+            'dominant_trend': dominant_trend[0],
+            'trend_details': primary_trends,
+            'note': note
+        }
 
     def get_sector_strength(self) -> dict:
         """

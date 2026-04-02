@@ -193,6 +193,67 @@ if tech_indicators:
             st.caption(f"{emoji} {name}")
             st.metric(label=f"{trend_emoji}", value=f"{change:+.2f}%")
     
+    # 第三行：道氏理论分析
+    st.markdown("**📊 道氏理论分析**")
+    dow_cols = st.columns(4)
+    for i, (name, data) in enumerate(indices.items()):
+        if i < 4:
+            with dow_cols[i]:
+                dow = data.get('dow_theory', {})
+                if dow and 'primary_trend' in dow:
+                    primary = dow.get('primary_desc', '未知')
+                    secondary = dow.get('secondary_desc', '未知')
+                    strength = dow.get('trend_strength', {})
+                    adx = strength.get('adx', 0)
+                    st.caption(f"**{name}**")
+                    st.write(f"{primary}")
+                    st.write(f"ADX: {adx}")
+                else:
+                    st.caption(f"**{name}**")
+                    st.write("数据不足")
+    
+    # 第四行：波浪理论分析
+    st.markdown("**🌊 波浪理论分析**")
+    wave_data = []
+    for name, data in indices.items():
+        wave = data.get('elliott_wave', {})
+        if wave and 'current_phase' in wave:
+            wave_data.append({
+                '指数': name,
+                '当前阶段': wave.get('current_phase', '未知'),
+                '最近峰值': wave.get('last_peak', '-'),
+                '最近谷值': wave.get('last_trough', '-'),
+                '距峰值': f"{wave.get('current_vs_peak', 0):+.1f}%"
+            })
+    
+    if wave_data:
+        st.dataframe(wave_data, hide_index=True, use_container_width=True)
+        
+        # 显示斐波那契位
+        st.markdown("**斐波那契回调位参考**")
+        fib_cols = st.columns(len(indices))
+        for idx_col, (name, data) in zip(fib_cols, indices.items()):
+            with idx_col:
+                wave = data.get('elliott_wave', {})
+                struct = wave.get('structure', {})
+                if struct:
+                    st.caption(f"**{name}**")
+                    st.write(f"38.2%: {struct.get('fib_382', '-')}")
+                    st.write(f"50%: {struct.get('fib_500', '-')}")
+                    st.write(f"61.8%: {struct.get('fib_618', '-')}")
+    
+    # 跨指数验证
+    validation = tech_indicators.get('inter_index_validation', {})
+    if validation:
+        val_status = validation.get('validation', 'UNKNOWN')
+        val_note = validation.get('note', '')
+        if val_status == 'CONFIRMED':
+            st.success(f"📈 **跨指数验证**: {val_note}")
+        elif val_status == 'DIVERGENCE':
+            st.error(f"📉 **跨指数验证**: {val_note}")
+        else:
+            st.info(f"📊 **跨指数验证**: {val_note}")
+    
     # 技术面理由
     reasons = tech_indicators.get('technical_reasons', [])
     if reasons:

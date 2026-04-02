@@ -208,11 +208,33 @@ class LimitUpScanner:
         print(f"  涨跌家数: 涨{breadth['up']}/跌{breadth['down']}/平{breadth['flat']}")
         print(f"  涨跌比: {breadth['up_ratio']:.1%}")
         
-        # 1.2 主要指数表现
+        # 1.2 主要指数表现（含道氏理论和波浪理论分析）
         indices = self.market_regime.get_index_performance()
         print(f"  指数表现:")
         for name, data in indices.items():
+            if name == 'inter_index_validation':
+                continue
             print(f"    {name}: {data['change']:+.2f}% ({data['trend']})")
+            
+            # 道氏理论
+            if 'dow_theory' in data:
+                dow = data['dow_theory']
+                print(f"      📊 道氏理论: {dow.get('primary_desc', 'N/A')} | {dow.get('secondary_desc', 'N/A')}")
+                if 'trend_strength' in dow:
+                    print(f"         趋势强度: {dow['trend_strength'].get('strength', 'unknown')} (ADX: {dow['trend_strength'].get('adx', 0)})")
+            
+            # 波浪理论
+            if 'elliott_wave' in data:
+                wave = data['elliott_wave']
+                print(f"      🌊 波浪理论: {wave.get('current_phase', 'N/A')}")
+                if 'structure' in wave and wave['structure']:
+                    struct = wave['structure']
+                    print(f"         斐波那契位: 38.2%={struct.get('fib_382')}, 50%={struct.get('fib_500')}, 61.8%={struct.get('fib_618')}")
+        
+        # 跨指数验证
+        if 'inter_index_validation' in indices:
+            validation = indices['inter_index_validation']
+            print(f"    📈 跨指数验证: {validation.get('note', 'N/A')}")
         
         # 1.3 板块强度（进攻vs防守）
         sectors = self.market_regime.get_sector_strength()
@@ -335,9 +357,12 @@ class LimitUpScanner:
                     name: {
                         'change_pct': round(float(data['change']), 2),
                         'trend': str(data['trend']),
-                        'close': round(float(data['close']), 2)
-                    } for name, data in indices.items()
+                        'close': round(float(data['close']), 2),
+                        'dow_theory': data.get('dow_theory', {}),
+                        'elliott_wave': data.get('elliott_wave', {})
+                    } for name, data in indices.items() if name != 'inter_index_validation'
                 },
+                'inter_index_validation': indices.get('inter_index_validation', {}),
                 'sector_strength': {
                     'offensive_avg': round(float(sectors['offensive_avg']), 2),
                     'defensive_avg': round(float(sectors['defensive_avg']), 2),
@@ -417,13 +442,17 @@ class LimitUpScanner:
             score -= 5
         
         # 2. 指数趋势评分 (0-30分)
-        up_indices = sum(1 for d in indices.values() if d['trend'] == 'UP')
+        # 过滤掉非指数数据（如 inter_index_validation）
+        index_data = {k: v for k, v in indices.items() if k not in ['inter_index_validation'] and isinstance(v, dict)}
+        up_indices = sum(1 for d in index_data.values() if d.get('trend') == 'UP')
+        total_indices = len(index_data)
+        
         if up_indices >= 3:
             score += 20
-            reasons.append(f"多指数上行({up_indices}/{len(indices)})")
+            reasons.append(f"多指数上行({up_indices}/{total_indices})")
         elif up_indices >= 2:
             score += 10
-        elif up_indices == 0:
+        elif up_indices == 0 and total_indices > 0:
             score -= 15
             reasons.append("指数全线走弱")
         
