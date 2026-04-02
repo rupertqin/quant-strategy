@@ -1,8 +1,18 @@
-# 价值长线策略依赖
-akshare>=1.11.0
-baostock>=0.8.0
-pandas>=2.0.0
+# LongTerm - 长线组合优化模块依赖
+
+# 数据处理
+pandas>=1.5.0
 numpy>=1.24.0
-pyyaml>=6.0
-jinja2>=3.1.0
+
+# 优化与统计
 scipy>=1.10.0
+
+# 配置解析
+pyyaml>=6.0
+
+# 报告生成
+matplotlib>=3.7.0
+jinja2>=3.1.0
+
+# 数据存储
+pyarrow>=10.0.0

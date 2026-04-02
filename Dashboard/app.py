@@ -1,5 +1,5 @@
 """
-量化交易看板
+量化交易看板 - 主页面
 整合长线和短线策略结果
 
 启动方式: streamlit run app.py
@@ -17,12 +17,12 @@ import subprocess
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 
-
 # ============= 配置 =============
 st.set_page_config(
     page_title="Quant Dashboard",
     page_icon="📈",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # ============= 样式 =============
@@ -63,6 +63,15 @@ st.markdown("""
         background-color: #d4edda;
         border-left: 4px solid #28a745;
     }
+    .nav-button {
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 5px;
+        text-decoration: none;
+        display: inline-block;
+        margin: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -82,10 +91,10 @@ def load_longterm_data():
     return pd.DataFrame()
 
 
-def load_shortterm_signals():
-    """加载短线信号 - 从 storage/outputs 读取"""
+def load_daily_signals():
+    """加载今日异动信号"""
     base = get_base_dir()
-    signals_file = os.path.join(base, "storage", "outputs", "shortterm", "signals", "daily_signals.json")
+    signals_file = os.path.join(base, "storage", "outputs", "shortterm", "daily_signal", "signals", "daily_signals.json")
 
     if os.path.exists(signals_file):
         with open(signals_file, 'r', encoding='utf-8') as f:
@@ -93,12 +102,28 @@ def load_shortterm_signals():
     return {}
 
 
+def load_pool_watch_summary():
+    """加载股票池监控摘要"""
+    base = get_base_dir()
+    report_dir = os.path.join(base, "storage", "outputs", "shortterm", "pool_watch")
+    
+    if os.path.exists(report_dir):
+        files = [f for f in os.listdir(report_dir) if f.startswith("pool_watch_") and f.endswith(".json")]
+        if files:
+            files.sort(reverse=True)
+            latest_file = os.path.join(report_dir, files[0])
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('summary', {}), data.get('date', '')
+    return {}, ''
+
+
 def get_market_regime():
     """获取市场状态"""
     try:
         base = get_base_dir()
         sys.path.insert(0, os.path.join(base, "ShortTerm"))
-        from market_regime import MarketRegime
+        from daily_signal.market_regime import MarketRegime
         regime = MarketRegime()
         return regime.get_market_status()
     except Exception as e:
@@ -108,10 +133,6 @@ def get_market_regime():
             'reasons': [str(e)],
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
-    finally:
-        shortterm_dir = os.path.join(base, "ShortTerm")
-        if shortterm_dir in sys.path:
-            sys.path.remove(shortterm_dir)
 
 
 def run_longterm_optimization():
@@ -137,17 +158,40 @@ def run_longterm_optimization():
         return {'success': False, 'stderr': str(e)}
 
 
-def run_shortterm_scanner():
-    """运行短线扫描"""
+def run_daily_scanner():
+    """运行今日异动扫描"""
     base = get_base_dir()
     shortterm_dir = os.path.join(base, "ShortTerm")
     try:
         result = subprocess.run(
-            [sys.executable, "run_scanner.py"],
+            [sys.executable, "run_scanner.py", "daily"],
             cwd=shortterm_dir,
             capture_output=True,
             text=True,
             timeout=120
+        )
+        return {
+            'success': result.returncode == 0,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'stderr': '执行超时'}
+    except Exception as e:
+        return {'success': False, 'stderr': str(e)}
+
+
+def run_pool_watch():
+    """运行股票池监控"""
+    base = get_base_dir()
+    shortterm_dir = os.path.join(base, "ShortTerm")
+    try:
+        result = subprocess.run(
+            [sys.executable, "run_scanner.py", "pool"],
+            cwd=shortterm_dir,
+            capture_output=True,
+            text=True,
+            timeout=180
         )
         return {
             'success': result.returncode == 0,
@@ -184,7 +228,8 @@ def refresh_data():
 
 
 # ============= 主界面 =============
-st.title("Quant Dashboard - 量化交易看板")
+st.title("📈 Quant Dashboard - 量化交易看板")
+st.caption("长线战略配置 + 短线战术扫描")
 
 # 顶部状态栏
 col1, col2, col3, col4 = st.columns(4)
@@ -192,18 +237,19 @@ col1, col2, col3, col4 = st.columns(4)
 with col1:
     regime = get_market_regime()
     regime_color = {'AGGRESSIVE': 'green', 'DEFENSIVE': 'red', 'NEUTRAL': 'orange'}
+    regime_name = {'AGGRESSIVE': '积极', 'DEFENSIVE': '防御', 'NEUTRAL': '中性'}
     st.markdown(f"""
     <div class="metric-card" style="text-align: center;">
         <h3>市场状态</h3>
         <h2 style="color: {regime_color.get(regime.get('regime', 'UNKNOWN'), 'gray')};">
-            {regime.get('regime', 'N/A')}
+            {regime_name.get(regime.get('regime', 'UNKNOWN'), '未知')}
         </h2>
     </div>
     """, unsafe_allow_html=True)
 
 with col2:
     risk_score = regime.get('score', 0)
-    st.metric("风险评分", f"{risk_score}/10", delta=None)
+    st.metric("风险评分", f"{risk_score}/10")
 
 with col3:
     longterm_weights = load_longterm_data()
@@ -214,9 +260,8 @@ with col3:
         st.metric("长线首选", "N/A", "-")
 
 with col4:
-    signals = load_shortterm_signals()
-    signal_count = len(signals.get('signals', []))
-    st.metric("短线信号", f"{signal_count}个", delta=None)
+    pool_summary, pool_date = load_pool_watch_summary()
+    st.metric("股票池买入信号", pool_summary.get('buy_count', 0), delta=None)
 
 # 市场状态详情
 if regime.get('reasons'):
@@ -224,12 +269,54 @@ if regime.get('reasons'):
 
 st.divider()
 
-# ============= 两栏布局 =============
+# ============= 导航到子页面 =============
+st.subheader("📑 功能模块")
+
+col_nav1, col_nav2, col_nav3 = st.columns(3)
+
+with col_nav1:
+    st.markdown("""
+    ### 🔥 今日异动
+    全市场涨停板扫描、板块热度分析
+    
+    - 涨停家数统计
+    - 热点板块排名
+    - 操作信号生成
+    """)
+    if st.button("进入今日异动 ➡️", key="nav_daily"):
+        st.switch_page("pages/1_daily_signal.py")
+
+with col_nav2:
+    st.markdown("""
+    ### 📊 股票池监控
+    LongTerm股票池短线技术指标
+    
+    - MA5/10/20/60均线系统
+    - 量价关系分析
+    - 综合评分排名
+    """)
+    if st.button("进入股票池监控 ➡️", key="nav_pool"):
+        st.switch_page("pages/2_pool_watch.py")
+
+with col_nav3:
+    st.markdown("""
+    ### 📈 长线配置
+    均值-方差优化、资产配置
+    
+    - 最优权重计算
+    - 风险收益分析
+    - 月度调仓建议
+    """)
+    st.info("当前页面下方查看")
+
+st.divider()
+
+# ============= 两栏布局: 长线 + 短线摘要 =============
 col_left, col_right = st.columns([1, 1])
 
 # ========== 左侧: 长线配置 ==========
 with col_left:
-    st.header("长线配置 (战略)")
+    st.header("📈 长线配置 (战略)")
 
     if not longterm_weights.empty:
         # 饼图
@@ -241,55 +328,59 @@ with col_left:
             title="资产配置",
             hole=0.4
         )
-        st.plotly_chart(fig_pie, width='stretch')
+        st.plotly_chart(fig_pie, use_container_width=True)
 
         # 权重表格
         st.subheader("目标权重")
         st.dataframe(
             longterm_weights.style.format({'weight': '{:.2%}'}),
-            width='stretch'
+            use_container_width=True
         )
     else:
         st.info("长线策略未运行，请先运行 LongTerm/run_optimization.py")
 
-# ========== 右侧: 短线雷达 ==========
+# ========== 右侧: 短线摘要 ==========
 with col_right:
-    st.header("短线雷达 (战术)")
-
+    st.header("⚡ 短线摘要 (战术)")
+    
+    # 今日异动摘要
+    signals = load_daily_signals()
     if signals:
-        st.subheader(f"📅 {signals.get('date', '今日')}")
-
-        # 热点板块
+        st.subheader("🔥 今日涨停")
+        st.metric("涨停家数", signals.get('total_zt_count', 0))
+        
         hot_sectors = signals.get('hot_sectors', [])
         if hot_sectors:
-            st.write("🔥 热点板块:")
-            for sector in hot_sectors[:5]:
-                st.markdown(f"""
-                <div class="signal-box signal-attention">
-                    <strong>{sector['sector']}</strong> - {sector['zt_count']}家涨停
-                    <br><small>龙头: {sector['lead_stock']}</small>
-                </div>
-                """, unsafe_allow_html=True)
-
-        # 操作信号
-        st.write("📊 操作信号:")
-        for sig in signals.get('signals', []):
-            emoji = "🔥" if sig['action'] == '关注' else "👀"
-            st.markdown(f"""
-            <div class="signal-box signal-watch">
-                {emoji} <strong>{sig['sector']}</strong> - {sig['action']}
-                <br><small>强度: {sig['strength']} | {sig['reason']}</small>
-            </div>
-            """, unsafe_allow_html=True)
-
-        st.caption(f"生成时间: {signals.get('generated_at', 'N/A')}")
+            st.write("热点板块:")
+            for sector in hot_sectors[:3]:
+                st.markdown(f"<span class='hot-sector'>{sector['sector']} ({sector['zt_count']})</span>", 
+                          unsafe_allow_html=True)
     else:
-        st.info("短线策略未运行，请先运行 ShortTerm/run_scanner.py")
+        st.info("今日异动未运行")
+    
+    st.divider()
+    
+    # 股票池监控摘要
+    if pool_summary:
+        st.subheader("📊 股票池信号")
+        
+        col_sig1, col_sig2, col_sig3 = st.columns(3)
+        with col_sig1:
+            st.metric("🟢 买入", pool_summary.get('buy_count', 0))
+        with col_sig2:
+            st.metric("🔴 卖出", pool_summary.get('sell_count', 0))
+        with col_sig3:
+            st.metric("🟡 观察", pool_summary.get('watch_count', 0))
+        
+        if st.button("查看详情 ➡️", key="goto_pool"):
+            st.switch_page("pages/2_pool_watch.py")
+    else:
+        st.info("股票池监控未运行")
 
 st.divider()
 
 # ============= 底部: 综合建议 =============
-st.header("综合交易建议")
+st.header("💡 综合交易建议")
 
 col1, col2 = st.columns(2)
 
@@ -299,7 +390,7 @@ with col1:
     try:
         base = get_base_dir()
         sys.path.insert(0, os.path.join(base, "ShortTerm"))
-        from market_regime import MarketRegime
+        from daily_signal.market_regime import MarketRegime
         multiplier = MarketRegime().get_position_multiplier()
     except:
         pass
@@ -308,11 +399,11 @@ with col1:
     st.write(f"建议仓位: {multiplier:.0%}")
 
     if regime.get('regime') == 'DEFENSIVE':
-        st.warning("市场风险较高，建议降低仓位，减少操作")
+        st.warning("⚠️ 市场风险较高，建议降低仓位，减少操作")
     elif regime.get('regime') == 'AGGRESSIVE':
-        st.success("市场积极，可适当加大仓位")
+        st.success("✅ 市场积极，可适当加大仓位")
     else:
-        st.info("市场中性，保持现有仓位")
+        st.info("ℹ️ 市场中性，保持现有仓位")
 
 with col2:
     st.subheader("板块偏好")
@@ -320,25 +411,32 @@ with col2:
     try:
         base = get_base_dir()
         sys.path.insert(0, os.path.join(base, "ShortTerm"))
-        from market_regime import MarketRegime
+        from daily_signal.market_regime import MarketRegime
         preferred = MarketRegime().get_sector_preference()
         st.write("推荐关注板块:")
         for sector in preferred:
             st.markdown(f"<span class='hot-sector'>{sector}</span>", unsafe_allow_html=True)
     except:
         st.write("请运行短线策略获取板块推荐")
-    finally:
-        shortterm_dir = os.path.join(base, "ShortTerm")
-        if shortterm_dir in sys.path:
-            sys.path.remove(shortterm_dir)
 
 # ============= 侧边栏 =============
 with st.sidebar:
-    st.header("快捷操作")
-
-    # 长线策略
-    st.write("长线策略")
-    if st.button("运行长线优化", type="primary"):
+    st.header("⚡ 快捷操作")
+    
+    st.subheader("数据管理")
+    if st.button("🔄 刷新价格数据"):
+        with st.spinner("正在刷新价格数据..."):
+            result = refresh_data()
+            if result['success']:
+                st.success("数据刷新完成!")
+            else:
+                st.warning(f"刷新失败: {result.get('stderr', '未知错误')}")
+    
+    st.divider()
+    
+    st.subheader("策略运行")
+    
+    if st.button("📈 运行长线优化", type="primary"):
         with st.spinner("正在运行长线优化..."):
             result = run_longterm_optimization()
             if result['success']:
@@ -349,41 +447,40 @@ with st.sidebar:
                 with st.expander("查看输出"):
                     st.text(result.get('stdout', '') or result.get('stderr', ''))
 
-    # 短线策略
-    st.write("短线策略")
-    if st.button("运行短线扫描", type="primary"):
-        with st.spinner("正在运行短线扫描..."):
-            result = run_shortterm_scanner()
+    if st.button("🔥 运行今日异动"):
+        with st.spinner("正在扫描涨停板..."):
+            result = run_daily_scanner()
             if result['success']:
-                st.success("短线扫描完成!")
+                st.success("今日异动扫描完成!")
                 st.rerun()
             else:
                 st.error(f"运行失败: {result.get('stderr', '未知错误')}")
-                with st.expander("查看输出"):
-                    st.text(result.get('stdout', '') or result.get('stderr', ''))
-
-    # 数据刷新
-    st.write("数据管理")
-    if st.button("刷新价格数据"):
-        with st.spinner("正在刷新价格数据..."):
-            result = refresh_data()
+    
+    if st.button("📊 运行股票池监控"):
+        with st.spinner("正在分析股票池..."):
+            result = run_pool_watch()
             if result['success']:
-                st.success("数据刷新完成!")
+                st.success("股票池监控完成!")
+                st.rerun()
             else:
-                st.warning(f"刷新失败: {result.get('stderr', '未知错误')}")
-
+                st.error(f"运行失败: {result.get('stderr', '未知错误')}")
+    
     st.divider()
-
-    # 刷新看板
-    if st.button("刷新看板"):
+    
+    if st.button("🔄 刷新看板"):
         st.rerun()
-
+    
     st.divider()
-
-    st.write("说明")
+    
+    st.write("📚 使用说明")
     st.caption("""
+    **导航页面:**
+    - 🔥 今日异动: 涨停板扫描
+    - 📊 股票池监控: 技术指标分析
+    
+    **策略说明:**
     - 长线: 均值-方差优化
-    - 短线: 事件驱动分析
-    - 数据: storage/outputs/
-    - 建议: 仅供参考，不构成投资建议
+    - 短线: 事件驱动 + 技术分析
+    
+    ⚠️ 仅供参考，不构成投资建议
     """)

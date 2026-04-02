@@ -1,24 +1,40 @@
 """
 事件研究回测模块
 验证板块热度与次日涨幅的关系
+通过 DataHub 获取数据
 """
 
-import akshare as ak
+import os
+import sys
+from pathlib import Path
+
+# 添加父目录到路径以便导入 DataHub
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from scipy import stats
-import os
-import warnings
-warnings.filterwarnings('ignore')
+import logging
+
+from DataHub.core.data_client import UnifiedDataClient
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class EventStudyBacktest:
     """事件研究回测器"""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = None):
+        # 自动查找 config.yaml
+        if config_path is None:
+            current_dir = os.path.dirname(__file__)
+            parent_dir = os.path.dirname(current_dir)
+            config_path = os.path.join(parent_dir, "config.yaml")
+        
         self.config = self._load_config(config_path)
         self.base_dir = os.path.dirname(config_path) if config_path else os.path.dirname(__file__)
 
@@ -33,16 +49,26 @@ class EventStudyBacktest:
         if not os.path.isabs(self.charts_dir):
             self.charts_dir = os.path.join(self.base_dir, self.charts_dir)
         os.makedirs(self.charts_dir, exist_ok=True)
+        
+        # 初始化 DataHub 客户端
+        self.data_client = UnifiedDataClient()
 
     def _load_config(self, path: str) -> dict:
         import yaml
-        with open(path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.warning(f"Config file not found: {path}, using default config")
+            return {
+                'cache': {'dir': 'cache'},
+                'event_params': {'min_zt_count': 3},
+                'output': {'signals_file': 'signals.json', 'history_file': 'history.csv'}
+            }
 
     def download_zt_history(self, start_date: str, end_date: str) -> pd.DataFrame:
         """
         下载历史涨停数据
-        注意: AkShare 可能不支持全部历史，需分批下载
         """
         all_zt = []
 
@@ -52,13 +78,12 @@ class EventStudyBacktest:
         while current <= end:
             date_str = current.strftime('%Y%m%d')
 
-            # 跳过周末
             if current.weekday() >= 5:
                 current += timedelta(days=1)
                 continue
 
             try:
-                df = ak.stock_zt_pool_em(date=date_str)
+                df = self.data_client.get_zt_pool(date_str)
                 if not df.empty:
                     df['date'] = date_str
                     all_zt.append(df)
@@ -90,7 +115,6 @@ class EventStudyBacktest:
         if df_zt.empty:
             return pd.DataFrame()
 
-        # 统计
         heat = df_zt.groupby(['date', '行业']).size().reset_index(name='limit_up_count')
         heat.columns = ['date', 'industry', 'limit_up_count']
 
@@ -99,14 +123,10 @@ class EventStudyBacktest:
     def get_industry_index_data(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """获取行业指数行情"""
         try:
-            df = ak.stock_board_industry_hist_em(
-                symbol=symbol,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date
-            )
+            df = self.data_client.get_industry_hist(symbol, start_date, end_date)
             return df
-        except:
+        except Exception as e:
+            logger.warning(f"获取行业指数失败: {e}")
             return pd.DataFrame()
 
     def run_event_study(self, df_heat: pd.DataFrame = None) -> dict:
@@ -125,19 +145,14 @@ class EventStudyBacktest:
         print("事件研究: 板块热度与次日涨幅的关系")
         print("=" * 60)
 
-        # 1. 获取板块指数数据
-        # 这里简化处理，实际需要获取每个板块的指数数据
         industries = df_heat['industry'].unique()
         print(f"共 {len(industries)} 个板块")
 
-        # 2. 计算次日涨幅
         df_heat = df_heat.sort_values(['industry', 'date'])
         df_heat['next_day_change'] = df_heat.groupby('industry')['limit_up_count'].shift(-1)
 
-        # 3. 基础统计
         print(f"\n数据点总数: {len(df_heat)}")
 
-        # 4. 分析不同涨停数量区间的表现
         thresholds = [3, 5, 8, 10]
         results = []
 
@@ -145,7 +160,7 @@ class EventStudyBacktest:
             subset = df_heat[df_heat['limit_up_count'] >= threshold]
 
             if len(subset) > 10:
-                avg_next = subset['limit_up_count'].mean()  # 用下一天的涨停数作为代理
+                avg_next = subset['limit_up_count'].mean()
                 win_rate = (subset['limit_up_count'] > threshold).mean()
 
                 results.append({
@@ -164,13 +179,11 @@ class EventStudyBacktest:
 
     def analyze_correlation(self, df_heat: pd.DataFrame) -> float:
         """计算热度与次日涨幅的相关性"""
-        # 去除空值
         df = df_heat.dropna()
 
         if len(df) < 10:
             return 0
 
-        # 简单计算相关系数
         corr = df['limit_up_count'].corr(df['next_day_change'])
 
         print(f"\n涨停家数与次日涨幅相关系数: {corr:.4f}")
@@ -182,14 +195,12 @@ class EventStudyBacktest:
         plt.style.use('seaborn-v0_8-whitegrid')
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-        # 1. 涨停分布
         ax1 = axes[0, 0]
         df_heat['limit_up_count'].hist(bins=20, ax=ax1)
         ax1.set_xlabel('Limit Up Count')
         ax1.set_ylabel('Frequency')
         ax1.set_title('Distribution of Daily Limit Up Count per Sector')
 
-        # 2. 热力图: 涨停数量 vs 后续表现
         ax2 = axes[0, 1]
         pivot = df_heat.pivot_table(
             values='next_day_change',
@@ -200,7 +211,6 @@ class EventStudyBacktest:
             sns.heatmap(pivot, ax=ax2, cmap='RdYlGn', center=0)
             ax2.set_title('Heatmap: ZT Count vs Next Day Performance')
 
-        # 3. 散点图
         ax3 = axes[1, 0]
         sns.regplot(
             x='limit_up_count',
@@ -214,9 +224,8 @@ class EventStudyBacktest:
         ax3.set_ylabel('Next Day ZT Count')
         ax3.set_title('Correlation Analysis')
 
-        # 4. 不同阈值的延续率
         ax4 = axes[1, 1]
-        results = []  # 需要从 run_event_study 获取
+        results = []
         ax4.bar([r['threshold'] for r in results], [r['continuation_rate'] for r in results])
         ax4.set_xlabel('ZT Threshold')
         ax4.set_ylabel('Continuation Rate')
@@ -231,7 +240,6 @@ class EventStudyBacktest:
     def validate_strategy(self):
         """
         验证策略有效性
-        返回: 策略建议
         """
         df_heat = self.load_zt_history()
         if df_heat.empty:
@@ -240,7 +248,6 @@ class EventStudyBacktest:
 
         df, results = self.run_event_study(df_heat)
 
-        # 寻找最优参数
         best = max(results, key=lambda x: x['continuation_rate'])
 
         print("\n" + "=" * 60)
@@ -261,10 +268,6 @@ class EventStudyBacktest:
 if __name__ == "__main__":
     backtest = EventStudyBacktest()
 
-    # 方式1: 下载历史数据 (需要较长时间)
-    # backtest.download_zt_history('20240101', '20240630')
-
-    # 方式2: 直接用缓存数据回测
     df_heat = backtest.load_zt_history()
     if not df_heat.empty:
         df, results = backtest.run_event_study(df_heat)

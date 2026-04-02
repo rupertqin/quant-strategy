@@ -11,8 +11,6 @@ from pathlib import Path
 # 添加父目录到路径以便导入 DataHub
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import akshare as ak
-import baostock as bs  # 备用数据源
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -21,6 +19,7 @@ import yaml
 from scipy import stats
 
 from DataHub.services.data_service import DataService
+from DataHub.core.data_client import UnifiedDataClient
 
 # 尝试导入可选库
 try:
@@ -193,6 +192,9 @@ class DataUpdater:
             self.data_dir = os.path.join(self.base_dir, data_config)
         os.makedirs(self.data_dir, exist_ok=True)
 
+        # 初始化统一数据客户端
+        self.data_client = UnifiedDataClient(enable_baostock_fallback=True)
+
         # 初始化 DataHub
         self.use_datahub = use_datahub
         if self.use_datahub:
@@ -205,9 +207,6 @@ class DataUpdater:
                 self.datahub = None
         else:
             self.datahub = None
-
-        # 初始化 baostock
-        bs.login()
 
     def _load_config(self, path: str) -> dict:
         """加载配置文件"""
@@ -224,92 +223,51 @@ class DataUpdater:
             'pe_percentile_threshold': 0.4
         })
 
-    def get_stock_data(self, symbol: str, period: str = "2300d", retry: int = 2) -> pd.DataFrame:
+    def get_stock_data(self, symbol: str, period: str = "2300d") -> pd.DataFrame:
         """
-        获取单只股票历史数据
+        获取单只股票历史数据（使用统一数据客户端）
 
         Args:
             symbol: 股票代码，如 "600519.SH"
             period: 数据周期，默认2300天(约9年)
-            retry: 重试次数
 
         Returns:
             包含 OHLCV 数据的 DataFrame
         """
-        # 先尝试 akshare
-        for i in range(retry):
-            try:
-                time.sleep(0.5)
-                df = ak.stock_zh_a_hist(
-                    symbol=symbol.replace(".SH", "").replace(".SZ", ""),
-                    period="daily",
-                    start_date="20100101",
-                    end_date=datetime.now().strftime("%Y%m%d"),
-                    adjust="qfq"
-                )
-                df.set_index('日期', inplace=True)
-                df.sort_index(inplace=True)
-                return df
-            except Exception as e:
-                if i < retry - 1:
-                    time.sleep(1)
-                else:
-                    pass  # 静默，使用备用
-
-        # 使用 baostock 备用
         try:
-            code = symbol.replace(".SH", "").replace(".SZ", "")
-            if symbol.endswith(".SH"):
-                bs_code = f"sh.{code}"
-            else:
-                bs_code = f"sz.{code}"
-
-            rs = bs.query_history_k_data_plus(
-                bs_code,
-                "date,code,open,high,low,close,volume,amount",
-                start_date='2010-01-01',
-                end_date=datetime.now().strftime("%Y-%m-%d"),
-                frequency="d",
-                adjustflag="2"  # 前复权
-            )
-
-            data_list = []
-            while (rs.error_code == '0') & rs.next():
-                data_list.append(rs.get_row_data())
-
-            if data_list:
-                df = pd.DataFrame(data_list, columns=rs.fields)
-                df.set_index('date', inplace=True)
-                df = df[['open', 'high', 'low', 'close', 'volume']]
-                df = df.astype(float)
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = "2010-01-01"
+            
+            df = self.data_client.get_stock_hist(symbol, start_date, end_date, adjust="qfq")
+            
+            if df is not None and not df.empty:
+                # 确保索引是 datetime
+                if not isinstance(df.index, pd.DatetimeIndex):
+                    df.index = pd.to_datetime(df.index)
+                df.sort_index(inplace=True)
                 return df
         except Exception as e:
-            print(f"baostock 获取 {symbol} 也失败: {e}")
-
+            print(f"获取 {symbol} 数据失败: {e}")
+        
         return pd.DataFrame()
 
-    def get_etf_data(self, symbol: str, retry: int = 3) -> pd.DataFrame:
-        """获取ETF数据"""
-        for i in range(retry):
-            try:
-                time.sleep(1)
-                df = ak.fund_etf_hist_em(
-                    symbol=symbol.replace(".SH", "").replace(".SZ", ""),
-                    period="daily",
-                    start_date="20100101",
-                    end_date=datetime.now().strftime("%Y%m%d"),
-                    adjust="qfq"
-                )
-                df.set_index('日期', inplace=True)
+    def get_etf_data(self, symbol: str) -> pd.DataFrame:
+        """获取ETF数据（使用统一数据客户端）"""
+        try:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = "2010-01-01"
+            
+            df = self.data_client.get_etf_hist(symbol, start_date, end_date, adjust="qfq")
+            
+            if df is not None and not df.empty:
+                # 确保索引是 datetime
+                if not isinstance(df.index, pd.DatetimeIndex):
+                    df.index = pd.to_datetime(df.index)
                 df.sort_index(inplace=True)
                 return df
-            except Exception as e:
-                if i < retry - 1:
-                    print(f"  重试 {i+1}/{retry-1}...")
-                    time.sleep(2)
-                else:
-                    print(f"获取 {symbol} 数据失败: {e}")
-                    return pd.DataFrame()
+        except Exception as e:
+            print(f"获取 {symbol} ETF数据失败: {e}")
+        
         return pd.DataFrame()
 
     def download_all_data(self) -> pd.DataFrame:
@@ -389,12 +347,13 @@ class DataUpdater:
     def get_risk_free_rate(self) -> float:
         """获取无风险利率 (10年期国债收益率)"""
         try:
-            df = ak.bond_china_yield_curve()
+            df = self.data_client.get_bond_yield_curve()
             # 取最新一期数据
             latest = df.iloc[-1]
             # 返回年化收益率 (转为小数)
             return float(latest['中证10年']) / 100
-        except:
+        except Exception as e:
+            print(f"获取无风险利率失败: {e}，使用默认值")
             # 默认值
             return 0.025
 

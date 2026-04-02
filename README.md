@@ -3,7 +3,7 @@
 模块化量化交易系统，长短策略结合：
 
 - **长线** (LongTerm): 均值-方差优化，月度调仓
-- **短线** (ShortTerm): 涨停板分析，事件驱动
+- **短线** (ShortTerm): 双模块 - 今日异动 + 股票池监控
 - **看板** (Dashboard): 可视化展示
 - **中台** (DataHub): 统一数据管理
 
@@ -28,12 +28,23 @@ quant-strategy/
 │   │   │   ├── weights/       # 权重配置
 │   │   │   └── reports/       # 绩效报告
 │   │   └── shortterm/     # 短线策略输出
-│   │       ├── signals/       # 每日信号
-│   │       ├── history/       # 热度历史
-│   │       └── database/      # 信号数据库
+│   │       ├── daily_signal/  # 今日异动输出
+│   │       │   ├── signals/daily_signals.json
+│   │       │   └── history/sector_heat_history.csv
+│   │       └── pool_watch/    # 股票池监控输出
+│   │           ├── pool_watch_YYYYMMDD.json
+│   │           └── pool_ranking_YYYYMMDD.csv
 │   └── logs/              # 日志
 ├── LongTerm/              # 长线策略 (战略配置)
 ├── ShortTerm/             # 短线策略 (战术扫描)
+│   ├── daily_signal/      # 今日异动模块
+│   │   ├── scanner.py         # 涨停扫描
+│   │   ├── market_regime.py   # 市场状态
+│   │   └── backtest_event.py  # 事件回测
+│   ├── pool_watch/        # 股票池监控模块
+│   │   ├── monitor.py         # 监控主模块
+│   │   └── analyzer.py        # 技术分析
+│   └── run_scanner.py     # 统一入口
 └── Dashboard/             # 可视化看板
 ```
 
@@ -45,8 +56,62 @@ quant-strategy/
 | -------- | ------------------------------- | -------------------- |
 | DataHub  | 统一数据管理，akshare + baostock | akshare, baostock    |
 | 长线策略 | 均值-方差优化，计算最优资产配置 | scipy, numpy, pandas |
-| 短线策略 | 涨停板分析，板块热度扫描        | akshare, pandas      |
+| 短线策略 | 双模块：今日异动 + 股票池监控   | pandas, numpy        |
 | 看板     | 整合展示，信号汇总              | streamlit, plotly    |
+
+## ShortTerm 短线策略 (双模块)
+
+### 模块 1: Daily Signal (今日异动)
+
+**功能**: 全市场涨停板扫描、板块热度分析
+
+**指标**:
+- 每日涨停家数统计
+- 板块热度排名
+- 市场状态判断 (汇率/北向资金/黄金)
+- 事件研究回测
+
+**运行**:
+```bash
+cd ShortTerm
+python run_scanner.py daily
+```
+
+### 模块 2: Pool Watch (股票池监控) ⭐ 新增
+
+**功能**: 监控 LongTerm 股票池的短线技术指标
+
+**指标**:
+- **均线系统**: MA5, MA10, MA20, MA60(周线)
+- **价格**: 最新价、涨跌幅、涨跌额
+- **量能**: 成交量、量比(vol_ratio)
+- **趋势**: 多头/空头/震荡判断
+- **量价**: 放量上涨、缩量回调等信号
+- **综合评分**: 0-100分量化评分
+
+**信号生成**:
+| 信号类型 | 条件 | 说明 |
+|----------|------|------|
+| BUY | 评分≥80 | 强烈关注 |
+| WATCH | 评分≥65 或 趋势变化 | 加入观察 |
+| SELL | 空头排列 或 跌破60日线 | 风险提示 |
+| HOLD | 其他 | 持有观望 |
+
+**运行**:
+```bash
+cd ShortTerm
+python run_scanner.py pool
+
+# 运行全部短线策略
+python run_scanner.py all
+```
+
+**输出文件**:
+```
+storage/outputs/shortterm/pool_watch/
+├── pool_watch_YYYYMMDD.json      # 完整报告
+└── pool_ranking_YYYYMMDD.csv     # 排名数据
+```
 
 ## DataHub 数据中台
 
@@ -72,11 +137,12 @@ storage/
     │       ├── portfolio_report.html
     │       └── charts/*.png
     └── shortterm/
-        ├── cache/                         # 缓存
-        └── outputs/                       # 信号输出
-            ├── signals/daily_signals.json
-            ├── history/sector_heat_history.csv
-            └── database/signals.db
+        ├── daily_signal/                  # 今日异动输出
+        │   ├── signals/daily_signals.json
+        │   └── history/sector_heat_history.csv
+        └── pool_watch/                    # 股票池监控输出 ⭐
+            ├── pool_watch_YYYYMMDD.json
+            └── pool_ranking_YYYYMMDD.csv
 ```
 
 ### 数据刷新
@@ -111,14 +177,17 @@ crontab DataHub/crontab.txt
 ### 1. 安装依赖
 
 ```bash
-# 核心库
-pip install numpy pandas scipy pyyaml jinja2 matplotlib pyarrow
+# DataHub (必须先安装)
+pip install -r DataHub/requirements.txt
 
-# 数据源
-pip install akshare baostock
+# 长线策略
+pip install -r LongTerm/requirements.txt
+
+# 短线策略
+pip install -r ShortTerm/requirements.txt
 
 # 看板
-pip install streamlit plotly
+pip install -r Dashboard/requirements.txt
 ```
 
 ### 2. 运行策略
@@ -130,11 +199,19 @@ cd LongTerm
 python run_optimization.py
 ```
 
-**短线扫描 (每日收盘后运行)**
+**短线策略 (每日收盘后运行)**
 
 ```bash
 cd ShortTerm
-python run_scanner.py
+
+# 今日异动扫描
+python run_scanner.py daily
+
+# 股票池监控
+python run_scanner.py pool
+
+# 运行全部
+python run_scanner.py all
 ```
 
 **启动看板**
@@ -164,10 +241,23 @@ python DataHub/scripts/migrate_data.py
 | storage/outputs/longterm/    | reports/portfolio_report.md   | 绩效报告 (Markdown) |
 | storage/outputs/longterm/    | reports/portfolio_report.html | 绩效报告 (HTML)     |
 | storage/outputs/longterm/    | reports/charts/*.png          | 图表                |
-| storage/outputs/shortterm/   | signals/daily_signals.json    | 每日热点信号        |
-| storage/outputs/shortterm/   | history/sector_heat_history.csv | 热度历史          |
-| storage/outputs/shortterm/   | database/signals.db           | 信号数据库          |
+| storage/outputs/shortterm/daily_signal/ | signals/daily_signals.json | 每日热点信号 |
+| storage/outputs/shortterm/daily_signal/ | history/sector_heat_history.csv | 热度历史 |
+| storage/outputs/shortterm/pool_watch/ ⭐ | pool_watch_YYYYMMDD.json | 股票池监控报告 |
+| storage/outputs/shortterm/pool_watch/ ⭐ | pool_ranking_YYYYMMDD.csv | 股票池排名 |
 | Dashboard                    | -                             | 实时看板            |
+
+## 版本历史
+
+### v2.0 (2026-04-02)
+- **重构**: ShortTerm 拆分为双模块
+  - `daily_signal`: 原涨停扫描功能
+  - `pool_watch`: 新增股票池短线监控
+- **新增**: PoolWatch 模块
+  - 监控 LongTerm 股票池的 MA5/10/20/60
+  - 量价关系分析
+  - 综合评分系统 (0-100)
+  - 自动生成 BUY/SELL/WATCH 信号
 
 ## 注意事项
 

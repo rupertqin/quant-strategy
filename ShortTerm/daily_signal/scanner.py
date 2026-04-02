@@ -11,7 +11,6 @@ from pathlib import Path
 # 添加父目录到路径以便导入 DataHub
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import akshare as ak
 import pandas as pd
 import numpy as np
 import json
@@ -20,21 +19,23 @@ from collections import defaultdict
 import warnings
 import logging
 
+from DataHub.services.data_service import DataService
+from DataHub.core.data_client import UnifiedDataClient
+
 warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
-
-# 尝试导入 DataHub
-try:
-    from DataHub.services.data_service import DataService
-    DATAHUB_AVAILABLE = True
-except ImportError:
-    DATAHUB_AVAILABLE = False
 
 
 class LimitUpScanner:
     """涨停板扫描器"""
 
-    def __init__(self, config_path: str = "config.yaml", use_datahub: bool = True):
+    def __init__(self, config_path: str = None, use_datahub: bool = True):
+        # 自动查找 config.yaml
+        if config_path is None:
+            current_dir = os.path.dirname(__file__)
+            parent_dir = os.path.dirname(current_dir)
+            config_path = os.path.join(parent_dir, "config.yaml")
+        
         self.config_path = config_path
         self.config = self._load_config(config_path)
         self.base_dir = os.path.dirname(config_path)
@@ -44,22 +45,22 @@ class LimitUpScanner:
         os.makedirs(self.cache_dir, exist_ok=True)
 
         # DataHub 集成
-        self.use_datahub = use_datahub and DATAHUB_AVAILABLE
-        if self.use_datahub:
-            try:
-                self.datahub_service = DataService()
-                logger.info("LimitUpScanner initialized with DataHub support")
-            except Exception as e:
-                logger.warning(f"DataHub initialization failed: {e}, using local mode")
-                self.use_datahub = False
-                self.datahub_service = None
-        else:
-            self.datahub_service = None
+        self.datahub_service = DataService()
+        self.data_client = UnifiedDataClient()
+        logger.info("LimitUpScanner initialized with DataHub")
 
     def _load_config(self, path: str) -> dict:
         import yaml
-        with open(path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.warning(f"Config file not found: {path}, using default config")
+            return {
+                'cache': {'dir': 'cache'},
+                'event_params': {'min_zt_count': 3},
+                'output': {'signals_file': 'signals.json', 'history_file': 'history.csv'}
+            }
 
     def get_today_zt_pool(self, date: str = None) -> pd.DataFrame:
         """
@@ -75,19 +76,17 @@ class LimitUpScanner:
             date = datetime.now().strftime('%Y%m%d')
 
         # 优先从 DataHub 获取
-        if self.use_datahub and self.datahub_service:
-            try:
-                df = self.datahub_service.get_zt_pool(date)
-                if not df.empty:
-                    logger.info(f"Loaded ZT pool from DataHub for {date}")
-                    return df
-            except Exception as e:
-                logger.warning(f"DataHub unavailable: {e}")
+        try:
+            df = self.datahub_service.get_zt_pool(date)
+            if not df.empty:
+                logger.info(f"Loaded ZT pool from DataHub for {date}")
+                return df
+        except Exception as e:
+            logger.warning(f"DataHub unavailable: {e}")
 
         # 回退到本地缓存
         cache_file = os.path.join(self.cache_dir, f"zt_pool_{date}.csv")
 
-        # 尝试从缓存读取
         if os.path.exists(cache_file):
             df = pd.read_csv(cache_file)
             if not df.empty:
@@ -95,12 +94,12 @@ class LimitUpScanner:
 
         # 从网络获取
         try:
-            # AkShare 接口获取涨停池
-            df = ak.stock_zt_pool_em(date=date)
-            df.to_csv(cache_file, index=False, encoding='utf-8-sig')
+            df = self.data_client.get_zt_pool(date)
+            
+            if not df.empty:
+                df.to_csv(cache_file, index=False, encoding='utf-8-sig')
 
-            # 同时保存到 DataHub
-            if self.use_datahub and self.datahub_service:
+                # 同时保存到 DataHub
                 try:
                     self.datahub_service.storage.save_zt_pool(df, date)
                 except Exception as e:
@@ -116,12 +115,10 @@ class LimitUpScanner:
         if date is None:
             date = datetime.now().strftime('%Y%m%d')
 
-        # 尝试获取同花顺行业指数
         try:
-            df = ak.stock_board_industry_name_em()
-            # 这个接口返回的是行业列表，需要另外获取行情
-            return df
-        except:
+            return self.data_client.get_industry_list()
+        except Exception as e:
+            logger.warning(f"获取行业指数失败: {e}")
             return pd.DataFrame()
 
     def calculate_sector_heat(self, df_zt: pd.DataFrame) -> pd.DataFrame:
@@ -137,7 +134,6 @@ class LimitUpScanner:
         if df_zt.empty or '所属行业' not in df_zt.columns:
             return pd.DataFrame()
 
-        # 统计每个行业的涨停家数
         heat = df_zt.groupby('所属行业').size().reset_index(name='limit_up_count')
         heat['date'] = datetime.now().strftime('%Y%m%d')
 
@@ -146,8 +142,9 @@ class LimitUpScanner:
     def get_industry_list(self) -> pd.DataFrame:
         """获取同花顺行业分类列表"""
         try:
-            return ak.stock_board_industry_name_em()
-        except:
+            return self.data_client.get_industry_list()
+        except Exception as e:
+            logger.warning(f"获取行业列表失败: {e}")
             return pd.DataFrame()
 
     def analyze_sector_performance(self, sector: str, days: int = 5) -> dict:
@@ -162,12 +159,11 @@ class LimitUpScanner:
             绩效字典
         """
         try:
-            # 获取板块指数行情
-            df = ak.stock_board_industry_cons_ths(symbol=sector)
+            df = self.data_client.get_industry_cons(sector)
+            
             if df.empty:
                 return {}
 
-            # 计算近期涨幅
             df = df.tail(days + 1)
             if len(df) < 2:
                 return {}
@@ -182,6 +178,7 @@ class LimitUpScanner:
                 'volatility': df['pct_chg'].std() if 'pct_chg' in df.columns else 0
             }
         except Exception as e:
+            logger.warning(f"分析板块 {sector} 表现失败: {e}")
             return {}
 
     def generate_daily_signals(self, date: str = None) -> dict:
@@ -228,7 +225,6 @@ class LimitUpScanner:
             sector_name = row['所属行业']
             perf = self.analyze_sector_performance(sector_name)
 
-            # 获取板块内涨停股
             zt_stocks = df_zt[df_zt['所属行业'] == sector_name]
 
             detail = {
@@ -244,11 +240,10 @@ class LimitUpScanner:
         # 5. 生成交易信号
         signals = []
         for sector in sector_details:
-            # 简单信号逻辑：涨停越多、龙头封单越强，可能延续
             strength_score = (
-                min(sector['zt_count'] / 10, 1.0) * 0.5 +  # 涨停数量 (权重50%)
-                (sector['lead_stock_pct'] > 9.5) * 0.3 +   # 龙头是否硬板 (权重30%)
-                (sector['performance_5d'] > 0) * 0.2       # 近期是否上涨 (权重20%)
+                min(sector['zt_count'] / 10, 1.0) * 0.5 +
+                (sector['lead_stock_pct'] > 9.5) * 0.3 +
+                (sector['performance_5d'] > 0) * 0.2
             )
 
             action = '关注' if strength_score >= 0.5 else '观望'
@@ -268,24 +263,36 @@ class LimitUpScanner:
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
 
-        output_file = self.config['output']['signals_file']
-        if not os.path.isabs(output_file):
-            output_file = os.path.join(self.base_dir, output_file)
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        with open(output_file, 'w', encoding='utf-8') as f:
+        # 确定输出目录 - 统一到 storage/outputs/shortterm/daily_signal
+        output_dir = Path(self.base_dir).parent.parent / "storage" / "outputs" / "shortterm" / "daily_signal"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 保存两份文件：带日期的历史文件 + 不带日期的最新文件
+        # 最新文件（Dashboard读取）
+        latest_file = output_dir / "daily_signals.json"
+        with open(latest_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        
+        # 历史文件（带日期）
+        dated_file = output_dir / f"daily_signals_{date}.json"
+        with open(dated_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
-        print(f"\n信号已保存至: {output_file}")
+        print(f"\n信号已保存至:")
+        print(f"  最新: {latest_file}")
+        print(f"  历史: {dated_file}")
 
         return result
 
     def save_to_history(self, heat: pd.DataFrame):
         """保存板块热度历史数据"""
-        history_file = self.config['output']['history_file']
-        if not os.path.isabs(history_file):
-            history_file = os.path.join(self.base_dir, history_file)
-        os.makedirs(os.path.dirname(history_file), exist_ok=True)
-
+        # 统一到 storage/outputs/shortterm/daily_signal
+        output_dir = Path(self.base_dir).parent.parent / "storage" / "outputs" / "shortterm" / "daily_signal"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 最新历史文件
+        history_file = output_dir / "sector_heat_history.csv"
+        
         if os.path.exists(history_file):
             history = pd.read_csv(history_file)
         else:
@@ -293,6 +300,11 @@ class LimitUpScanner:
 
         history = pd.concat([history, heat], ignore_index=True)
         history.to_csv(history_file, index=False, encoding='utf-8-sig')
+        
+        # 同时保存带日期的历史文件
+        date_str = heat['date'].iloc[0] if not heat.empty else datetime.now().strftime('%Y-%m-%d')
+        dated_history_file = output_dir / f"sector_heat_history_{date_str}.csv"
+        heat.to_csv(dated_history_file, index=False, encoding='utf-8-sig')
 
 
 if __name__ == "__main__":

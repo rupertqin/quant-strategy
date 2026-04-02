@@ -1,5 +1,7 @@
-# Streamlit看板依赖
+# Dashboard - 量化交易看板依赖
+
+# Web 界面
 streamlit>=1.28.0
-plotly>=5.18.0
-pyarrow>=14.0.0
-pandas>=2.0.0
+
+# 数据处理
+pandas>=1.5.0

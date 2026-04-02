@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 class DataService:
     """Unified data service for all strategies"""
 
-    def __init__(self, storage_path: Optional[Path] = None):
+    def __init__(
+        self,
+        storage_path: Optional[Path] = None
+    ):
         """
         Initialize data service
 

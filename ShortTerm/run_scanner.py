@@ -1,60 +1,84 @@
 #!/usr/bin/env python3
 """
-主入口: 短线事件驱动扫描
-运行方式: python run_scanner.py
+ShortTerm 策略运行入口
+
+支持两种模式:
+1. daily_signal - 今日异动扫描 (涨停、板块热度)
+2. pool_watch - 股票池监控 (LongTerm股票池的短线指标)
 """
 
+import argparse
 import sys
-import os
+from pathlib import Path
 
-# 添加当前目录到路径
-sys.path.insert(0, os.path.dirname(__file__))
+# 添加项目路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scanner import LimitUpScanner
-from market_regime import MarketRegime
+
+def run_daily_signal():
+    """运行今日异动扫描"""
+    print("\n" + "="*60)
+    print("今日异动扫描 - 涨停板与板块热度")
+    print("="*60)
+    
+    from ShortTerm.daily_signal.scanner import LimitUpScanner
+    
+    scanner = LimitUpScanner()
+    result = scanner.generate_daily_signals()
+    
+    return result
+
+
+def run_pool_watch():
+    """运行股票池监控"""
+    print("\n" + "="*60)
+    print("股票池短线监控 - 技术指标分析")
+    print("="*60)
+    
+    from ShortTerm.pool_watch.monitor import PoolMonitor
+    
+    monitor = PoolMonitor()
+    report = monitor.scan_pool()
+    monitor.save_report(report)
+    
+    return report
+
+
+def run_all():
+    """运行所有短线策略"""
+    # 1. 今日异动
+    run_daily_signal()
+    
+    # 2. 股票池监控
+    run_pool_watch()
 
 
 def main():
-    # 使用当前目录下的 config.yaml
-    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
-
-    print("\n" + "=" * 60)
-    print("短线雷达 - 每日扫描")
-    print("=" * 60)
-
-    # 1. 市场状态检查
-    print("\n[1/2] 分析市场状态...")
-    regime = MarketRegime()
-    status = regime.get_market_status()
-
-    print(f"    市场状态: {status['regime']}")
-    print(f"    风险评分: {status['score']}/10")
-    if status['reasons']:
-        print(f"    风险因素: {', '.join(status['reasons'])}")
-    print(f"    建议仓位: {regime.get_position_multiplier():.0%}")
-    print(f"    推荐板块: {regime.get_sector_preference()}")
-
-    # 2. 板块热度扫描
-    print("\n[2/2] 扫描板块热度...")
-    scanner = LimitUpScanner(config_path=config_path)
-    signals = scanner.generate_daily_signals()
-
-    print("\n" + "=" * 60)
-    print("操作建议")
-    print("=" * 60)
-
-    if signals.get('signals'):
-        for sig in signals['signals'][:5]:  # 只显示前5个
-            emoji = "🔥" if sig['action'] == '关注' else "👀"
-            print(f"  {emoji} {sig['sector']}: {sig['action']} (强度:{sig['strength']})")
-            print(f"      {sig['reason']}")
-    else:
-        print("  今日无明确信号")
-
-    print("\n说明:")
-    print("  - '关注': 可考虑买入板块内强势股")
-    print("  - '观望': 等待更好时机")
-    print("  - 注意控制仓位，遵守交易纪律")
+    parser = argparse.ArgumentParser(
+        description="ShortTerm 短线策略运行",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python run_scanner.py daily          # 运行今日异动扫描
+  python run_scanner.py pool           # 运行股票池监控
+  python run_scanner.py all            # 运行全部
+        """
+    )
+    
+    parser.add_argument(
+        "mode",
+        choices=["daily", "pool", "all"],
+        help="运行模式: daily=今日异动, pool=股票池监控, all=全部"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.mode == "daily":
+        run_daily_signal()
+    elif args.mode == "pool":
+        run_pool_watch()
+    elif args.mode == "all":
+        run_all()
 
 
 if __name__ == "__main__":
