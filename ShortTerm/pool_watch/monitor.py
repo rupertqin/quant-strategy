@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from DataHub.core.data_client import UnifiedDataClient
 from DataHub.config import STOCK_LIST
+from DataHub.stock_names import get_stock_name, get_all_names
 from .analyzer import TechnicalAnalyzer, TechnicalIndicators, TrendState
 
 
@@ -50,7 +51,8 @@ class PoolWatchReport:
             'summary': {
                 'buy_count': len(self.buy_signals),
                 'sell_count': len(self.sell_signals),
-                'watch_count': len(self.watch_list)
+                'watch_count': len(self.watch_list),
+                'hold_count': self.total_stocks - len(self.buy_signals) - len(self.sell_signals) - len(self.watch_list)
             },
             'buy_signals': [
                 {
@@ -72,6 +74,16 @@ class PoolWatchReport:
                     'change_pct': round(s.indicators.change_pct, 2)
                 } for s in self.sell_signals
             ],
+            'watch_list': [
+                {
+                    'symbol': s.symbol,
+                    'name': s.name,
+                    'score': s.score,
+                    'reasons': s.reasons,
+                    'close': s.indicators.close,
+                    'change_pct': round(s.indicators.change_pct, 2)
+                } for s in self.watch_list
+            ],
             'top_rankings': [
                 {
                     'symbol': r.symbol,
@@ -82,6 +94,24 @@ class PoolWatchReport:
                     'trend': r.trend.value,
                     'signals': r.signals[:3]  # 前3个信号
                 } for r in self.rankings[:10]
+            ],
+            # 新增：所有股票的完整列表
+            'all_stocks': [
+                {
+                    'symbol': r.symbol,
+                    'name': r.name,
+                    'score': round(r.composite_score, 1),
+                    'close': r.close,
+                    'change_pct': round(r.change_pct, 2),
+                    'trend': r.trend.value,
+                    'ma5': round(r.ma5, 2) if r.ma5 else None,
+                    'ma10': round(r.ma10, 2) if r.ma10 else None,
+                    'ma20': round(r.ma20, 2) if r.ma20 else None,
+                    'ma60': round(r.ma60, 2) if r.ma60 else None,
+                    'vol_ratio': round(r.vol_ratio, 2) if r.vol_ratio else None,
+                    'volume_signal': r.volume_signal.value if r.volume_signal else None,
+                    'signals': r.signals
+                } for r in self.rankings
             ]
         }
 
@@ -105,9 +135,38 @@ class PoolMonitor:
         self.stock_names = self._load_stock_names()
         
     def _load_stock_names(self) -> Dict[str, str]:
-        """加载股票名称映射"""
-        # 这里可以从配置文件或数据库加载
-        # 简化版本：返回空字典
+        """加载股票名称映射 - 优先使用CSV数据库"""
+        # 方式1: 使用CSV数据库 (推荐)
+        try:
+            name_map = get_all_names()
+            if name_map:
+                print(f"✓ 从CSV数据库加载了 {len(name_map)} 个股票名称")
+                return name_map
+        except Exception as e:
+            print(f"CSV数据库加载失败: {e}")
+        
+        # 方式2: 使用 akshare (备用)
+        try:
+            import akshare as ak
+            name_map = {}
+            stock_df = ak.stock_zh_a_spot_em()
+            for _, row in stock_df.iterrows():
+                code = row['代码']
+                name = row['名称']
+                if code.startswith('6'):
+                    symbol = f"{code}.SH"
+                elif code.startswith('0') or code.startswith('3'):
+                    symbol = f"{code}.SZ"
+                else:
+                    symbol = code
+                name_map[symbol] = name
+            print(f"✓ 从 akshare 加载了 {len(name_map)} 个股票名称")
+            return name_map
+        except Exception as e:
+            print(f"akshare 获取名称失败: {e}")
+        
+        # 方式3: 空字典 (最后备用)
+        print("⚠ 警告: 无法加载任何股票名称，返回空字典")
         return {}
     
     def fetch_stock_data(self, symbol: str, days: int = 70) -> pd.DataFrame:

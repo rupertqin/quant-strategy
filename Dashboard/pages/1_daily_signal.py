@@ -104,33 +104,88 @@ def get_market_regime():
 st.title("🔥 今日异动")
 st.caption("涨停板扫描 | 板块热度分析 | 市场状态监控")
 
-# ============= 顶部状态栏 =============
-col1, col2, col3, col4 = st.columns(4)
-
+# ============= 市场状态卡片 =============
 regime = get_market_regime()
+signals = load_daily_signals()
+
+# 第一行：主要指标
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
     regime_color = {'AGGRESSIVE': '🟢', 'DEFENSIVE': '🔴', 'NEUTRAL': '🟡', 'UNKNOWN': '⚪'}
-    regime_name = {'AGGRESSIVE': '积极', 'DEFENSIVE': '防御', 'NEUTRAL': '中性', 'UNKNOWN': '未知'}
+    regime_name = {'AGGRESSIVE': '积极进攻', 'DEFENSIVE': '防御避险', 'NEUTRAL': '震荡中性', 'UNKNOWN': '未知'}
     st.metric(
         label="市场状态",
         value=f"{regime_color.get(regime.get('regime'), '⚪')} {regime_name.get(regime.get('regime'), '未知')}"
     )
 
 with col2:
-    st.metric("风险评分", f"{regime.get('score', 0)}/10")
+    macro_score = regime.get('macro_score', 0)
+    tech_score = regime.get('tech_score', 0)
+    total_score = regime.get('score', 0)
+    st.metric(
+        label="综合评分",
+        value=f"{total_score}/10",
+        delta=f"宏观{macro_score} 技术{tech_score}",
+        delta_color="inverse"
+    )
 
 with col3:
-    signals = load_daily_signals()
-    st.metric("涨停家数", signals.get('total_zt_count', 0))
+    zt_count = signals.get('total_zt_count', 0)
+    zt_assessment = "活跃" if zt_count >= 50 else "正常" if zt_count >= 30 else "低迷"
+    st.metric("涨停家数", f"{zt_count}", zt_assessment)
 
 with col4:
     hot_sectors = signals.get('hot_sectors', [])
     st.metric("热点板块", len(hot_sectors))
 
-# 风险因素
+with col5:
+    # 涨跌家数
+    tech = regime.get('technical', {})
+    breadth = tech.get('breadth', {})
+    up_ratio = breadth.get('up_ratio', 0.5) * 100
+    st.metric("涨跌比", f"{up_ratio:.0f}%", f"↑{breadth.get('up', 0)} ↓{breadth.get('down', 0)}")
+
+# 第二行：详细信息
+tech = regime.get('technical', {})
+if tech:
+    st.markdown("### 📊 技术面指标")
+    tcol1, tcol2, tcol3, tcol4 = st.columns(4)
+    
+    with tcol1:
+        indices = tech.get('indices', {})
+        index_display = []
+        for name, data in list(indices.items())[:3]:
+            change = data.get('change', 0)
+            emoji = "🟢" if change > 0 else "🔴" if change < 0 else "⚪"
+            index_display.append(f"{emoji} {name}: {change:+.2f}%")
+        st.markdown("**主要指数**" + "<br>".join(index_display), unsafe_allow_html=True)
+    
+    with tcol2:
+        sectors = tech.get('sectors', {})
+        leader = sectors.get('leader', '中性')
+        bias = sectors.get('bias', 0)
+        st.metric("板块风格", leader, f"偏差{bias:.1f}%")
+    
+    with tcol3:
+        zt_stats = tech.get('zt_stats', {})
+        sentiment = zt_stats.get('sentiment', '未知')
+        hot_count = zt_stats.get('hot_sectors', 0)
+        st.metric("涨停情绪", sentiment, f"{hot_count}个热点")
+    
+    with tcol4:
+        st.markdown("**宏观因子**")
+        macro = regime.get('macro', {})
+        currency = macro.get('currency', {})
+        north = macro.get('north_money', {})
+        st.caption(f"汇率: {currency.get('current', 7.2):.3f} | 北向: {north.get('today', 0):+.0f}亿")
+
+# 风险/机会因素
+all_reasons = regime.get('reasons', []) + regime.get('tech_reasons', [])
 if regime.get('reasons'):
     st.warning(f"⚠️ 风险因素: {', '.join(regime['reasons'])}")
+if regime.get('tech_reasons'):
+    st.success(f"✅ 积极因素: {', '.join(regime['tech_reasons'])}")
 
 st.divider()
 
@@ -160,7 +215,13 @@ else:
         st.markdown("### 🔥 热点板块")
         
         hot_sectors = signals.get('hot_sectors', [])
-        if hot_sectors:
+        market_type = signals.get('market_type', '')
+        
+        if not hot_sectors and market_type == '普涨分散':
+            st.info(f"📊 **{market_type}**\n\n"
+                   f"今日涨停 {signals.get('total_zt_count', 0)} 家，" 
+                   f"但分布较分散，没有单一板块集中爆发。")
+        elif hot_sectors:
             for sector in hot_sectors[:10]:
                 with st.container():
                     st.markdown(f"""

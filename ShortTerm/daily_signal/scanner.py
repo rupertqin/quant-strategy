@@ -214,7 +214,10 @@ class LimitUpScanner:
 
         print(f"\n热点板块 (涨停家数 >= {min_count}):")
         if hot_sectors.empty:
-            print("  无")
+            if len(df_zt) >= 15:
+                print(f"  无集中热点（普涨行情，涨停分散在多个板块）")
+            else:
+                print("  无")
         else:
             for _, row in hot_sectors.iterrows():
                 print(f"  {row['所属行业']}: {row['limit_up_count']} 家")
@@ -255,16 +258,26 @@ class LimitUpScanner:
             })
 
         # 6. 保存结果
+        # 判断市场类型
+        if not sector_details and len(df_zt) >= 15:
+            market_type = '普涨分散'
+        elif not sector_details:
+            market_type = '冷清'
+        else:
+            market_type = '热点集中'
+        
         result = {
             'date': date,
             'total_zt_count': len(df_zt),
+            'market_type': market_type,
             'hot_sectors': sector_details,
             'signals': signals,
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
 
         # 确定输出目录 - 统一到 storage/outputs/shortterm/daily_signal
-        output_dir = Path(self.base_dir).parent.parent / "storage" / "outputs" / "shortterm" / "daily_signal"
+        # base_dir 是 ShortTerm/, 所以只需要 parent 到项目根目录
+        output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "daily_signal"
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # 保存两份文件：带日期的历史文件 + 不带日期的最新文件
@@ -287,7 +300,8 @@ class LimitUpScanner:
     def save_to_history(self, heat: pd.DataFrame):
         """保存板块热度历史数据"""
         # 统一到 storage/outputs/shortterm/daily_signal
-        output_dir = Path(self.base_dir).parent.parent / "storage" / "outputs" / "shortterm" / "daily_signal"
+        # base_dir 是 ShortTerm/, 所以只需要 parent 到项目根目录
+        output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "daily_signal"
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # 最新历史文件

@@ -22,7 +22,7 @@ class UnifiedDataClient:
         初始化统一数据客户端
         
         Args:
-            enable_baostock_fallback: 是否启用 baostock 作为备用源
+            enable_baostock_fallback: 是否启用 baostock 作为备用源（当前默认优先使用baostock）
         """
         self.enable_baostock_fallback = enable_baostock_fallback
         
@@ -187,6 +187,7 @@ class UnifiedDataClient:
     ) -> pd.DataFrame:
         """
         获取价格数据（自动识别股票/ETF）
+        优先使用 baostock，失败时回退到 akshare
         
         Args:
             symbol: 代码，如 "000428.SZ" 或 "510300"
@@ -201,21 +202,24 @@ class UnifiedDataClient:
         is_etf = (symbol.startswith("51") or symbol.startswith("15") or 
                   symbol.startswith("16") or symbol.startswith("50"))
         
+        # 优先使用 baostock（股票数据）
+        if is_stock and not is_etf and self._baostock_available:
+            try:
+                logger.info(f"Using baostock for {symbol}...")
+                return self._get_price_via_baostock(symbol, start_date, end_date)
+            except Exception as e:
+                logger.warning(f"baostock failed for {symbol}: {e}")
+        
+        # 回退到 akshare
         if self._akshare_available:
             try:
+                logger.info(f"Falling back to akshare for {symbol}...")
                 if is_stock and not is_etf:
                     return self.get_stock_hist(symbol, start_date, end_date, adjust)
                 else:
                     return self.get_etf_hist(symbol, start_date, end_date, adjust)
             except Exception as e:
                 logger.warning(f"akshare failed for {symbol}: {type(e).__name__}: {e}")
-        
-        if self.enable_baostock_fallback and self._baostock_available and is_stock:
-            logger.info(f"Trying baostock fallback for {symbol}...")
-            try:
-                return self._get_price_via_baostock(symbol, start_date, end_date)
-            except Exception as e:
-                logger.warning(f"baostock fallback failed for {symbol}: {e}")
         
         raise Exception(f"All data sources failed for {symbol}")
     

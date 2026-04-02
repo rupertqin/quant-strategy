@@ -145,6 +145,65 @@ storage/
             └── pool_ranking_YYYYMMDD.csv
 ```
 
+### 股票基本信息数据库
+
+从 baostock/akshare 获取所有A股公司基本信息，保存为CSV。用于Dashboard显示股票中文名称。
+
+**构建数据库（不定期执行）**：
+```bash
+# 方式1: 通过 run_scanner.py
+python ShortTerm/run_scanner.py build-db
+
+# 方式2: 直接运行模块
+python -m DataHub.build_stock_db
+
+# 强制重新构建（忽略缓存）
+python -m DataHub.build_stock_db --force
+```
+
+**查询数据库**：
+```bash
+# 查看数据库信息
+python -m DataHub.build_stock_db --info
+
+# 搜索股票
+python -m DataHub.build_stock_db --search 茅台
+python -m DataHub.build_stock_db --search 600519
+```
+
+**在代码中使用**：
+```python
+from DataHub.stock_names import get_stock_name, enrich_with_names
+
+# 获取股票名称
+name = get_stock_name('600519.SH')  # 返回 '贵州茅台'
+
+# 为数据添加名称
+enrich_with_names(data)  # 自动添加 name 字段
+```
+
+**数据库文件**：`storage/stock_basic_info.csv`
+- 数据来源：baostock（优先）/ akshare（备用）
+- 股票数量：约5000+只A股
+- 更新频率：建议季度/半年更新一次
+- 日常任务不需要执行此命令
+
+**数据字段**：
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `symbol` | 股票代码 | 600519.SH |
+| `name` | 股票名称 | 贵州茅台 |
+| `exchange` | 交易所 | SH/SZ |
+| `industry` | 所属行业 | C15酒、饮料和精制茶制造业 |
+| `industry_classification` | 行业分类标准 | 证监会行业分类 |
+| `ipo_date` | 上市日期 | 2001-08-27 |
+| `out_date` | 退市日期 | （空表示未退市） |
+| `status` | 上市状态 | 1=上市 |
+| `security_type` | 证券类型 | 1=股票 |
+| `industry_update_date` | 行业更新日期 | 2026-03-30 |
+| `update_time` | 数据更新时间 | 2026-04-02 17:35:32 |
+| `data_source` | 数据来源 | baostock |
+
 ### 数据刷新
 
 ```bash
