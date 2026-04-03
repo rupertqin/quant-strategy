@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 import json
+import time
 
 import pandas as pd
 import numpy as np
@@ -171,7 +172,7 @@ class PoolMonitor:
     
     def fetch_stock_data(self, symbol: str, days: int = 70) -> pd.DataFrame:
         """
-        获取股票历史数据
+        获取股票历史数据（包含实时价格更新）
         
         Args:
             symbol: 股票代码
@@ -287,13 +288,31 @@ class PoolMonitor:
         sell_signals = []
         watch_list = []
         
+        failed_stocks = []
+        failed_etfs = []
+        failed_hk = []
+        failed_others = []
+        
         for i, symbol in enumerate(self.stock_list, 1):
             print(f"[{i}/{len(self.stock_list)}] 分析 {symbol}...", end=' ')
             
             # 获取数据
             df = self.fetch_stock_data(symbol)
+            
+            # 如果不是最后一个股票，添加延时避免请求过快
+            if i < len(self.stock_list):
+                time.sleep(3)
+            
             if df.empty or len(df) < 20:
                 print("数据不足")
+                failed_stocks.append(symbol)
+                # 分类记录失败的股票
+                if symbol.endswith('.HK'):
+                    failed_hk.append(symbol)
+                elif symbol.startswith('51') or symbol.startswith('15') or symbol.startswith('16') or symbol.startswith('50'):
+                    failed_etfs.append(symbol)
+                else:
+                    failed_others.append(symbol)
                 continue
             
             # 分析
@@ -339,6 +358,28 @@ class PoolMonitor:
             watch_list=watch_list,
             rankings=all_indicators
         )
+        
+        # 打印失败股票列表
+        if failed_stocks or failed_etfs or failed_hk or failed_others:
+            print('\n' + '='*60)
+            print("数据获取失败的股票")
+            print('='*60)
+            if failed_etfs:
+                print(f"\n📊 ETF基金 ({len(failed_etfs)}只):")
+                for s in failed_etfs:
+                    name = self.stock_names.get(s, '')
+                    print(f"  - {s} {name}")
+            if failed_hk:
+                print(f"\n🇭🇰 港股 ({len(failed_hk)}只):")
+                for s in failed_hk:
+                    name = self.stock_names.get(s, '')
+                    print(f"  - {s} {name}")
+            if failed_others:
+                print(f"\n📈 其他A股 ({len(failed_others)}只):")
+                for s in failed_others:
+                    name = self.stock_names.get(s, '')
+                    print(f"  - {s} {name}")
+            print('='*60)
         
         # 打印摘要
         self._print_summary(report)
@@ -429,24 +470,27 @@ class PoolMonitor:
                 'signals': '|'.join(ind.signals)
             })
         
-        df = pd.DataFrame(rankings_data)
-        
-        # 4. 保存CSV排名 - 最新文件（在根目录）
-        csv_file_latest = base_output_dir / "pool_ranking_latest.csv"
-        df.to_csv(csv_file_latest, index=False, encoding='utf-8-sig')
-        
-        # 5. 保存CSV排名 - 分钟级历史文件（在日期文件夹）
-        csv_file_timed = date_folder / f"pool_ranking_{timestamp}.csv"
-        df.to_csv(csv_file_timed, index=False, encoding='utf-8-sig')
-        
-        # 6. 保存CSV排名 - 当天最新文件（在日期文件夹）
-        csv_file_daily = date_folder / "pool_ranking_latest.csv"
-        df.to_csv(csv_file_daily, index=False, encoding='utf-8-sig')
-        
-        print(f"\n报告已保存:")
-        print(f"  最新:     {json_file_latest}")
-        print(f"  当天:     {json_file_daily}")
-        print(f"  历史:     {json_file_timed}")
+        if rankings_data:
+            df = pd.DataFrame(rankings_data)
+            
+            # 4. 保存CSV排名 - 最新文件（在根目录）
+            csv_file_latest = base_output_dir / "pool_ranking_latest.csv"
+            df.to_csv(csv_file_latest, index=False, encoding='utf-8-sig')
+            
+            # 5. 保存CSV排名 - 分钟级历史文件（在日期文件夹）
+            csv_file_timed = date_folder / f"pool_ranking_{timestamp}.csv"
+            df.to_csv(csv_file_timed, index=False, encoding='utf-8-sig')
+            
+            # 6. 保存CSV排名 - 当天最新文件（在日期文件夹）
+            csv_file_daily = date_folder / "pool_ranking_latest.csv"
+            df.to_csv(csv_file_daily, index=False, encoding='utf-8-sig')
+            
+            print(f"\n报告已保存:")
+            print(f"  最新:     {json_file_latest}")
+            print(f"  当天:     {json_file_daily}")
+            print(f"  历史:     {json_file_timed}")
+        else:
+            print("\n警告: 没有有效数据，CSV文件未保存")
 
 
 def main():

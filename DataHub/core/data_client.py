@@ -88,15 +88,17 @@ class UnifiedDataClient:
         symbol: str,
         start_date: str,
         end_date: str,
+        period: str = "daily",
         adjust: str = "qfq"
     ) -> pd.DataFrame:
         """
-        获取A股历史行情数据
+        获取A股历史行情数据（支持日线/周线/月线）
         
         Args:
             symbol: 股票代码，如 "000428.SZ"
             start_date: 开始日期 (YYYY-MM-DD 或 YYYYMMDD)
             end_date: 结束日期
+            period: 周期 - "daily"(日线), "weekly"(周线), "monthly"(月线)
             adjust: 复权类型 - "qfq"(前复权), "hfq"(后复权), ""(不复权)
         
         Returns:
@@ -110,9 +112,17 @@ class UnifiedDataClient:
         start = start_date.replace("-", "")
         end = end_date.replace("-", "")
         
+        # period 参数映射: daily/weekly/monthly
+        period_map = {
+            "daily": "daily",
+            "weekly": "weekly", 
+            "monthly": "monthly"
+        }
+        ak_period = period_map.get(period, "daily")
+        
         df = ak.stock_zh_a_hist(
             symbol=symbol,
-            period="daily",
+            period=ak_period,
             start_date=start,
             end_date=end,
             adjust=adjust
@@ -131,15 +141,17 @@ class UnifiedDataClient:
         symbol: str,
         start_date: str,
         end_date: str,
+        period: str = "daily",
         adjust: str = "qfq"
     ) -> pd.DataFrame:
         """
-        获取ETF历史行情数据
+        获取ETF历史行情数据（支持日线/周线/月线）
         
         Args:
             symbol: ETF代码，如 "510300"
             start_date: 开始日期
             end_date: 结束日期
+            period: 周期 - "daily"(日线), "weekly"(周线), "monthly"(月线)
             adjust: 复权类型
         
         Returns:
@@ -153,9 +165,17 @@ class UnifiedDataClient:
         start = start_date.replace("-", "")
         end = end_date.replace("-", "")
         
+        # period 参数映射: daily/weekly/monthly
+        period_map = {
+            "daily": "daily",
+            "weekly": "weekly",
+            "monthly": "monthly"
+        }
+        ak_period = period_map.get(period, "daily")
+        
+        # fund_etf_hist_sina 不支持 period 参数
         df = ak.fund_etf_hist_sina(
             symbol=symbol,
-            period="daily",
             start_date=start,
             end_date=end,
             adjust="" if adjust == "" else "qfq"
@@ -164,11 +184,64 @@ class UnifiedDataClient:
         if (df is None or df.empty) and adjust == "qfq":
             df = ak.fund_etf_hist_em(
                 symbol=symbol.replace(".SH", "").replace(".SZ", ""),
-                period="daily",
+                period=ak_period,
                 start_date=start,
                 end_date=end,
                 adjust="qfq"
             )
+        
+        if df is not None and not df.empty:
+            if '日期' in df.columns:
+                df['日期'] = pd.to_datetime(df['日期'])
+                df = df.set_index('日期')
+            df = df.sort_index()
+        
+        return df
+    
+    def get_hk_stock_hist(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        period: str = "daily",
+        adjust: str = "qfq"
+    ) -> pd.DataFrame:
+        """
+        获取港股历史行情数据（支持日线/周线/月线）
+        
+        Args:
+            symbol: 港股代码，如 "00700.HK"
+            start_date: 开始日期
+            end_date: 结束日期
+            period: 周期 - "daily"(日线), "weekly"(周线), "monthly"(月线)
+            adjust: 复权类型
+        
+        Returns:
+            DataFrame 包含历史行情数据
+        """
+        if not self._akshare_available:
+            raise ImportError("akshare not available")
+        
+        import akshare as ak
+        
+        # 转换代码格式: 00700.HK -> 00700
+        code = symbol.replace(".HK", "")
+        
+        # period 参数映射
+        period_map = {
+            "daily": "day",
+            "weekly": "week",
+            "monthly": "month"
+        }
+        ak_period = period_map.get(period, "day")
+        
+        # 使用 akshare 获取港股数据
+        df = ak.stock_hk_hist(
+            symbol=code,
+            period=ak_period,
+            start_date=start_date,
+            end_date=end_date
+        )
         
         if df is not None and not df.empty:
             if '日期' in df.columns:
@@ -183,16 +256,18 @@ class UnifiedDataClient:
         symbol: str,
         start_date: str,
         end_date: str,
+        period: str = "daily",
         adjust: str = "qfq"
     ) -> pd.DataFrame:
         """
-        获取价格数据（自动识别股票/ETF）
+        获取价格数据（自动识别股票/ETF/港股）
         优先使用 baostock，失败时回退到 akshare
         
         Args:
-            symbol: 代码，如 "000428.SZ" 或 "510300"
+            symbol: 代码，如 "000428.SZ" 或 "510300" 或 "00700.HK"
             start_date: 开始日期
             end_date: 结束日期
+            period: 周期 - "daily"(日线), "weekly"(周线), "monthly"(月线)
             adjust: 复权类型
         
         Returns:
@@ -201,23 +276,26 @@ class UnifiedDataClient:
         is_stock = symbol.endswith(".SH") or symbol.endswith(".SZ")
         is_etf = (symbol.startswith("51") or symbol.startswith("15") or 
                   symbol.startswith("16") or symbol.startswith("50"))
+        is_hk = symbol.endswith(".HK")
         
-        # 优先使用 baostock（股票数据）
-        if is_stock and not is_etf and self._baostock_available:
+        # 优先使用 baostock（股票数据，支持日线）
+        if is_stock and not is_etf and not is_hk and self._baostock_available and period == "daily":
             try:
                 logger.info(f"Using baostock for {symbol}...")
                 return self._get_price_via_baostock(symbol, start_date, end_date)
             except Exception as e:
                 logger.warning(f"baostock failed for {symbol}: {e}")
         
-        # 回退到 akshare
+        # 回退到 akshare（支持日线/周线/月线）
         if self._akshare_available:
             try:
-                logger.info(f"Falling back to akshare for {symbol}...")
-                if is_stock and not is_etf:
-                    return self.get_stock_hist(symbol, start_date, end_date, adjust)
+                logger.info(f"Using akshare for {symbol} (period={period})...")
+                if is_hk:
+                    return self.get_hk_stock_hist(symbol, start_date, end_date, period, adjust)
+                elif is_stock and not is_etf:
+                    return self.get_stock_hist(symbol, start_date, end_date, period, adjust)
                 else:
-                    return self.get_etf_hist(symbol, start_date, end_date, adjust)
+                    return self.get_etf_hist(symbol, start_date, end_date, period, adjust)
             except Exception as e:
                 logger.warning(f"akshare failed for {symbol}: {type(e).__name__}: {e}")
         

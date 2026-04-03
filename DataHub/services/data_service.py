@@ -41,6 +41,7 @@ class DataService:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        period: str = "daily",
         use_cache: bool = True
     ) -> pd.DataFrame:
         """
@@ -50,12 +51,13 @@ class DataService:
             symbols: List of symbols (uses stock_list if None)
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
+            period: Period type - "daily" (日线), "weekly" (周线), "monthly" (月线)
             use_cache: Whether to use cached data
 
         Returns:
             DataFrame with Date as index and symbols as columns
         """
-        if use_cache:
+        if use_cache and period == "daily":
             cached = self.storage.load_prices()
             if not cached.empty:
                 return self._filter_by_date(cached, start_date, end_date)
@@ -65,8 +67,8 @@ class DataService:
         start = start_date or self._get_default_start()
         end = end_date or datetime.now().strftime("%Y-%m-%d")
 
-        df = self.provider.get_price_data(symbols, start, end)
-        if not df.empty:
+        df = self.provider.get_price_data(symbols, start, end, period)
+        if not df.empty and period == "daily":
             self.storage.save_prices(df)
 
         return df

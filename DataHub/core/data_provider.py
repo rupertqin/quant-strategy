@@ -23,6 +23,7 @@ class DataProvider:
         symbols: List[str],
         start_date: str,
         end_date: str,
+        period: str = "daily",
         adjust: str = "qfq"
     ) -> pd.DataFrame:
         """
@@ -32,6 +33,7 @@ class DataProvider:
             symbols: List of stock/ETF symbols
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
+            period: Period type - "daily" (日线), "weekly" (周线), "monthly" (月线)
             adjust: Adjustment type - "qfq" (forward), "hfq" (backward), "" (no adjustment)
 
         Returns:
@@ -43,7 +45,7 @@ class DataProvider:
 
         for i, symbol in enumerate(symbols):
             try:
-                df = self.client.get_price_data(symbol, start_date, end_date, adjust)
+                df = self.client.get_price_data(symbol, start_date, end_date, period, adjust)
                 if df is not None and not df.empty:
                     # 获取收盘价列
                     close_col = None

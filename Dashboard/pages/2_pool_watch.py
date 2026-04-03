@@ -61,22 +61,42 @@ def load_pool_watch_report():
     """加载股票池监控报告 - 读取最新的报告文件并添加股票名称"""
     report_dir = os.path.join(BASE_DIR, "storage", "outputs", "shortterm", "pool_watch")
     
-    # 首先尝试读取不带日期的最新文件
+    def _read_json_safe(file_path):
+        """安全读取JSON，处理空文件或无效数据"""
+        try:
+            if os.path.getsize(file_path) == 0:
+                return None
+            with open(file_path, 'r', encoding='utf-8') as f:
+                report = json.load(f)
+            # 检查是否有有效数据
+            if not report.get('all_stocks') and not report.get('rankings'):
+                return None
+            report = enrich_with_names(report)
+            # 添加文件修改时间
+            mtime = os.path.getmtime(file_path)
+            report['_generated_at'] = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+            return report
+        except Exception as e:
+            print(f"读取JSON失败 {file_path}: {e}")
+            return None
+    
+    # 只读取根目录的最新文件
     latest_file = os.path.join(report_dir, "pool_watch_latest.json")
     if os.path.exists(latest_file):
-        with open(latest_file, 'r', encoding='utf-8') as f:
-            report = json.load(f)
-            return enrich_with_names(report)
+        report = _read_json_safe(latest_file)
+        if report is not None:
+            return report
     
-    # 如果没有最新文件，尝试找到最新的带日期文件
-    if os.path.exists(report_dir):
-        files = [f for f in os.listdir(report_dir) if f.startswith("pool_watch_") and f.endswith(".json") and f != "pool_watch_latest.json"]
-        if files:
-            files.sort(reverse=True)
-            latest_file = os.path.join(report_dir, files[0])
-            with open(latest_file, 'r', encoding='utf-8') as f:
-                report = json.load(f)
-                return enrich_with_names(report)
+    # 如果根目录最新文件不存在或无效，检查当天日期文件夹
+    today = datetime.now().strftime('%Y-%m-%d')
+    today_dir = os.path.join(report_dir, today)
+    if os.path.exists(today_dir):
+        today_file = os.path.join(today_dir, "pool_watch_latest.json")
+        if os.path.exists(today_file):
+            report = _read_json_safe(today_file)
+            if report is not None:
+                return report
+    
     return {}
 
 
@@ -84,26 +104,40 @@ def load_pool_ranking():
     """加载股票池排名CSV - 读取最新的排名文件并添加股票名称"""
     report_dir = os.path.join(BASE_DIR, "storage", "outputs", "shortterm", "pool_watch")
     
-    # 首先尝试读取不带日期的最新文件
-    latest_file = os.path.join(report_dir, "pool_ranking_latest.csv")
-    if os.path.exists(latest_file):
-        df = pd.read_csv(latest_file)
-        # 添加名称列
-        if 'name' not in df.columns or df['name'].isna().all():
-            df['name'] = df['symbol'].apply(get_stock_name)
-        return df
-    
-    # 如果没有最新文件，尝试找到最新的带日期文件
-    if os.path.exists(report_dir):
-        files = [f for f in os.listdir(report_dir) if f.startswith("pool_ranking_") and f.endswith(".csv") and f != "pool_ranking_latest.csv"]
-        if files:
-            files.sort(reverse=True)
-            latest_file = os.path.join(report_dir, files[0])
-            df = pd.read_csv(latest_file)
+    def _read_csv_safe(file_path):
+        """安全读取CSV，处理空文件情况"""
+        try:
+            if os.path.getsize(file_path) == 0:
+                print(f"警告: CSV文件为空 - {file_path}")
+                return None
+            df = pd.read_csv(file_path)
+            if df.empty:
+                return None
             # 添加名称列
             if 'name' not in df.columns or df['name'].isna().all():
                 df['name'] = df['symbol'].apply(get_stock_name)
             return df
+        except Exception as e:
+            print(f"读取CSV失败 {file_path}: {e}")
+            return None
+    
+    # 只读取根目录的最新文件，不回退到旧文件
+    latest_file = os.path.join(report_dir, "pool_ranking_latest.csv")
+    if os.path.exists(latest_file):
+        df = _read_csv_safe(latest_file)
+        if df is not None:
+            return df
+    
+    # 如果根目录最新文件不存在或为空，检查当天日期文件夹
+    today = datetime.now().strftime('%Y-%m-%d')
+    today_dir = os.path.join(report_dir, today)
+    if os.path.exists(today_dir):
+        today_file = os.path.join(today_dir, "pool_ranking_latest.csv")
+        if os.path.exists(today_file):
+            df = _read_csv_safe(today_file)
+            if df is not None:
+                return df
+    
     return pd.DataFrame()
 
 
@@ -127,13 +161,131 @@ def get_trend_class(trend):
         return "trend-neutral"
 
 
-# ============= 页面标题 =============
-st.title("📊 股票池监控")
-st.caption("LongTerm股票池短线技术指标 | 均线系统 | 量价分析")
-
 # ============= 加载数据 =============
 report = load_pool_watch_report()
+generated_at = report.get('_generated_at', '未知') if report else '未知'
+all_stocks = report.get('all_stocks', [])
+
+# ============= 侧边栏筛选器 =============
+with st.sidebar:
+    st.header("📊 股票池操作")
+    
+    if st.button("运行股票池监控", type="primary"):
+        with st.spinner("正在分析股票池..."):
+            import subprocess
+            try:
+                result = subprocess.run(
+                    [sys.executable, "run_scanner.py", "pool"],
+                    cwd=os.path.join(BASE_DIR, "ShortTerm"),
+                    capture_output=True,
+                    text=True,
+                    timeout=180
+                )
+                if result.returncode == 0:
+                    st.success("分析完成!")
+                    st.rerun()
+                else:
+                    st.error(f"运行失败: {result.stderr}")
+            except Exception as e:
+                st.error(f"错误: {e}")
+    
+    st.divider()
+    
+    # 筛选器
+    st.subheader("筛选")
+    
+    # 初始化筛选条件
+    filter_trend = "全部"
+    filter_min_score = 0
+    filter_signal = "全部"
+    
+    if all_stocks:
+        df_all = pd.DataFrame(all_stocks)
+        
+        # 趋势筛选
+        if 'trend' in df_all.columns:
+            trends = df_all['trend'].dropna().unique().tolist()
+            filter_trend = st.selectbox("趋势", ["全部"] + sorted(trends))
+        
+        # 评分筛选
+        if 'score' in df_all.columns:
+            filter_min_score = st.slider("最低评分", 0, 100, 0)
+        
+        # 信号类型筛选
+        signal_types = ["全部", "🟢 BUY (评分≥80)", "🟡 WATCH (评分≥65)", "🔴 SELL (趋势向下)"]
+        filter_signal = st.selectbox("信号类型", signal_types)
+    else:
+        st.info("暂无数据用于筛选")
+    
+    st.divider()
+    st.caption("""
+    数据来源: ShortTerm/pool_watch
+    - 监控LongTerm股票池
+    - 技术指标: MA5/10/20/60
+    - 量价关系分析
+    - 综合评分系统
+    """)
+
+# ============= 页面标题 =============
+st.title("📊 股票池监控")
+st.caption(f"LongTerm股票池短线技术指标 | 均线系统 | 量价分析 | 数据生成时间: {generated_at}")
+
+# ============= 应用筛选到数据 =============
+filtered_stocks = all_stocks.copy() if all_stocks else []
+
+# 定义筛选函数
+def apply_filters(data_list):
+    """应用筛选条件到数据列表"""
+    if not data_list:
+        return []
+    
+    df = pd.DataFrame(data_list)
+    
+    # 应用趋势筛选
+    if filter_trend != "全部" and 'trend' in df.columns:
+        df = df[df['trend'] == filter_trend]
+    
+    # 应用评分筛选
+    if filter_min_score > 0 and 'score' in df.columns:
+        df = df[df['score'] >= filter_min_score]
+    
+    # 应用信号类型筛选
+    if filter_signal != "全部":
+        if "BUY" in filter_signal and 'score' in df.columns:
+            df = df[df['score'] >= 80]
+        elif "WATCH" in filter_signal and 'score' in df.columns:
+            df = df[(df['score'] >= 65) & (df['score'] < 80)]
+        elif "SELL" in filter_signal and 'trend' in df.columns:
+            df = df[df['trend'].isin(['STRONG_DOWN', 'DOWN'])]
+    
+    return df.to_dict('records') if not df.empty else []
+
+# 应用筛选到各个数据集
+if all_stocks:
+    filtered_stocks = apply_filters(all_stocks)
+    
+    # 显示筛选结果统计
+    if len(filtered_stocks) != len(all_stocks):
+        st.info(f"📊 筛选结果: {len(filtered_stocks)} / {len(all_stocks)} 只股票")
+
+# 筛选信号数据
+buy_signals_raw = report.get('buy_signals', [])
+sell_signals_raw = report.get('sell_signals', [])
+watch_list_raw = report.get('watch_list', [])
+
+# ============= 加载CSV数据 =============
 ranking_df = load_pool_ranking()
+
+buy_signals = apply_filters(buy_signals_raw)
+sell_signals = apply_filters(sell_signals_raw)
+watch_list = apply_filters(watch_list_raw)
+
+# 筛选CSV数据
+if not ranking_df.empty:
+    ranking_filtered = apply_filters(ranking_df.to_dict('records'))
+    ranking_df_filtered = pd.DataFrame(ranking_filtered) if ranking_filtered else pd.DataFrame()
+else:
+    ranking_df_filtered = pd.DataFrame()
 
 # 调试信息
 if st.checkbox("显示调试信息", value=False):
@@ -155,17 +307,16 @@ st.subheader(f"📅 {report.get('date', '今日')} 监控报告")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.metric("监控股票数", report.get('total_stocks', 0))
+    st.metric("监控股票数", len(filtered_stocks))
 
 with col2:
-    summary = report.get('summary', {})
-    st.metric("买入信号", summary.get('buy_count', 0), delta=None)
+    st.metric("买入信号", len(buy_signals), delta=None)
 
 with col3:
-    st.metric("卖出信号", summary.get('sell_count', 0), delta=None)
+    st.metric("卖出信号", len(sell_signals), delta=None)
 
 with col4:
-    st.metric("观察列表", summary.get('watch_count', 0), delta=None)
+    st.metric("观察列表", len(watch_list), delta=None)
 
 st.divider()
 
@@ -176,7 +327,6 @@ col_left, col_right = st.columns([1, 1])
 with col_left:
     st.markdown("### 🟢 买入信号")
     
-    buy_signals = report.get('buy_signals', [])
     if buy_signals:
         for sig in buy_signals[:10]:
             name = sig.get('name', '')
@@ -194,7 +344,6 @@ with col_left:
     
     st.markdown("### 🔴 卖出信号")
     
-    sell_signals = report.get('sell_signals', [])
     if sell_signals:
         for sig in sell_signals[:5]:
             name = sig.get('name', '')
@@ -214,7 +363,6 @@ with col_left:
 with col_right:
     st.markdown("### 🟡 观察列表")
     
-    watch_list = report.get('watch_list', [])
     if watch_list:
         for sig in watch_list[:10]:
             name = sig.get('name', '')
@@ -233,13 +381,12 @@ with col_right:
 st.divider()
 
 # ============= 全部股票列表 =============
-st.subheader(f"📈 股票池全列表 ({report.get('total_stocks', 0)}只)")
+st.subheader(f"📈 股票池全列表 ({len(filtered_stocks)}只)")
 
-all_stocks = report.get('all_stocks', [])
-if all_stocks:
+if filtered_stocks:
     # 转换为DataFrame显示
     df_data = []
-    for i, item in enumerate(all_stocks, 1):
+    for i, item in enumerate(filtered_stocks, 1):
         score_class = get_score_class(item['score'])
         trend_class = get_trend_class(item.get('trend', ''))
         
@@ -304,16 +451,16 @@ else:
     st.info("暂无股票数据")
 
 # ============= 详细数据表格（从CSV读取最新数据） =============
-if not ranking_df.empty:
+if not ranking_df_filtered.empty:
     st.divider()
-    st.subheader("📋 详细技术指标 (CSV数据)")
+    st.subheader(f"📋 详细技术指标 (CSV数据) - {len(ranking_df_filtered)}只股票")
     
     # 选择显示的列
     display_cols = ['symbol', 'name', 'score', 'close', 'change_pct', 
                    'ma5', 'ma10', 'ma20', 'ma60', 'vol_ratio', 'trend', 'signals']
     
-    available_cols = [c for c in display_cols if c in ranking_df.columns]
-    df_display = ranking_df[available_cols]
+    available_cols = [c for c in display_cols if c in ranking_df_filtered.columns]
+    df_display = ranking_df_filtered[available_cols]
     
     # 重命名列
     col_names = {
@@ -333,76 +480,3 @@ if not ranking_df.empty:
     df_display = df_display.rename(columns={k: v for k, v in col_names.items() if k in df_display.columns})
     
     st.dataframe(df_display, hide_index=True, use_container_width=True, height=400)
-
-# ============= 侧边栏操作 =============
-with st.sidebar:
-    st.header("📊 股票池操作")
-    
-    if st.button("运行股票池监控", type="primary"):
-        with st.spinner("正在分析股票池..."):
-            import subprocess
-            try:
-                result = subprocess.run(
-                    [sys.executable, "run_scanner.py", "pool"],
-                    cwd=os.path.join(BASE_DIR, "ShortTerm"),
-                    capture_output=True,
-                    text=True,
-                    timeout=180
-                )
-                if result.returncode == 0:
-                    st.success("分析完成!")
-                    st.rerun()
-                else:
-                    st.error(f"运行失败: {result.stderr}")
-            except Exception as e:
-                st.error(f"错误: {e}")
-    
-    st.divider()
-    
-    # 筛选器 - 使用all_stocks数据
-    st.subheader("筛选")
-    
-    all_stocks = report.get('all_stocks', [])
-    
-    if all_stocks:
-        # 转换为DataFrame便于筛选
-        df_all = pd.DataFrame(all_stocks)
-        
-        # 趋势筛选
-        if 'trend' in df_all.columns:
-            trends = df_all['trend'].dropna().unique().tolist()
-            selected_trend = st.selectbox("趋势", ["全部"] + sorted(trends))
-            
-            if selected_trend != "全部":
-                filtered = df_all[df_all['trend'] == selected_trend]
-                st.caption(f"筛选结果: {len(filtered)} 只股票")
-        
-        # 评分筛选
-        if 'score' in df_all.columns:
-            min_score = st.slider("最低评分", 0, 100, 50)
-            filtered = df_all[df_all['score'] >= min_score]
-            st.caption(f"评分≥{min_score}: {len(filtered)} 只股票")
-        
-        # 信号类型筛选
-        signal_types = ["全部", "🟢 BUY (评分≥80)", "🟡 WATCH (评分≥65)", "🔴 SELL (趋势向下)"]
-        selected_signal = st.selectbox("信号类型", signal_types)
-        
-        if selected_signal != "全部":
-            if "BUY" in selected_signal:
-                filtered = df_all[df_all['score'] >= 80]
-            elif "WATCH" in selected_signal:
-                filtered = df_all[(df_all['score'] >= 65) & (df_all['score'] < 80)]
-            elif "SELL" in selected_signal:
-                filtered = df_all[df_all['trend'].isin(['STRONG_DOWN', 'DOWN'])]
-            st.caption(f"筛选结果: {len(filtered)} 只股票")
-    else:
-        st.info("暂无数据用于筛选")
-    
-    st.divider()
-    st.caption("""
-    数据来源: ShortTerm/pool_watch
-    - 监控LongTerm股票池
-    - 技术指标: MA5/10/20/60
-    - 量价关系分析
-    - 综合评分系统
-    """)

@@ -119,20 +119,32 @@ def load_pool_watch_summary():
 
 
 def get_market_regime():
-    """获取市场状态"""
+    """获取市场状态 - 从JSON文件读取"""
     try:
         base = get_base_dir()
-        sys.path.insert(0, os.path.join(base, "ShortTerm"))
-        from daily_signal.market_regime import MarketRegime
-        regime = MarketRegime()
-        return regime.get_market_status()
+        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "daily_signal", "daily_signals.json")
+        if os.path.exists(signals_file):
+            with open(signals_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # 获取文件修改时间
+                mtime = os.path.getmtime(signals_file)
+                generated_at = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+                return {
+                    'regime': data.get('regime', 'UNKNOWN'),
+                    'score': data.get('composite_score', 50) / 10,
+                    'reasons': [],
+                    'timestamp': data.get('date', datetime.now().strftime('%Y-%m-%d')),
+                    'generated_at': generated_at
+                }
     except Exception as e:
-        return {
-            'regime': 'UNKNOWN',
-            'score': 0,
-            'reasons': [str(e)],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
+        pass
+    return {
+        'regime': 'UNKNOWN',
+        'score': 0,
+        'reasons': [],
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'generated_at': '未知'
+    }
 
 
 def run_longterm_optimization():
@@ -229,13 +241,15 @@ def refresh_data():
 
 # ============= 主界面 =============
 st.title("📈 Quant Dashboard - 量化交易看板")
-st.caption("长线战略配置 + 短线战术扫描")
+
+# 获取市场状态和时间戳
+regime = get_market_regime()
+st.caption(f"长线战略配置 + 短线战术扫描 | 数据生成时间: {regime.get('generated_at', '未知')}")
 
 # 顶部状态栏
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    regime = get_market_regime()
     regime_color = {'AGGRESSIVE': 'green', 'DEFENSIVE': 'red', 'NEUTRAL': 'orange'}
     regime_name = {'AGGRESSIVE': '积极', 'DEFENSIVE': '防御', 'NEUTRAL': '中性'}
     st.markdown(f"""
@@ -386,12 +400,21 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("仓位建议")
-    multiplier = 1.0
+    # 从JSON读取仓位建议
+    multiplier = 0.7  # 默认
     try:
         base = get_base_dir()
-        sys.path.insert(0, os.path.join(base, "ShortTerm"))
-        from daily_signal.market_regime import MarketRegime
-        multiplier = MarketRegime().get_position_multiplier()
+        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "daily_signal", "daily_signals.json")
+        if os.path.exists(signals_file):
+            with open(signals_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                regime_type = data.get('regime', 'NEUTRAL')
+                if regime_type == 'AGGRESSIVE':
+                    multiplier = 1.0
+                elif regime_type == 'DEFENSIVE':
+                    multiplier = 0.3
+                else:
+                    multiplier = 0.7
     except:
         pass
 
@@ -408,14 +431,24 @@ with col1:
 with col2:
     st.subheader("板块偏好")
 
+    # 从JSON读取热点板块
     try:
         base = get_base_dir()
-        sys.path.insert(0, os.path.join(base, "ShortTerm"))
-        from daily_signal.market_regime import MarketRegime
-        preferred = MarketRegime().get_sector_preference()
-        st.write("推荐关注板块:")
-        for sector in preferred:
-            st.markdown(f"<span class='hot-sector'>{sector}</span>", unsafe_allow_html=True)
+        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "daily_signal", "daily_signals.json")
+        if os.path.exists(signals_file):
+            with open(signals_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                hot_sectors = data.get('hot_sectors', [])
+                if hot_sectors:
+                    st.write("推荐关注板块:")
+                    for sector in hot_sectors[:5]:
+                        sector_name = sector.get('sector', '')
+                        if sector_name:
+                            st.markdown(f"<span class='hot-sector'>{sector_name}</span>", unsafe_allow_html=True)
+                else:
+                    st.write("暂无板块推荐")
+        else:
+            st.write("请运行短线策略获取板块推荐")
     except:
         st.write("请运行短线策略获取板块推荐")
 

@@ -27,6 +27,57 @@ warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
 
 
+def get_trading_date(dt: datetime = None) -> str:
+    """
+    获取当前交易日日期字符串 (YYYYMMDD)
+    
+    A股交易时间规则：
+    - 交易日：周一到周五（节假日除外）
+    - 交易时间：9:30-11:30, 13:00-15:00（盘前竞价从9:20开始）
+    - 16:00收盘后（考虑港股）到第二天9:20盘前，算作前一个交易日
+    
+    Args:
+        dt: 指定时间，默认为当前时间
+        
+    Returns:
+        交易日日期字符串，格式 'YYYYMMDD'
+    """
+    if dt is None:
+        dt = datetime.now()
+    
+    # A股盘前竞价开始时间 9:20，在此之前算作前一个交易日
+    market_open_time = dt.replace(hour=9, minute=20, second=0, microsecond=0)
+    
+    # 如果当前时间在当天9:20之前，算作前一个交易日
+    if dt < market_open_time:
+        dt = dt - timedelta(days=1)
+    
+    # 处理周末：如果结果是周六或周日，回退到周五
+    while dt.weekday() >= 5:  # 5=周六, 6=周日
+        dt = dt - timedelta(days=1)
+    
+    return dt.strftime('%Y%m%d')
+
+
+def get_trading_date_str(dt: datetime = None) -> str:
+    """
+    获取当前交易日日期字符串 (YYYY-MM-DD)
+    """
+    if dt is None:
+        dt = datetime.now()
+    
+    # A股盘前竞价开始时间 9:20，在此之前算作前一个交易日
+    market_open_time = dt.replace(hour=9, minute=20, second=0, microsecond=0)
+    
+    if dt < market_open_time:
+        dt = dt - timedelta(days=1)
+    
+    while dt.weekday() >= 5:
+        dt = dt - timedelta(days=1)
+    
+    return dt.strftime('%Y-%m-%d')
+
+
 class LimitUpScanner:
     """涨停板扫描器"""
 
@@ -72,13 +123,13 @@ class LimitUpScanner:
         获取某日涨停板数据
 
         Args:
-            date: 日期，格式 'YYYYMMDD'，默认今天
+            date: 日期，格式 'YYYYMMDD'，默认当前交易日（考虑A股开盘时间）
 
         Returns:
             涨停板 DataFrame
         """
         if date is None:
-            date = datetime.now().strftime('%Y%m%d')
+            date = get_trading_date()
 
         # 优先从 DataHub 获取
         try:
@@ -118,7 +169,7 @@ class LimitUpScanner:
     def get_industry_index_change(self, date: str = None) -> pd.DataFrame:
         """获取行业指数涨跌幅"""
         if date is None:
-            date = datetime.now().strftime('%Y%m%d')
+            date = get_trading_date()
 
         try:
             return self.data_client.get_industry_list()
@@ -140,7 +191,7 @@ class LimitUpScanner:
             return pd.DataFrame()
 
         heat = df_zt.groupby('所属行业').size().reset_index(name='limit_up_count')
-        heat['date'] = datetime.now().strftime('%Y%m%d')
+        heat['date'] = get_trading_date()
 
         return heat
 
@@ -190,11 +241,14 @@ class LimitUpScanner:
         """
         生成每日信号 - 宏观+技术面综合分析
 
+        Args:
+            date: 日期，格式 'YYYYMMDD'，默认当前交易日（考虑A股开盘时间）
+
         Returns:
             包含热点板块和推荐操作的字典
         """
         if date is None:
-            date = datetime.now().strftime('%Y%m%d')
+            date = get_trading_date()
 
         print(f"\n{'='*50}")
         print(f"扫描日期: {date}")
@@ -241,13 +295,44 @@ class LimitUpScanner:
         print(f"  板块风格: 进攻板块{sectors['offensive_avg']:+.2f}% vs 防守板块{sectors['defensive_avg']:+.2f}%")
         print(f"  风格偏向: {sectors['leader']}")
         
-        # 1.4 涨停统计（情绪）
-        zt_stats = self.market_regime.get_limit_up_stats()
+        # ========== 2. 获取涨停数据（统一数据源）==========
+        df_zt = self.get_today_zt_pool(date)
+        
+        # 1.4 涨停统计（使用同花顺数据更准确）
+        ths_zt = self.market_regime.get_limit_up_stats()
+        zt_count = ths_zt.get('zt_count', len(df_zt))
+        
+        # 热点板块统计仍基于股池数据（同花顺无法获取板块分布）
+        if not df_zt.empty and '所属行业' in df_zt.columns:
+            sector_counts = df_zt['所属行业'].value_counts()
+            hot_sectors_count = len(sector_counts[sector_counts >= 3])
+            max_sector_zt = int(sector_counts.iloc[0]) if len(sector_counts) > 0 else 0
+        else:
+            hot_sectors_count = 0
+            max_sector_zt = 0
+        
+        # 评估市场情绪
+        if zt_count >= 80:
+            sentiment = '极热'
+        elif zt_count >= 50:
+            sentiment = '活跃'
+        elif zt_count >= 30:
+            sentiment = '正常'
+        elif zt_count >= 15:
+            sentiment = '低迷'
+        else:
+            sentiment = '冷清'
+        
+        zt_stats = {
+            'zt_count': zt_count,
+            'hot_sectors': hot_sectors_count,
+            'max_sector_zt': max_sector_zt,
+            'sentiment': sentiment,
+            'assessment': f'{zt_count}家涨停/{hot_sectors_count}个热点板块' if hot_sectors_count > 0 else f'{zt_count}家涨停(分散)'
+        }
+        
         print(f"  涨停情绪: {zt_stats['zt_count']}家涨停，{zt_stats['hot_sectors']}个热点板块")
         print(f"  市场情绪: {zt_stats['sentiment']}")
-
-        # ========== 2. 获取涨停数据 ==========
-        df_zt = self.get_today_zt_pool(date)
         if df_zt.empty:
             print("\n未获取到涨停数据")
             return {
@@ -330,6 +415,34 @@ class LimitUpScanner:
         # 技术面综合评分
         tech_score = self._calculate_technical_score(breadth, indices, sectors, zt_stats)
         
+        # 1.5 跌停统计
+        print("\n📉 采集跌停统计...")
+        dt_stats = self.market_regime.get_limit_down_stats()
+        print(f"  跌停家数: {dt_stats.get('dt_count', 0)}家, 恐慌程度: {dt_stats.get('panic', '未知')}")
+        
+        # ========== 3. 宏观指标采集 ==========
+        print("\n🌍 采集宏观指标...")
+        
+        # 3.1 汇率
+        currency = self.market_regime.get_usd_cny_rate()
+        print(f"  汇率 USD/CNY: {currency.get('current', 7.2)}")
+        
+        # 3.2 北向资金
+        north_money = self.market_regime.get_north_money_flow()
+        print(f"  北向资金: 净买入{north_money.get('today', 0):.1f}亿")
+        
+        # 3.3 黄金价格
+        gold = self.market_regime.get_gold_price()
+        print(f"  黄金价格: {gold.get('current', 0):.2f} ({gold.get('change_pct', 0):+.2f}%)")
+        
+        # 3.4 美元指数
+        dxy = self.market_regime.get_dxy_index()
+        print(f"  美元指数: {dxy.get('current', 103.5):.2f} ({dxy.get('change_pct', 0):+.2f}%)")
+        
+        # 3.5 原油价格
+        oil = self.market_regime.get_oil_price()
+        print(f"  原油价格: {oil.get('current', 0):.2f} ({oil.get('change_pct', 0):+.2f}%)")
+        
         # 转换 numpy 类型为 Python 原生类型（用于JSON序列化）
         def convert_to_native(obj):
             if hasattr(obj, 'item'):  # numpy types
@@ -338,7 +451,7 @@ class LimitUpScanner:
         
         result = {
             'date': date,
-            'total_zt_count': int(len(df_zt)),
+            'total_zt_count': int(zt_count),  # 使用同花顺统计的涨停数
             'market_type': market_type,
             'hot_sectors': sector_details,
             'signals': signals,
@@ -374,13 +487,47 @@ class LimitUpScanner:
                 'zt_sentiment': {
                     'zt_count': int(zt_stats['zt_count']),
                     'hot_sectors_count': int(zt_stats['hot_sectors']),
-                    'max_sector_zt': int(zt_stats['max_sector_zt']),
+                    'max_sector_zt': int(convert_to_native(zt_stats['max_sector_zt'])),
                     'sentiment': str(zt_stats['sentiment']),
                     'assessment': str(zt_stats['assessment'])
+                },
+                'dt_sentiment': {
+                    'dt_count': int(dt_stats.get('dt_count', 0)),
+                    'panic': str(dt_stats.get('panic', '未知')),
+                    'risk_level': int(dt_stats.get('risk_level', 0)),
+                    'assessment': str(dt_stats.get('assessment', ''))
                 },
                 'composite_score': int(tech_score['score']),
                 'technical_outlook': str(tech_score['outlook']),
                 'technical_reasons': [str(r) for r in tech_score['reasons']]
+            },
+            # 新增：宏观指标
+            'macro_indicators': {
+                'currency': {
+                    'current': float(currency.get('current', 7.2)),
+                    'change_5d': float(currency.get('change_5d', 0))
+                },
+                'north_money': {
+                    'today': float(north_money.get('today', 0)),
+                    'inflow': float(north_money.get('inflow', 0)),
+                    'recent_3d_avg': float(north_money.get('recent_3d_avg', 0))
+                },
+                'gold': {
+                    'current': float(gold.get('current', 550)),
+                    'change_pct': float(gold.get('change_pct', 0)),
+                    'change': float(gold.get('change', 0)),
+                    'note': str(gold.get('note', ''))
+                },
+                'dxy': {
+                    'current': float(dxy.get('current', 103.5)),
+                    'change_pct': float(dxy.get('change_pct', 0)),
+                    'note': str(dxy.get('note', ''))
+                },
+                'oil': {
+                    'current': float(oil.get('current', 0)),
+                    'change_pct': float(oil.get('change_pct', 0)),
+                    'type': str(oil.get('type', '原油'))
+                }
             },
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
@@ -529,7 +676,7 @@ class LimitUpScanner:
         history.to_csv(history_file, index=False, encoding='utf-8-sig')
         
         # 同时保存带日期的历史文件
-        date_str = heat['date'].iloc[0] if not heat.empty else datetime.now().strftime('%Y-%m-%d')
+        date_str = heat['date'].iloc[0] if not heat.empty else get_trading_date_str()
         dated_history_file = output_dir / f"sector_heat_history_{date_str}.csv"
         heat.to_csv(dated_history_file, index=False, encoding='utf-8-sig')
 
