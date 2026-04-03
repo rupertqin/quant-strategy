@@ -3,6 +3,7 @@
 网络诊断脚本 - 检查数据源连通性
 """
 
+import os
 import socket
 import sys
 import time
@@ -81,11 +82,15 @@ def check_baostock():
     print("\n尝试登录...")
     try:
         lg = bs.login()
-        if lg.error_code == "0":
-            print(f"✓ 登录成功")
-            
-            # 尝试查询
-            print("\n尝试查询数据 (sh.000001)...")
+        if lg.error_code != "0":
+            print(f"✗ 登录失败: {lg.error_msg}")
+            return False
+
+        print(f"✓ 登录成功")
+        
+        # 尝试查询
+        print("\n尝试查询数据 (sh.000001)...")
+        try:
             rs = bs.query_history_k_data_plus("sh.000001", "date,close",
                                               start_date="2024-01-01",
                                               end_date="2024-01-10")
@@ -94,15 +99,12 @@ def check_baostock():
                 while rs.next():
                     count += 1
                 print(f"✓ 成功获取数据: {count} 条")
-                bs.logout()
                 return True
             else:
                 print(f"✗ 查询失败: {rs.error_msg}")
-                bs.logout()
                 return False
-        else:
-            print(f"✗ 登录失败: {lg.error_msg}")
-            return False
+        finally:
+            bs.logout()
     except Exception as e:
         print(f"✗ 操作失败: {type(e).__name__}: {e}")
         return False
@@ -113,8 +115,6 @@ def check_proxy():
     print("\n" + "="*50)
     print("检查代理设置")
     print("="*50)
-    
-    import os
     
     proxy_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy',
                   'ALL_PROXY', 'all_proxy']
@@ -143,22 +143,33 @@ def check_local_cache():
     # 检查价格数据
     price_file = storage_path / "raw" / "prices" / "prices.parquet"
     if price_file.exists():
-        import pandas as pd
-        df = pd.read_parquet(price_file)
-        print(f"✓ 价格缓存: {price_file}")
-        print(f"  形状: {df.shape}")
-        print(f"  日期范围: {df.index[0]} ~ {df.index[-1]}")
-        print(f"  股票数量: {len(df.columns)}")
+        try:
+            import pandas as pd
+            df = pd.read_parquet(price_file)
+            
+            # 检查数据有效性
+            if df.empty or len(df.index) == 0:
+                print(f"△ 价格缓存存在但为空: {price_file}")
+            else:
+                print(f"✓ 价格缓存: {price_file}")
+                print(f"  形状: {df.shape}")
+                print(f"  日期范围: {df.index[0]} ~ {df.index[-1]}")
+                print(f"  股票数量: {len(df.columns)}")
+        except Exception as e:
+            print(f"✗ 读取价格缓存失败: {type(e).__name__}: {e}")
     else:
         print(f"✗ 价格缓存不存在: {price_file}")
     
     # 检查涨停池数据
     zt_dir = storage_path / "raw" / "zt_pool"
     if zt_dir.exists():
-        files = list(zt_dir.glob("*.parquet"))
-        print(f"\n✓ 涨停池缓存: {len(files)} 个文件")
-        for f in sorted(files)[-3:]:
-            print(f"  - {f.name}")
+        try:
+            files = list(zt_dir.glob("*.parquet"))
+            print(f"\n✓ 涨停池缓存: {len(files)} 个文件")
+            for f in sorted(files)[-3:]:
+                print(f"  - {f.name}")
+        except Exception as e:
+            print(f"\n✗ 读取涨停池缓存失败: {type(e).__name__}: {e}")
     else:
         print(f"\n✗ 涨停池缓存不存在")
 
