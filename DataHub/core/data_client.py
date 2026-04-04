@@ -174,8 +174,10 @@ class UnifiedDataClient:
         ak_period = period_map.get(period, "daily")
         
         # fund_etf_hist_sina 不支持 period 参数
+        # 去掉 .SH/.SZ 后缀，只保留纯数字代码
+        clean_symbol = symbol.replace(".SH", "").replace(".SZ", "")
         df = ak.fund_etf_hist_sina(
-            symbol=symbol,
+            symbol=clean_symbol,
             start_date=start,
             end_date=end,
             adjust="" if adjust == "" else "qfq"

@@ -8,48 +8,48 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# 统一的请求配置
+_THS_HEADERS = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Cookie': 'vvvv=1; v=A61tP1CEuNxYRFww286hDMPQukIiCuHcaz5FsO-y6cSzZsO8t1rxrPuOVYF8',
+    'Pragma': 'no-cache',
+    'Upgrade-Insecure-Requests': '1',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+}
 
-def get_limit_down_count_from_ths() -> dict:
+_THS_BASE_URL = 'https://data.10jqka.com.cn/funds/ggzjl/field/zdf/order/{order}/page/{page}/ajax/1/free/1/'
+
+
+def _fetch_ths_data(order: str, threshold: float, color_class: str, limit_type: str) -> dict:
     """
-    从同花顺数据中心获取跌停股票数量
-    按涨跌幅排序，统计跌幅超过-10%的股票数量
+    统一获取同花顺涨跌停数据
+
+    Args:
+        order: 排序方式 'asc'(升序/跌停) 或 'desc'(降序/涨停)
+        threshold: 涨跌幅阈值 (如 9.5 表示涨幅>=9.5%或跌幅<=-9.5%)
+        color_class: CSS类名 'c-rise'(上涨红色) 或 'c-fall'(下跌绿色)
+        limit_type: 类型描述 '涨停' 或 '跌停'
 
     Returns:
-        {'dt_count': int, 'source': str}
+        {'count': int, 'source': str, 'note': str}
     """
-    headers = {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Cookie': 'refreshStat=off; v=A1eXPVby8mFRVXbtMSqbLp3O4MCknCv-BXCvcqmEcyaN2Hm-sWy7ThVAP8O6',
-        'Pragma': 'no-cache',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
-        'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"macOS"'
-    }
-
-    dt_count = 0
-    max_pages = 10  # 最多查询10页
+    count = 0
+    max_pages = 10
 
     try:
         for page in range(1, max_pages + 1):
-            url = f'https://data.10jqka.com.cn/funds/ggzjl/field/zdf/order/asc/page/{page}/ajax/1/free/1/'
+            url = _THS_BASE_URL.format(order=order, page=page)
 
-            resp = requests.get(url, headers=headers, timeout=15)
-            resp.encoding = 'gbk'  # 同花顺使用GBK编码
+            resp = requests.get(url, headers=_THS_HEADERS, timeout=15)
+            resp.encoding = 'gbk'
 
             if resp.status_code != 200:
                 logger.warning(f"同花顺接口返回状态码: {resp.status_code}")
                 break
 
-            # 解析HTML
             soup = BeautifulSoup(resp.text, 'html.parser')
             table = soup.find('table', class_='m-table')
 
@@ -57,128 +57,97 @@ def get_limit_down_count_from_ths() -> dict:
                 logger.warning(f"第{page}页没有找到数据表格")
                 break
 
-            # 提取涨跌幅数据
             rows = table.find('tbody').find_all('tr') if table.find('tbody') else []
 
-            page_dt_count = 0
+            page_count = 0
             page_has_data = False
 
             for row in rows:
-                # 查找涨跌幅列
-                zdf_td = row.find('td', class_='c-fall')
+                zdf_td = row.find('td', class_=color_class)
                 if zdf_td:
                     page_has_data = True
                     zdf_text = zdf_td.text.strip()
-                    # 提取百分比数字，例如 "-11.39%" -> -11.39
                     match = re.search(r'(-?\d+\.?\d*)%', zdf_text)
                     if match:
                         zdf = float(match.group(1))
-                        # 跌停定义：跌幅 >= 10% (创业板/科创板) 或 >= 9.9% (主板)
-                        # 同花顺数据用-10%作为界限
-                        if zdf <= -9.5:
-                            dt_count += 1
-                            page_dt_count += 1
+
+                        # 根据类型判断阈值
+                        if limit_type == '涨停' and zdf >= threshold:
+                            count += 1
+                            page_count += 1
+                        elif limit_type == '跌停' and zdf <= -threshold:
+                            count += 1
+                            page_count += 1
                         else:
-                            # 涨跌幅已经大于-9.5%，后面的股票跌幅会更小，直接返回
-                            logger.info(f"同花顺数据: 第{page}页发现涨跌幅{zdf}%>-9.5%，停止查询")
+                            # 未达到阈值，停止查询
+                            logger.info(f"同花顺数据: 第{page}页发现涨跌幅{zdf}%不满足条件，停止查询")
                             return {
-                                'dt_count': dt_count,
+                                'count': count,
                                 'source': f'同花顺数据中心(共查询{page}页)',
-                                'note': f'统计跌幅>=9.5%的股票'
+                                'note': f'统计{limit_type}>=|{threshold}%|的股票'
                             }
 
             if not page_has_data:
                 logger.info(f"同花顺数据: 第{page}页无数据，停止查询")
                 break
 
-            logger.info(f"同花顺数据: 第{page}页统计到{page_dt_count}家跌停，累计{dt_count}家")
+            logger.info(f"同花顺数据: 第{page}页统计到{page_count}家{limit_type}，累计{count}家")
 
-            # 如果这一页没有跌停股票了，后面的页也不会有
-            if page_dt_count == 0 and dt_count > 0:
+            # 如果这一页没有符合条件的股票，停止查询
+            if page_count == 0 and count > 0:
                 break
 
         return {
-            'dt_count': dt_count,
-            'source': f'同花顺数据中心',
-            'note': f'统计跌幅>=9.5%的股票'
+            'count': count,
+            'source': '同花顺数据中心',
+            'note': f'统计{limit_type}>=|{threshold}%|的股票'
         }
 
     except Exception as e:
-        logger.error(f"获取同花顺数据失败: {e}")
-        return {'dt_count': 0, 'source': '同花顺(失败)', 'note': str(e)}
+        logger.error(f"获取同花顺{limit_type}数据失败: {e}")
+        return {'count': 0, 'source': f'同花顺({limit_type}失败)', 'note': str(e)}
+
+
+def get_limit_down_count_from_ths() -> dict:
+    """
+    从同花顺数据中心获取跌停股票数量
+    按涨跌幅升序排序(asc)，统计跌幅超过-9.5%的股票数量
+
+    Returns:
+        {'dt_count': int, 'source': str, 'note': str}
+    """
+    result = _fetch_ths_data(
+        order='asc',
+        threshold=9.5,
+        color_class='c-fall',
+        limit_type='跌停'
+    )
+    return {
+        'dt_count': result['count'],
+        'source': result['source'],
+        'note': result['note']
+    }
 
 
 def get_limit_up_count_from_ths() -> dict:
     """
     从同花顺数据中心获取涨停股票数量
-    按涨跌幅倒序排序，统计涨幅超过10%的股票数量
+    按涨跌幅降序排序(desc)，统计涨幅超过9.5%的股票数量
+
+    Returns:
+        {'zt_count': int, 'source': str, 'note': str}
     """
-    headers = {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Cookie': 'refreshStat=off; v=A9kZs-Qo1IbW2YgSnrM9SA907s62ZsSft2Hxx_uOV8N7TPcwQ7bd6EeqAUOI',
-        'Pragma': 'no-cache',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
+    result = _fetch_ths_data(
+        order='desc',
+        threshold=9.5,
+        color_class='c-rise',
+        limit_type='涨停'
+    )
+    return {
+        'zt_count': result['count'],
+        'source': result['source'],
+        'note': result['note']
     }
-
-    zt_count = 0
-    max_pages = 10
-
-    try:
-        for page in range(1, max_pages + 1):
-            # 注意：涨停用order/desc倒序排列
-            url = f'https://data.10jqka.com.cn/funds/ggzjl/field/zdf/order/desc/page/{page}/ajax/1/free/1/'
-
-            resp = requests.get(url, headers=headers, timeout=15)
-            resp.encoding = 'gbk'
-
-            if resp.status_code != 200:
-                break
-
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            table = soup.find('table', class_='m-table')
-
-            if not table:
-                break
-
-            rows = table.find('tbody').find_all('tr') if table.find('tbody') else []
-
-            page_zt_count = 0
-            page_has_data = False
-
-            for row in rows:
-                # 涨停用c-rise类
-                zdf_td = row.find('td', class_='c-rise')
-                if zdf_td:
-                    page_has_data = True
-                    zdf_text = zdf_td.text.strip()
-                    match = re.search(r'(-?\d+\.?\d*)%', zdf_text)
-                    if match:
-                        zdf = float(match.group(1))
-                        if zdf >= 9.5:
-                            zt_count += 1
-                            page_zt_count += 1
-                        else:
-                            return {
-                                'zt_count': zt_count,
-                                'source': f'同花顺数据中心(共查询{page}页)',
-                                'note': f'统计涨幅>=9.5%的股票'
-                            }
-
-            if not page_has_data or (page_zt_count == 0 and zt_count > 0):
-                break
-
-        return {
-            'zt_count': zt_count,
-            'source': f'同花顺数据中心',
-            'note': f'统计涨幅>=9.5%的股票'
-        }
-
-    except Exception as e:
-        logger.error(f"获取同花顺涨停数据失败: {e}")
-        return {'zt_count': 0, 'source': '同花顺(失败)', 'note': str(e)}
 
 
 if __name__ == '__main__':

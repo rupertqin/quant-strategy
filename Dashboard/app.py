@@ -16,6 +16,10 @@ import subprocess
 # 添加项目路径
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, os.path.join(BASE_DIR, "Dashboard"))
+
+# 导入股票代码工具
+from lib.utils import StockCodeUtil, get_stock_name
 
 # ============= 配置 =============
 st.set_page_config(
@@ -269,7 +273,10 @@ with col3:
     longterm_weights = load_longterm_data()
     if not longterm_weights.empty:
         top_weight = longterm_weights.iloc[0]
-        st.metric("长线首选", top_weight['symbol'], f"{top_weight['weight']:.1%}")
+        top_symbol = top_weight['symbol']
+        top_name = get_stock_name(top_symbol)
+        display_text = f"{top_symbol}({top_name})" if top_name else top_symbol
+        st.metric("长线首选", display_text, f"{top_weight['weight']:.1%}")
     else:
         st.metric("长线首选", "N/A", "-")
 
@@ -333,21 +340,31 @@ with col_left:
     st.header("📈 长线配置 (战略)")
 
     if not longterm_weights.empty:
+        # 添加名称列用于显示
+        longterm_weights['display_name'] = longterm_weights['symbol'].apply(
+            lambda x: f"{x}({get_stock_name(x)})" if get_stock_name(x) else x
+        )
+        
         # 饼图
         import plotly.express as px
         fig_pie = px.pie(
             longterm_weights,
             values='weight',
-            names='symbol',
+            names='display_name',
             title="资产配置",
             hole=0.4
         )
         st.plotly_chart(fig_pie, use_container_width=True)
 
-        # 权重表格
+        # 权重表格 - 显示代码和名称
+        display_df = longterm_weights[['symbol', 'weight']].copy()
+        display_df['名称'] = display_df['symbol'].apply(get_stock_name)
+        display_df = display_df[['symbol', '名称', 'weight']]
+        display_df.columns = ['代码', '名称', '权重']
+        
         st.subheader("目标权重")
         st.dataframe(
-            longterm_weights.style.format({'weight': '{:.2%}'}),
+            display_df.style.format({'权重': '{:.2%}'}),
             use_container_width=True
         )
     else:

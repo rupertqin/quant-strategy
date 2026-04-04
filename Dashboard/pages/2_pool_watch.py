@@ -13,9 +13,31 @@ from datetime import datetime
 # 添加项目路径
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, os.path.join(BASE_DIR, "Dashboard"))
 
-# 导入股票名称映射
-from DataHub.stock_names import enrich_with_names, get_stock_name
+# 导入股票代码工具
+from lib.utils import StockCodeUtil, get_stock_name
+
+
+def enrich_with_names(report: dict) -> dict:
+    """为报告中的股票数据添加名称"""
+    if not report:
+        return report
+    
+    # 为 all_stocks 添加名称
+    if 'all_stocks' in report and report['all_stocks']:
+        for item in report['all_stocks']:
+            if 'symbol' in item:
+                item['name'] = get_stock_name(item['symbol'])
+    
+    # 为信号列表添加名称
+    for key in ['buy_signals', 'sell_signals', 'watch_signals']:
+        if key in report and report[key]:
+            for item in report[key]:
+                if 'symbol' in item:
+                    item['name'] = get_stock_name(item['symbol'])
+    
+    return report
 
 st.set_page_config(
     page_title="股票池监控 - Quant Dashboard",
@@ -329,7 +351,7 @@ with col_left:
     
     if buy_signals:
         for sig in buy_signals[:10]:
-            name = sig.get('name', '')
+            name = get_stock_name(sig.get('symbol', ''))
             name_display = f"<span style='font-size:0.8em; opacity:0.8'>({name})</span>" if name else ""
             with st.container():
                 st.markdown(f"""
@@ -346,7 +368,7 @@ with col_left:
     
     if sell_signals:
         for sig in sell_signals[:5]:
-            name = sig.get('name', '')
+            name = get_stock_name(sig.get('symbol', ''))
             name_display = f"<span style='font-size:0.8em; opacity:0.8'>({name})</span>" if name else ""
             with st.container():
                 st.markdown(f"""
@@ -365,7 +387,7 @@ with col_right:
     
     if watch_list:
         for sig in watch_list[:10]:
-            name = sig.get('name', '')
+            name = get_stock_name(sig.get('symbol', ''))
             name_display = f"<span style='font-size:0.8em; opacity:0.8'>({name})</span>" if name else ""
             with st.container():
                 st.markdown(f"""
@@ -404,7 +426,7 @@ if filtered_stocks:
             '排名': i,
             '信号': signal_badge,
             '代码': item['symbol'],
-            '名称': item.get('name', ''),
+            '名称': get_stock_name(item.get('symbol', '')),
             '评分': item['score'],
             '最新价': f"¥{item['close']:.2f}",
             '涨跌幅': f"{item['change_pct']:+.2f}%",

@@ -78,6 +78,113 @@ def get_trading_date_str(dt: datetime = None) -> str:
     return dt.strftime('%Y-%m-%d')
 
 
+def get_data_close_time(dt: datetime = None) -> tuple[str, str]:
+    """
+    根据当前运行时间，确定数据收盘时间和状态
+    
+    A股交易时间规则：
+    - 盘前: 00:00-09:30 → 数据时间为上一交易日 15:00
+    - 盘中: 09:30-15:00 → 数据时间为当前时间（实时）
+    - 盘后: 15:00-24:00 → 数据时间为当天 15:00
+    - 周末/节假日：回退到最近一个交易日 15:00
+    
+    优先使用API获取交易日历，失败时使用本地计算
+    
+    Args:
+        dt: 指定时间，默认为当前时间
+        
+    Returns:
+        (数据时间字符串, 状态描述)
+    """
+    if dt is None:
+        dt = datetime.now()
+    
+    # 定义交易时间边界
+    market_open_am = dt.replace(hour=9, minute=30, second=0, microsecond=0)   # 上午开盘
+    market_close_noon = dt.replace(hour=11, minute=30, second=0, microsecond=0)  # 上午收盘
+    market_open_pm = dt.replace(hour=13, minute=0, second=0, microsecond=0)   # 下午开盘
+    market_close = dt.replace(hour=15, minute=0, second=0, microsecond=0)     # 下午收盘
+    
+    # 尝试使用API获取交易日历
+    def get_last_trading_date_from_api(check_dt: datetime) -> datetime | None:
+        """从API获取最近交易日"""
+        try:
+            import akshare as ak
+            # 获取最近7天的交易日历
+            end_date = check_dt.strftime('%Y-%m-%d')
+            start_date = (check_dt - timedelta(days=7)).strftime('%Y-%m-%d')
+            df = ak.tool_trading_date()
+            mask = (df["calendarDate"] >= start_date) & (df["calendarDate"] <= end_date)
+            trading_dates = df[mask]["calendarDate"].tolist()
+            if trading_dates:
+                # 返回最近一个交易日
+                last_date = trading_dates[-1]
+                return datetime.strptime(last_date, '%Y-%m-%d')
+        except Exception:
+            pass
+        return None
+    
+    # 判断当前是否为交易时段
+    is_trading_hours = (market_open_am <= dt < market_close) and dt.weekday() < 5
+    
+    # 盘前：使用上一交易日收盘时间
+    if dt < market_open_am:
+        # 优先使用API
+        last_trading = get_last_trading_date_from_api(dt - timedelta(days=1))
+        if last_trading:
+            close_time = last_trading.replace(hour=15, minute=0, second=0)
+            return close_time.strftime('%Y-%m-%d %H:%M:%S'), "盘前（API）"
+        # 回退：本地计算
+        prev_trading_day = dt - timedelta(days=1)
+        while prev_trading_day.weekday() >= 5:  # 跳过周末
+            prev_trading_day = prev_trading_day - timedelta(days=1)
+        close_time = prev_trading_day.replace(hour=15, minute=0, second=0)
+        return close_time.strftime('%Y-%m-%d %H:%M:%S'), "盘前（本地）"
+    
+    # 如果是周末，回退到最近交易日
+    if dt.weekday() >= 5:  # 5=周六, 6=周日
+        last_trading = get_last_trading_date_from_api(dt)
+        if last_trading:
+            close_time = last_trading.replace(hour=15, minute=0, second=0)
+            return close_time.strftime('%Y-%m-%d %H:%M:%S'), "周末（API）"
+        # 回退：本地计算（周五）
+        days_back = dt.weekday() - 4  # 周六=1, 周日=2
+        friday = dt - timedelta(days=days_back)
+        close_time = friday.replace(hour=15, minute=0, second=0)
+        return close_time.strftime('%Y-%m-%d %H:%M:%S'), "周末（本地）"
+    
+    # 盘后：使用当天收盘时间，但先验证当天是否为交易日
+    if dt >= market_close:
+        # 检查今天是否为交易日
+        today_str = dt.strftime('%Y-%m-%d')
+        try:
+            import akshare as ak
+            df = ak.tool_trading_date()
+            if today_str in df["calendarDate"].values:
+                close_time = dt.replace(hour=15, minute=0, second=0)
+                return close_time.strftime('%Y-%m-%d %H:%M:%S'), "盘后收盘（API）"
+            else:
+                # 今天不是交易日，找上一个交易日
+                last_trading = get_last_trading_date_from_api(dt)
+                if last_trading:
+                    close_time = last_trading.replace(hour=15, minute=0, second=0)
+                    return close_time.strftime('%Y-%m-%d %H:%M:%S'), "节假日（API）"
+        except Exception:
+            pass
+        # 回退：假设今天是交易日
+        close_time = dt.replace(hour=15, minute=0, second=0)
+        return close_time.strftime('%Y-%m-%d %H:%M:%S'), "盘后收盘（本地）"
+    
+    # 午间休市
+    if market_close_noon <= dt < market_open_pm:
+        close_time = dt.replace(hour=11, minute=30, second=0)
+        return close_time.strftime('%Y-%m-%d %H:%M:%S'), "午间休市"
+    
+    # 盘中：使用当前时间
+    close_time = dt.replace(hour=15, minute=0, second=0)
+    return dt.strftime('%Y-%m-%d %H:%M:%S'), "盘中实时"
+
+
 class LimitUpScanner:
     """涨停板扫描器"""
 
@@ -376,13 +483,21 @@ class LimitUpScanner:
 
             zt_stocks = df_zt[df_zt['所属行业'] == sector_name]
 
+            # 提取该板块下所有涨停个股代码（仅代码，不保存名称）
+            stocks_list = []
+            for _, stock_row in zt_stocks.iterrows():
+                stock_code = stock_row.get('代码', '')
+                if stock_code:
+                    stocks_list.append(str(stock_code))
+
             detail = {
                 'sector': sector_name,
                 'zt_count': int(row['limit_up_count']),
-                'lead_stock': zt_stocks.iloc[0]['名称'] if len(zt_stocks) > 0 else '',
+                'lead_stock_code': str(zt_stocks.iloc[0]['代码']) if len(zt_stocks) > 0 else '',
                 'lead_stock_pct': zt_stocks.iloc[0]['涨跌幅'] if len(zt_stocks) > 0 else 0,
                 'performance_5d': perf.get('period_return', 0),
-                'volatility': perf.get('volatility', 0)
+                'volatility': perf.get('volatility', 0),
+                'stocks': stocks_list  # 仅保存股票代码列表
             }
             sector_details.append(detail)
 
@@ -442,13 +557,35 @@ class LimitUpScanner:
         # 3.5 原油价格
         oil = self.market_regime.get_oil_price()
         print(f"  原油价格: {oil.get('current', 0):.2f} ({oil.get('change_pct', 0):+.2f}%)")
-        
+
+        # 4. 获取指数历史数据（用于图表展示）
+        print("\n📈 获取指数历史数据...")
+        index_history = {}
+        index_codes = {
+            '沪深300': '000300',
+            '中证1000': '000852',
+            '创业板': '399006',
+            '上证指数': '000001'
+        }
+        for name, code in index_codes.items():
+            try:
+                hist_df = self.market_regime._get_index_history(code, days=90)
+                if not hist_df.empty:
+                    # 转换为可序列化的格式
+                    hist_df['date'] = hist_df['date'].astype(str)
+                    index_history[name] = hist_df[['date', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+                    print(f"  ✓ {name}: {len(hist_df)} 条数据")
+                else:
+                    print(f"  ✗ {name}: 无数据")
+            except Exception as e:
+                print(f"  ✗ {name}: 获取失败 - {e}")
+
         # 转换 numpy 类型为 Python 原生类型（用于JSON序列化）
         def convert_to_native(obj):
             if hasattr(obj, 'item'):  # numpy types
                 return obj.item()
             return obj
-        
+
         result = {
             'date': date,
             'total_zt_count': int(zt_count),  # 使用同花顺统计的涨停数
@@ -529,7 +666,10 @@ class LimitUpScanner:
                     'type': str(oil.get('type', '原油'))
                 }
             },
-            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'index_history': index_history,
+            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'market_close_time': (close_time := get_data_close_time())[0],
+            'data_status': close_time[1]
         }
 
         # 确定输出目录 - 按日期分文件夹，支持分钟级报告

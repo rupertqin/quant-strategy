@@ -13,6 +13,10 @@ from datetime import datetime
 # 添加项目路径
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, os.path.join(BASE_DIR, "Dashboard"))
+
+# 导入股票代码工具
+from lib.utils import StockCodeUtil, get_stock_name
 
 # JSON 文件路径
 OUTPUT_DIR = os.path.join(BASE_DIR, "storage", "outputs", "shortterm", "daily_signal")
@@ -91,9 +95,14 @@ dt_sentiment = tech_indicators.get('dt_sentiment', {})
 zt_count = zt_sentiment.get('zt_count', data.get('zt_count', 0))
 dt_count = dt_sentiment.get('dt_count', data.get('dt_count', 0))
 
+# 从JSON获取指数历史数据（由后台脚本生成）
+index_history = data.get('index_history', {})
+
 # ============= 页面标题 =============
+market_close_time = data.get('market_close_time', '未知')
+data_status = data.get('data_status', '')
 st.title("🔥 今日异动")
-st.caption(f"涨停板扫描 | 板块热度分析 | 市场状态监控 | 数据生成时间: {generated_at}")
+st.caption(f"涨停板扫描 | 板块热度分析 | 市场状态监控 | 数据时间: {market_close_time} [{data_status}] | 生成时间: {generated_at}")
 
 # ============= 市场状态卡片 =============
 col1, col2, col3, col4, col5 = st.columns(5)
@@ -184,7 +193,7 @@ with tcol4:
     else:
         st.metric("涨跌停比", f"{zt_count}:{dt_count}", "🟡 平衡")
 
-# 第二行：指数表现
+# 第二行：指数表现与图表
 st.markdown("**主要指数表现**")
 if index_performance:
     idx_cols = st.columns(len(index_performance))
@@ -208,6 +217,56 @@ if index_performance:
 else:
     st.info("指数数据暂无")
 
+# 指数日线图表展示
+st.markdown("### 📈 指数日线走势")
+
+if index_history:
+    # 创建2x2的图表布局
+    chart_cols = st.columns(2)
+    col_idx = 0
+
+    for name, hist_data in index_history.items():
+        with chart_cols[col_idx % 2]:
+            st.markdown(f"**{name}**")
+
+            # 转换为DataFrame
+            hist_df = pd.DataFrame(hist_data)
+            if not hist_df.empty and 'date' in hist_df.columns and 'close' in hist_df.columns:
+                hist_df['date'] = pd.to_datetime(hist_df['date'])
+                hist_df = hist_df.set_index('date')
+                chart_df = hist_df[['close']].copy()
+                chart_df.columns = ['收盘价']
+
+                # 绘制收盘价线图
+                st.line_chart(chart_df, height=250)
+
+                # 获取该指数的极值点数据
+                idx_data = index_performance.get(name, {})
+                elliott = idx_data.get('elliott_wave', {})
+                structure = elliott.get('structure', {})
+                peaks = structure.get('recent_peaks', [])
+                troughs = structure.get('recent_troughs', [])
+
+                # 显示关键点位信息
+                if peaks or troughs:
+                    info_cols = st.columns(2)
+                    with info_cols[0]:
+                        if peaks:
+                            latest_peak = peaks[-1]
+                            st.caption(f"📈 最近峰值: {latest_peak[1]:.2f} ({latest_peak[0]})")
+                    with info_cols[1]:
+                        if troughs:
+                            latest_trough = troughs[-1]
+                            st.caption(f"📉 最近谷值: {latest_trough[1]:.2f} ({latest_trough[0]})")
+            else:
+                st.caption(f"{name} 数据不完整")
+
+        col_idx += 1
+        if col_idx == 2:  # 每行2个图表
+            chart_cols = st.columns(2)
+else:
+    st.info("暂无指数历史数据，请在后台脚本中生成（ShortTerm/run_scanner.py）")
+
 st.divider()
 
 # ============= 主要内容 =============
@@ -222,10 +281,25 @@ if hot_sectors:
     for idx, sector in enumerate(hot_sectors[:10]):
         with sector_cols[idx % 2]:
             with st.container():
+                # 构建个股列表显示（代码+名称，按需映射）
+                stock_codes = sector.get('stocks', [])
+                if stock_codes:
+                    # 格式: 代码(名称), 代码(名称)...
+                    stocks_text = ", ".join([f"{code}({get_stock_name(code)})" for code in stock_codes[:5]])
+                    if len(stock_codes) > 5:
+                        stocks_text += f" 等{len(stock_codes)}只"
+                else:
+                    stocks_text = "暂无个股数据"
+
+                # 获取龙头股名称（按需映射）
+                lead_code = sector.get('lead_stock_code', '')
+                lead_name = get_stock_name(lead_code) if lead_code else '-'
+
                 st.markdown(f"""
                 <div class="hot-sector-card">
                     <h4>{sector.get('sector', '未知')}</h4>
-                    <p>涨停 {sector.get('zt_count', 0)} 家 | 龙头: {sector.get('lead_stock', '-')}</p>
+                    <p>涨停 {sector.get('zt_count', 0)} 家 | 龙头: {lead_code}({lead_name})</p>
+                    <p style="font-size: 0.85em; opacity: 0.9;">{stocks_text}</p>
                 </div>
                 """, unsafe_allow_html=True)
 else:
@@ -432,4 +506,16 @@ with st.sidebar:
 
     if st.button("🔄 刷新数据", type="primary"):
         st.rerun()
+    
+    # 调试信息
+    with st.expander("🔧 调试信息"):
+        st.write(f"BASE_DIR: {BASE_DIR}")
+        mapper = StockCodeUtil.get_name_mapper()
+        st.write(f"名称映射数量: {len(mapper)}")
+        test_result = get_stock_name('600519')
+        st.write(f"测试 600519: '{test_result}'")
+        # 强制刷新按钮
+        if st.button("🔄 刷新名称映射"):
+            StockCodeUtil.get_name_mapper.cache_clear()
+            st.rerun()
 

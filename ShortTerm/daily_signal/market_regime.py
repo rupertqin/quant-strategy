@@ -1016,6 +1016,94 @@ class MarketRegime:
             logger.warning(f"获取板块强度失败: {e}")
             return {'offensive_avg': 0, 'defensive_avg': 0, 'bias': 0, 'leader': '中性', 'note': str(e)}
 
+    def _get_limit_threshold(self, symbol: str) -> dict:
+        """
+        根据股票代码获取涨跌幅限制阈值
+
+        Args:
+            symbol: 股票代码 (如 '300001.SZ', '688001.SH', '000001.SZ')
+
+        Returns:
+            {'up': 涨停阈值, 'down': 跌停阈值, 'is_st': 是否ST股}
+        """
+        # 提取纯数字代码
+        code = symbol.split('.')[0] if '.' in symbol else symbol
+
+        # 判断是否为ST股（简化判断：代码中包含ST标识或名称中包含ST）
+        # 注意：这里只做基本判断，精确判断需要结合股票名称
+        is_st = False
+
+        # 创业板 (300/301开头): 20%涨跌幅
+        if code.startswith('300') or code.startswith('301'):
+            return {'up': 19.8, 'down': -19.8, 'is_st': False, 'type': '创业板'}
+
+        # 科创板 (688/689开头): 20%涨跌幅
+        if code.startswith('688') or code.startswith('689'):
+            return {'up': 19.8, 'down': -19.8, 'is_st': False, 'type': '科创板'}
+
+        # 北交所 (8/43/83/87开头): 30%涨跌幅
+        if code.startswith('8') or code.startswith('43') or code.startswith('83') or code.startswith('87'):
+            return {'up': 29.7, 'down': -29.7, 'is_st': False, 'type': '北交所'}
+
+        # ST股 (需要名称判断，这里简化处理)
+        if is_st:
+            return {'up': 4.95, 'down': -4.95, 'is_st': True, 'type': 'ST'}
+
+        # 主板/中小板 (00/60/68开头): 10%涨跌幅
+        return {'up': 9.9, 'down': -9.9, 'is_st': False, 'type': '主板'}
+
+    def _calculate_limit_up_down(self, df_spot: pd.DataFrame) -> dict:
+        """
+        计算涨跌停家数，根据股票类型区分涨跌幅限制
+
+        Args:
+            df_spot: 实时行情数据，需包含 '代码' 和 '涨跌幅' 列
+
+        Returns:
+            {'zt_count': 涨停数, 'dt_count': 跌停数, 'zt_breakdown': 分类统计}
+        """
+        if df_spot.empty or '涨跌幅' not in df_spot.columns:
+            return {'zt_count': 0, 'dt_count': 0}
+
+        # 确保有代码列
+        code_col = None
+        for col in ['代码', 'symbol', '股票代码']:
+            if col in df_spot.columns:
+                code_col = col
+                break
+
+        if not code_col:
+            # 无法识别代码，使用默认10%判断
+            zt_count = len(df_spot[df_spot['涨跌幅'] >= 9.9])
+            dt_count = len(df_spot[df_spot['涨跌幅'] <= -9.9])
+            return {'zt_count': zt_count, 'dt_count': dt_count}
+
+        zt_counts = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+        dt_counts = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+
+        for _, row in df_spot.iterrows():
+            code = str(row[code_col])
+            change = float(row['涨跌幅'])
+
+            # 获取阈值
+            threshold = self._get_limit_threshold(code)
+            stock_type = threshold['type']
+
+            if change >= threshold['up']:
+                zt_counts[stock_type] = zt_counts.get(stock_type, 0) + 1
+            elif change <= threshold['down']:
+                dt_counts[stock_type] = dt_counts.get(stock_type, 0) + 1
+
+        total_zt = sum(zt_counts.values())
+        total_dt = sum(dt_counts.values())
+
+        return {
+            'zt_count': total_zt,
+            'dt_count': total_dt,
+            'zt_breakdown': zt_counts,
+            'dt_breakdown': dt_counts
+        }
+
     def get_limit_up_stats(self) -> dict:
         """
         获取涨停统计 - 优先使用同花顺数据中心
@@ -1060,13 +1148,16 @@ class MarketRegime:
             zt_count = 0
             source = ""
 
-            # 方法2: 使用东方财富实时行情
+            # 方法2: 使用东方财富实时行情（区分涨跌幅限制）
             try:
                 df_spot = ak.stock_zh_a_spot_em()
                 if not df_spot.empty and '涨跌幅' in df_spot.columns:
-                    zt_count = len(df_spot[df_spot['涨跌幅'] >= 9.9])
+                    limit_stats = self._calculate_limit_up_down(df_spot)
+                    zt_count = limit_stats['zt_count']
                     source = "东财实时行情"
+                    zt_breakdown = limit_stats.get('zt_breakdown', {})
                     logger.info(f"涨停统计: {zt_count}家, 来源: {source}")
+                    logger.info(f"  分类: 主板{zt_breakdown.get('主板', 0)}/创业板{zt_breakdown.get('创业板', 0)}/科创板{zt_breakdown.get('科创板', 0)}")
             except Exception as e:
                 logger.debug(f"东财实时行情统计涨停失败: {e}")
 
@@ -1155,16 +1246,16 @@ class MarketRegime:
             dt_st_count = 0
             source = ""
 
-            # 方法2: 使用东方财富实时行情
+            # 方法2: 使用东方财富实时行情（区分涨跌幅限制）
             try:
                 df_spot = ak.stock_zh_a_spot_em()
                 if not df_spot.empty and '涨跌幅' in df_spot.columns:
-                    dt_normal = len(df_spot[df_spot['涨跌幅'] <= -9.9])
-                    dt_st = len(df_spot[(df_spot['涨跌幅'] <= -4.9) & (df_spot['涨跌幅'] > -9.9)])
-                    dt_count = dt_normal
-                    dt_st_count = dt_st
+                    limit_stats = self._calculate_limit_up_down(df_spot)
+                    dt_count = limit_stats['dt_count']
                     source = "东财实时行情"
-                    logger.info(f"跌停统计: 普通{dt_normal}家/ST{dt_st}家, 来源: {source}")
+                    dt_breakdown = limit_stats.get('dt_breakdown', {})
+                    logger.info(f"跌停统计: {dt_count}家, 来源: {source}")
+                    logger.info(f"  分类: 主板{dt_breakdown.get('主板', 0)}/创业板{dt_breakdown.get('创业板', 0)}/科创板{dt_breakdown.get('科创板', 0)}")
             except Exception as e:
                 logger.debug(f"东财实时行情统计跌停失败: {e}")
 
