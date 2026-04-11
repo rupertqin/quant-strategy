@@ -31,6 +31,7 @@ class StockDatabaseBuilder:
         self.base_dir = Path(__file__).parent.parent
         self.storage_dir = self.base_dir / "storage"
         self.csv_path = self.storage_dir / "stock_basic_info.csv"
+        self.etf_csv_path = self.storage_dir / "etf_basic_info.csv"
         
         # 确保存储目录存在
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -328,6 +329,107 @@ class StockDatabaseBuilder:
             logger.error(f"从 akshare 获取失败: {e}")
             return pd.DataFrame()
     
+    def fetch_all_etfs_from_akshare(self) -> pd.DataFrame:
+        """
+        从 akshare 获取所有ETF列表
+        
+        Returns:
+            DataFrame with ETF basic info
+        """
+        try:
+            import akshare as ak
+            
+            logger.info("正在从 akshare 获取ETF列表...")
+            
+            # 获取ETF实时行情数据（包含所有ETF）
+            df = ak.fund_etf_spot_em()
+            
+            if df.empty:
+                logger.warning("获取ETF数据为空")
+                return pd.DataFrame()
+            
+            # 标准化列名（akshare ETF接口列名与股票类似）
+            column_mapping = {
+                '代码': 'code',
+                '名称': 'name',
+                '最新价': 'price',
+                '涨跌幅': 'change_pct',
+            }
+            df = df.rename(columns=column_mapping)
+            
+            # 判断交易所（5开头是上海，1/2开头是深圳）
+            def get_exchange(code):
+                if code.startswith('5') or code.startswith('51') or code.startswith('58'):
+                    return 'SH'
+                elif code.startswith('1') or code.startswith('2'):
+                    return 'SZ'
+                else:
+                    # 根据代码长度和规则判断
+                    if len(code) == 6:
+                        if code.startswith('5'):
+                            return 'SH'
+                        elif code.startswith('1') or code.startswith('2'):
+                            return 'SZ'
+                    return 'SH'  # 默认上海
+            
+            df['exchange'] = df['code'].apply(get_exchange)
+            df['symbol'] = df['code'] + '.' + df['exchange']
+            
+            # ETF特有的字段
+            df['type'] = 'ETF'
+            
+            logger.info(f"从 akshare 获取到 {len(df)} 只ETF")
+            return df
+            
+        except Exception as e:
+            logger.error(f"从 akshare 获取ETF失败: {e}")
+            return pd.DataFrame()
+    
+    def build_etf_database(self, use_cache: bool = False) -> str:
+        """
+        构建ETF基本信息数据库
+        
+        Args:
+            use_cache: 如果CSV已存在，是否直接使用缓存而不重新获取
+            
+        Returns:
+            CSV文件的完整路径
+        """
+        if use_cache and self.etf_csv_path.exists():
+            logger.info(f"使用缓存的ETF CSV文件: {self.etf_csv_path}")
+            return str(self.etf_csv_path)
+        
+        print("\n" + "="*60)
+        print("开始构建ETF基本信息数据库")
+        print("="*60)
+        
+        # 从 akshare 获取ETF数据
+        df_etfs = self.fetch_all_etfs_from_akshare()
+        
+        if df_etfs.empty:
+            raise Exception("无法获取ETF列表")
+        
+        # 添加元信息
+        df_etfs['update_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        df_etfs['data_source'] = 'akshare'
+        
+        # 去重
+        df_etfs = df_etfs.drop_duplicates(subset=['symbol'], keep='first')
+        
+        # 排序
+        df_etfs = df_etfs.sort_values(['exchange', 'symbol'])
+        
+        # 保存为CSV
+        df_etfs.to_csv(self.etf_csv_path, index=False, encoding='utf-8-sig')
+        
+        print(f"\n✓ ETF数据库构建完成！")
+        print(f"  - ETF数量: {len(df_etfs)}")
+        print(f"  - 保存路径: {self.etf_csv_path}")
+        print(f"  - 更新时间: {df_etfs['update_time'].iloc[0]}")
+        print("="*60)
+        
+        return str(self.etf_csv_path)
+    
     def build_database(self, use_cache: bool = False) -> str:
         """
         构建股票基本信息数据库
@@ -463,16 +565,20 @@ def main():
     
     # 检查是否有命令行参数
     import argparse
-    parser = argparse.ArgumentParser(description='A股股票基本信息数据库构建工具')
-    parser.add_argument('--force', '-f', action='store_true', 
+    parser = argparse.ArgumentParser(description='A股股票/ETF基本信息数据库构建工具')
+    parser.add_argument('--force', '-f', action='store_true',
                         help='强制重新构建，忽略缓存')
     parser.add_argument('--search', '-s', type=str,
                         help='搜索股票，传入关键词')
     parser.add_argument('--info', '-i', action='store_true',
                         help='显示数据库信息')
-    
+    parser.add_argument('--etf', '-e', action='store_true',
+                        help='只构建ETF数据库')
+    parser.add_argument('--all', '-a', action='store_true',
+                        help='构建股票和ETF数据库')
+
     args = parser.parse_args()
-    
+
     if args.search:
         # 搜索模式
         result = builder.search_stock(args.search)
@@ -481,23 +587,59 @@ def main():
         else:
             print(f"\n找到 {len(result)} 条匹配结果:")
             print(result.to_string(index=False))
-    
+
     elif args.info:
         # 显示信息
+        print("\n" + "="*60)
+        print("数据库信息")
+        print("="*60)
+
+        # 股票数据库
         if builder.csv_path.exists():
             df = builder.load_database()
             stat = df['update_time'].iloc[0] if not df.empty else "未知"
-            print(f"\n股票数据库信息:")
+            print(f"\n股票数据库:")
             print(f"  - 文件路径: {builder.csv_path}")
             print(f"  - 股票数量: {len(df)}")
             print(f"  - 更新时间: {stat}")
             print(f"  - 数据源: {df['data_source'].iloc[0] if not df.empty else '未知'}")
         else:
-            print(f"\n数据库文件不存在: {builder.csv_path}")
-            print("请运行: python -m DataHub.build_stock_db")
-    
+            print(f"\n股票数据库不存在: {builder.csv_path}")
+
+        # ETF数据库
+        if builder.etf_csv_path.exists():
+            import pandas as pd
+            df = pd.read_csv(builder.etf_csv_path)
+            stat = df['update_time'].iloc[0] if not df.empty else "未知"
+            print(f"\nETF数据库:")
+            print(f"  - 文件路径: {builder.etf_csv_path}")
+            print(f"  - ETF数量: {len(df)}")
+            print(f"  - 更新时间: {stat}")
+            print(f"  - 数据源: {df['data_source'].iloc[0] if not df.empty else '未知'}")
+        else:
+            print(f"\nETF数据库不存在: {builder.etf_csv_path}")
+
+        print("\n" + "="*60)
+
+    elif args.etf:
+        # 只构建ETF数据库
+        try:
+            builder.build_etf_database(use_cache=not args.force)
+        except Exception as e:
+            print(f"\n✗ ETF构建失败: {e}")
+            sys.exit(1)
+
+    elif args.all:
+        # 构建股票和ETF数据库
+        try:
+            builder.build_database(use_cache=not args.force)
+            builder.build_etf_database(use_cache=not args.force)
+        except Exception as e:
+            print(f"\n✗ 构建失败: {e}")
+            sys.exit(1)
+
     else:
-        # 构建模式
+        # 默认构建股票数据库
         try:
             builder.build_database(use_cache=not args.force)
         except Exception as e:

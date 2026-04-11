@@ -105,7 +105,7 @@ class StockCodeUtil:
     def get_name_mapper(cls) -> dict:
         """
         获取全市场代码到名称的映射字典（缓存）
-        从本地 storage/stock_basic_info.csv 读取
+        从本地 storage/stock_basic_info.csv 和 etf_basic_info.csv 读取
         
         Returns:
             {code: name} 字典，code为6位纯数字
@@ -116,24 +116,46 @@ class StockCodeUtil:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         # lib/utils -> lib -> project_root
         project_root = os.path.dirname(os.path.dirname(current_dir))
-        csv_path = os.path.join(project_root, 'storage', 'stock_basic_info.csv')
         
+        mapper = {}
+        
+        # 1. 读取股票数据
+        stock_csv = os.path.join(project_root, 'storage', 'stock_basic_info.csv')
         try:
-            if os.path.exists(csv_path):
+            if os.path.exists(stock_csv):
                 import pandas as pd
-                df = pd.read_csv(csv_path)
+                df = pd.read_csv(stock_csv)
                 if not df.empty and 'symbol' in df.columns and 'name' in df.columns:
-                    # 从 symbol(如 600000.SH) 提取6位数字代码
                     codes = df['symbol'].astype(str).str.extract(r'(\d{6})', expand=False)
                     names = df['name'].astype(str).str.strip()
-                    mapper = dict(zip(codes, names))
-                    print(f"[StockCodeUtil] 从CSV加载 {len(mapper)} 条股票名称映射")
-                    return mapper
+                    mapper.update(dict(zip(codes, names)))
+                    print(f"[StockCodeUtil] 从stock_basic_info.csv加载 {len(codes)} 条股票名称映射")
             else:
-                print(f"[StockCodeUtil] CSV文件不存在: {csv_path}")
+                print(f"[StockCodeUtil] 股票CSV文件不存在: {stock_csv}")
         except Exception as e:
-            print(f"[StockCodeUtil] 读取CSV失败: {e}")
-        return {}
+            print(f"[StockCodeUtil] 读取股票CSV失败: {e}")
+        
+        # 2. 读取ETF数据
+        etf_csv = os.path.join(project_root, 'storage', 'etf_basic_info.csv')
+        try:
+            if os.path.exists(etf_csv):
+                import pandas as pd
+                df = pd.read_csv(etf_csv)
+                if not df.empty and 'symbol' in df.columns and 'name' in df.columns:
+                    codes = df['symbol'].astype(str).str.extract(r'(\d{6})', expand=False)
+                    names = df['name'].astype(str).str.strip()
+                    etf_count = len(codes)
+                    mapper.update(dict(zip(codes, names)))
+                    print(f"[StockCodeUtil] 从etf_basic_info.csv加载 {etf_count} 条ETF名称映射")
+            else:
+                print(f"[StockCodeUtil] ETF CSV文件不存在: {etf_csv}")
+        except Exception as e:
+            print(f"[StockCodeUtil] 读取ETF CSV失败: {e}")
+        
+        if mapper:
+            print(f"[StockCodeUtil] 总共加载 {len(mapper)} 条名称映射")
+        
+        return mapper
     
     @classmethod
     def get_name(cls, code_str: str) -> str:

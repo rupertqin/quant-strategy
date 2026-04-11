@@ -104,3 +104,7 @@ RETENTION = {
 
 # Logging
 LOG_LEVEL = "INFO"
+
+# Crawler settings - 请求间隔配置（秒）
+# 注意：间隔太短可能导致IP被封，太长则同步耗时增加
+CRAWLER_REQUEST_DELAY = 5  # 每只股票请求间隔5秒
