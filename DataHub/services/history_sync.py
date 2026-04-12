@@ -2,6 +2,27 @@
 历史数据同步服务 - 下载全市场股票历史日线数据到 Parquet
 
 每只股票一个文件，包含全部历史数据
+
+用法:
+    # 首次全量同步所有股票（断点续传）
+    python DataHub/services/history_sync.py --all --skip-existing
+    
+    # 每日增量更新（只更新到最新交易日）
+    python DataHub/services/history_sync.py --daily
+    
+    # 同步单只股票
+    python DataHub/services/history_sync.py --symbol 600519.SH
+    
+    # 查看同步摘要
+    python DataHub/services/history_sync.py --summary
+
+参数说明:
+    --all              同步所有股票
+    --skip-existing    跳过已有文件的股票（首次同步时大幅提速，不读取文件内容）
+    --daily            每日增量更新模式（自动跳过非交易日）
+    --symbol           指定单只股票同步
+    --full             全量更新（覆盖已有数据）
+    --summary          显示已同步数据摘要
 """
 
 import sys
@@ -217,6 +238,27 @@ class HistorySyncService:
                 'message': 'Already up to date'
             }
         
+        # 检查 start_date 到 end_date 之间是否包含工作日（排除全是周末的情况）
+        start_dt = datetime.strptime(start_date, "%Y%m%d")
+        end_dt = datetime.strptime(end_date, "%Y%m%d")
+        
+        has_weekday = False
+        current_dt = start_dt
+        while current_dt <= end_dt:
+            if current_dt.weekday() < 5:  # 0-4 是周一到周五
+                has_weekday = True
+                break
+            current_dt += pd.Timedelta(days=1)
+        
+        if not has_weekday:
+            logger.info(f"{symbol} 增量日期范围内无交易日，跳过")
+            return {
+                'status': 'success',
+                'symbol': symbol,
+                'records': 0,
+                'message': 'No trading days in range'
+            }
+        
         # 获取新数据
         new_df = self.fetch_stock_history(symbol, start_date, end_date)
         
@@ -256,7 +298,8 @@ class HistorySyncService:
     def sync_all(
         self,
         symbols: List[str] = None,
-        incremental: bool = True
+        incremental: bool = True,
+        skip_existing: bool = False
     ) -> dict:
         """
         同步所有股票数据
@@ -264,6 +307,7 @@ class HistorySyncService:
         Args:
             symbols: 股票代码列表，None表示全部
             incremental: 是否增量更新
+            skip_existing: 是否完全跳过已存在的文件（首次全量同步时用）
             
         Returns:
             同步结果统计
@@ -272,6 +316,17 @@ class HistorySyncService:
             if self.stock_list.empty:
                 return {'status': 'failed', 'message': '没有股票列表'}
             symbols = self.stock_list['symbol'].tolist()
+        
+        # 如果跳过已有文件，快速扫描已存在的股票
+        if skip_existing:
+            existing_symbols = set()
+            for f in self.raw_prices_dir.glob("*.parquet"):
+                existing_symbols.add(f.stem)
+            
+            original_count = len(symbols)
+            symbols = [s for s in symbols if s not in existing_symbols]
+            skipped_count = original_count - len(symbols)
+            logger.info(f"跳过已有文件的 {skipped_count} 只股票，实际需同步 {len(symbols)} 只")
         
         logger.info(f"开始同步 {len(symbols)} 只股票")
         
@@ -346,6 +401,7 @@ def main():
     parser.add_argument('--start-date', type=str, help='开始日期 YYYYMMDD')
     parser.add_argument('--end-date', type=str, help='结束日期 YYYYMMDD')
     parser.add_argument('--full', action='store_true', help='全量更新（非增量）')
+    parser.add_argument('--skip-existing', action='store_true', help='首次同步时跳过已有文件的股票（大幅提速）')
     parser.add_argument('--summary', action='store_true', help='显示同步摘要')
     parser.add_argument('--limit', type=int, help='限制股票数量（测试用）')
     
@@ -402,7 +458,8 @@ def main():
         # 默认使用增量模式，从已有数据的最新日期开始
         result = service.sync_all(
             symbols=symbols,
-            incremental=True  # 强制增量模式
+            incremental=True,  # 强制增量模式
+            skip_existing=args.skip_existing
         )
         print("\n同步结果:")
         print(f"  状态: {result['status']}")
@@ -421,7 +478,8 @@ def main():
         
         result = service.sync_all(
             symbols=symbols,
-            incremental=not args.full
+            incremental=not args.full,
+            skip_existing=args.skip_existing
         )
         print("\n同步结果:")
         print(f"  状态: {result['status']}")

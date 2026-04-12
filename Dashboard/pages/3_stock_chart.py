@@ -426,6 +426,7 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
                     <span class="tooltip-val" style="color:#ff9f43">MA5:<span id="tt-ma5">--</span></span>
                     <span class="tooltip-val" style="color:#00d2d3">MA10:<span id="tt-ma10">--</span></span>
                     <span class="tooltip-val" style="color:#5f27cd">MA20:<span id="tt-ma20">--</span></span>
+                    <span class="tooltip-val" style="color:#10ac84">MA60:<span id="tt-ma60">--</span></span>
                 </div>
                 <div class="tooltip-row">
                     <span class="tooltip-label">MACD:</span>
@@ -659,6 +660,9 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
                 
                 var ma20 = data.get(ma20Series);
                 document.getElementById('tt-ma20').textContent = (ma20 && ma20.value) ? ma20.value.toFixed(2) : '--';
+                
+                var ma60 = data.get(ma60Series);
+                document.getElementById('tt-ma60').textContent = (ma60 && ma60.value) ? ma60.value.toFixed(2) : '--';
                 
                 // 更新MACD
                 var dif = data.get(macdDifSeries);
