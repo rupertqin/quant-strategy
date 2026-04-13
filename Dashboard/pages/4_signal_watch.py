@@ -157,7 +157,7 @@ st.markdown("""
 def load_signals() -> dict:
     """加载信号数据 - 从 stock_signals_latest.json 读取"""
     filepath = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
-    
+
     if not filepath.exists():
         # 尝试查找日期版本
         signals_dir = BASE_DIR / "storage" / "outputs" / "signals"
@@ -167,11 +167,11 @@ def load_signals() -> dict:
             date_files = [f for f in files if not f.name.endswith("_latest.json")]
             if date_files:
                 filepath = date_files[-1]
-    
+
     if filepath.exists():
         with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
-    
+
     return {"status": "error", "message": "暂无信号数据，请先运行扫描器"}
 
 
@@ -229,23 +229,23 @@ def main():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+
     # 侧边栏筛选
     with st.sidebar:
         st.header("🔍 筛选条件")
-        
+
         # 数据说明
         st.info("📊 当前显示的价格均为**前复权**数据", icon="📈")
-        
+
         signal_type = st.radio(
             "信号类型",
             ["全部", "左侧信号", "右侧信号"],
             index=0
         )
-        
+
         signal_type_map = {"全部": "all", "左侧信号": "left", "右侧信号": "right"}
         selected_type = signal_type_map[signal_type]
-        
+
         # 加载数据（统一文件，通过 signal_type 筛选）
         data = load_signals()
 
@@ -268,10 +268,10 @@ def main():
                 )
             else:
                 selected_strengths = []
-            
+
             # 评分筛选
             min_score = st.slider("最低评分", 0, 100, 50)
-            
+
             # 信号名称筛选
             signal_names = list(set([s.get("signal_name", "") for s in signals]))
             if signal_names:
@@ -285,7 +285,7 @@ def main():
             selected_strengths = []
             min_score = 0
             selected_names = []
-        
+
         st.divider()
         st.info("""
         **使用说明**
@@ -313,17 +313,17 @@ def main():
         **📊 均线粘合指标**
         当多根均线纠缠在一起时，意味着市场在选择方向，一旦突破往往有大行情。
         """)
-    
+
     # 主内容区
     if data.get("status") != "success":
         st.warning(data.get("message", "暂无数据"))
         st.info("请运行扫描器生成数据:\n```\npython ShortTerm/daily_signal/stock_signal_scanner.py\n```")
         return
-    
+
     # 统计数据
     stats = data.get("stats", {})
     col1, col2, col3, col4 = st.columns(4)
-    
+
     with col1:
         st.markdown(f"""
         <div class="stats-card">
@@ -331,7 +331,7 @@ def main():
             <div class="stats-label">总信号数</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col2:
         st.markdown(f"""
         <div class="stats-card">
@@ -339,7 +339,7 @@ def main():
             <div class="stats-label">左侧信号</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col3:
         st.markdown(f"""
         <div class="stats-card">
@@ -347,7 +347,7 @@ def main():
             <div class="stats-label">右侧信号</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col4:
         scan_time = data.get('scan_time', '未知')
         st.markdown(f"""
@@ -356,20 +356,20 @@ def main():
             <div class="stats-label">扫描时间</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     st.markdown("---")
-    
+
     # 筛选信号
     filtered_signals = signals.copy()
-    
+
     if selected_strengths:
         filtered_signals = [s for s in filtered_signals if s.get("strength") in selected_strengths]
-    
+
     filtered_signals = [s for s in filtered_signals if s.get("score", 0) >= min_score]
-    
+
     if selected_names:
         filtered_signals = [s for s in filtered_signals if s.get("signal_name") in selected_names]
-    
+
     # 按股票分组聚合信号
     def group_signals_by_stock(signals_list):
         """将同一股票的多个信号聚合在一起"""
@@ -388,7 +388,7 @@ def main():
             stock_groups[symbol]['signals'].append(sig)
             stock_groups[symbol]['periods'].add(sig.get('period', 'daily'))
             stock_groups[symbol]['types'].add(sig.get('signal_type', 'left'))
-        
+
         # 计算每个股票的总分（使用后端计算的组合评分）
         for symbol, group in stock_groups.items():
             signals = group['signals']
@@ -418,19 +418,19 @@ def main():
             group['quality_concentration'] = quality_conc
             group['dimension_coverage'] = dim_coverage
             group['dimension_details'] = dim_details
-        
+
         return stock_groups
-    
+
     stock_groups = group_signals_by_stock(filtered_signals)
     grouped_stocks = list(stock_groups.values())
-    
+
     # 显示信号列表
     st.subheader(f"信号列表 (共 {len(grouped_stocks)} 只股票, {len(filtered_signals)} 个信号)")
-    
+
     if not filtered_signals:
         st.info("没有符合条件的信号")
         return
-    
+
     # 排序选项
     sort_col1, sort_col2 = st.columns([1, 4])
     with sort_col1:
@@ -450,20 +450,20 @@ def main():
         grouped_stocks.sort(key=lambda x: max([s.get('trigger_date', '') for s in x['signals']]), reverse=True)
     elif sort_by == "涨跌幅":
         grouped_stocks.sort(key=lambda x: max([s.get('change_pct', 0) for s in x['signals']]), reverse=True)
-    
+
     # 分页显示
     page_size = 20
     total_pages = (len(grouped_stocks) + page_size - 1) // page_size
-    
+
     if total_pages > 1:
         page = st.number_input("页码", 1, total_pages, 1) - 1
     else:
         page = 0
-    
+
     start_idx = page * page_size
     end_idx = min(start_idx + page_size, len(grouped_stocks))
     page_stocks = grouped_stocks[start_idx:end_idx]
-    
+
     # 渲染股票卡片（包含多个信号）
     for idx, stock_group in enumerate(page_stocks):
         symbol = stock_group['symbol']
@@ -472,22 +472,22 @@ def main():
         total_score = stock_group['total_score']
         periods = stock_group['periods']
         signal_types = stock_group['types']
-        
+
         # 确定主导信号类型（左侧/右侧）
         dominant_type = 'right' if 'right' in signal_types else 'left'
         signal_type_class = f"signal-{dominant_type}"
-        
+
         # 获取最新价格和涨跌幅
         latest_signal = max(signals, key=lambda x: x.get('trigger_date', ''))
         change_pct = latest_signal.get('change_pct', 0)
         change_color = "#ff4757" if change_pct > 0 else "#2ed573" if change_pct < 0 else "#333"
         change_symbol = "+" if change_pct > 0 else ""
-        
+
         # 获取最新价格和数据日期（底层接口默认前复权）
         latest_price = load_stock_latest_price(symbol)
         price_display = f"¥{latest_price:.2f}" if latest_price else "-"
         latest_data_date = load_stock_latest_date(symbol) or '未知'
-        
+
         # 周期标签
         period_tags = []
         period_colors = {'daily': '#3498db', 'weekly': '#9b59b6', 'monthly': '#e74c3c'}
@@ -496,16 +496,16 @@ def main():
             p_color = period_colors.get(p, '#666')
             period_tags.append(f'<span style="background: {p_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 5px;">{p_name}</span>')
         period_html = ''.join(period_tags)
-        
+
         # 多周期共振标识
         resonance_badge = ""
         if len(periods) >= 2:
             resonance_badge = '<span style="background: linear-gradient(135deg, #ff6b6b, #feca57); color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 8px;">🔥 多周期共振</span>'
-        
+
         # 使用容器卡片
         with st.container():
             col1, col2 = st.columns([6, 1])
-            
+
             with col1:
                 # 股票名称和数据日期同一行左右分布
                 name_col, date_col = st.columns([3, 1])
@@ -514,7 +514,8 @@ def main():
                     if st.button(
                         f"📈 {stock_name} ({symbol})",
                         key=f"btn_stock_{symbol}_{idx}_{page}",
-                        help=f"点击跳转到 {symbol} K线图"
+                        help=f"点击跳转到 {symbol} K线图",
+                        type="primary"
                     ):
                         st.session_state['selected_stock'] = symbol
                         st.session_state['selected_name'] = stock_name
@@ -522,14 +523,14 @@ def main():
                 with date_col:
                     # 数据日期右对齐
                     st.markdown(f'<div style="text-align: right; font-size: 11px; color: #888; margin-top: 8px;">📅 {latest_data_date}</div>', unsafe_allow_html=True)
-                
+
                 # 周期标签和共振标识
                 st.markdown(f'<div style="margin: 5px 0;">{period_html}{resonance_badge}</div>', unsafe_allow_html=True)
-                
+
                 # 使用模块化信号卡片显示所有信号
                 for sig in sorted(signals, key=lambda x: ({'daily': 0, 'weekly': 1, 'monthly': 2}.get(x.get('period', 'daily'), 0), -x.get('score', 0))):
                     st.markdown(render_signal_card(sig, idx), unsafe_allow_html=True)
-            
+
             with col2:
                 # 总评分徽章
                 score_bg = "#ff6b6b" if total_score >= 80 else "#feca57" if total_score >= 60 else "#dfe6e9"
@@ -617,13 +618,13 @@ def main():
                     <div style="font-size: 10px; color: #999; margin-top: 2px;">前复权</div>
                 </div>
                 """, unsafe_allow_html=True)
-        
+
         st.markdown("---")
-    
+
     # 分页信息
     if total_pages > 1:
         st.caption(f"显示第 {start_idx+1}-{end_idx} 只股票，共 {len(grouped_stocks)} 只，总信号数 {len(filtered_signals)} 个")
-    
+
     # 底部说明
     st.markdown("---")
     with st.expander("📊 信号类型说明"):
@@ -636,7 +637,7 @@ def main():
         | 超跌反弹 | 股价大幅偏离MA60，出现企稳K线 | 超跌修复 |
         | 缩量十字星 | 下跌后出现缩量十字星 | 企稳信号 |
         | 长下影线 | 出现长下影线，下方有支撑 | 支撑确认 |
-        
+
         ### 右侧信号（追涨/确认）
         | 信号名称 | 说明 | 适用场景 |
         |---------|------|---------|
