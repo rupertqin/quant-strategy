@@ -154,17 +154,19 @@ st.markdown("""
 
 # ============= 数据加载 =============
 @st.cache_data(ttl=300)
-def load_signals(signal_type: str = "all") -> dict:
-    """加载信号数据"""
-    filepath = BASE_DIR / "storage" / "outputs" / "signals" / f"stock_signals_{signal_type}_latest.json"
+def load_signals() -> dict:
+    """加载信号数据 - 从 stock_signals_latest.json 读取"""
+    filepath = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
     
     if not filepath.exists():
         # 尝试查找日期版本
         signals_dir = BASE_DIR / "storage" / "outputs" / "signals"
         if signals_dir.exists():
-            files = sorted(signals_dir.glob(f"stock_signals_{signal_type}_*.json"))
-            if files:
-                filepath = files[-1]
+            files = sorted(signals_dir.glob("stock_signals_*.json"))
+            # 排除 *_latest.json，找日期版本
+            date_files = [f for f in files if not f.name.endswith("_latest.json")]
+            if date_files:
+                filepath = date_files[-1]
     
     if filepath.exists():
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -244,12 +246,18 @@ def main():
         signal_type_map = {"全部": "all", "左侧信号": "left", "右侧信号": "right"}
         selected_type = signal_type_map[signal_type]
         
-        # 加载数据
-        data = load_signals(selected_type)
-        
+        # 加载数据（统一文件，通过 signal_type 筛选）
+        data = load_signals()
+
         if data.get("status") == "success":
-            signals = data.get("signals", [])
-            
+            all_signals = data.get("signals", [])
+
+            # 根据左侧/右侧/全部进行筛选
+            if selected_type != "all":
+                signals = [s for s in all_signals if s.get("signal_type") == selected_type]
+            else:
+                signals = all_signals
+
             # 强度筛选
             strengths = list(set([s.get("strength", "medium") for s in signals]))
             if strengths:

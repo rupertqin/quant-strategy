@@ -82,7 +82,7 @@ def convert_to_qfq(
     merged = pd.merge(df, factor_df, on='trade_date', how='left')
     
     # 向前填充缺失的复权因子
-    merged['adjust_factor'] = merged['adjust_factor'].fillna(method='ffill')
+    merged['adjust_factor'] = merged['adjust_factor'].ffill()
     
     # 获取最新复权因子（作为前复权基准）
     latest_factor = merged['adjust_factor'].iloc[-1]

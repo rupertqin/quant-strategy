@@ -188,7 +188,7 @@ def load_stock_signals(symbol: str) -> list:
     from pathlib import Path
 
     BASE_DIR = Path(__file__).parent.parent.parent
-    signals_file = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_all_latest.json"
+    signals_file = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
 
     if not signals_file.exists():
         return []

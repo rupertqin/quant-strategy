@@ -93,8 +93,9 @@ def main():
                 )[:15]:
                     print(f"    {sig_name}: {count}")
 
-            print(f"\n💾 数据已保存到: storage/outputs/signals/")
+            print(f"\n💾 数据已保存: stock_signals_latest.json")
             print(f"🌐 请在 Dashboard 中查看: streamlit run Dashboard/app.py")
+            print(f"\n📋 提示: 所有信号保存在一个文件中，通过 signal_type 字段区分左侧/右侧")
         else:
             print(f"\n❌ 扫描失败: {result.get('message', '未知错误')}")
 

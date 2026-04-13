@@ -109,16 +109,24 @@ class SignalCalculator:
                 # 2. 计算变异系数（Coefficient of Variation）
                 cv = ma_std / ma_mean
 
-                # 3. 计算均线的斜率（使用最小二乘法）
-                def calc_slope(x):
-                    if len(x) < 2:
-                        return np.nan
-                    # 线性回归：y = slope * x + intercept
-                    x_vals = np.arange(len(x))
-                    slope = np.polyfit(x_vals, x, 1)[0]
-                    return slope
-
-                slope = df[ma].rolling(window=window).apply(calc_slope, raw=True)
+                # 3. 计算均线的斜率（纯向量化最小二乘法）
+                # 线性回归斜率公式：slope = Σ(x-x̄)(y-ȳ) / Σ(x-x̄)²
+                # 对于等间距x(0,1,2...n-1)，可以预先计算权重
+                n = window
+                x_mean = (n - 1) / 2
+                # Σ(x-x̄)² = n(n²-1)/12
+                denominator = n * (n * n - 1) / 12
+                
+                # 计算 Σ(x-x̄)(y-ȳ) = Σ(x-x̄)y - ȳΣ(x-x̄) = Σ(x-x̄)y (因为Σ(x-x̄)=0)
+                # 创建权重数组：[-(n-1)/2, ..., 0, ..., (n-1)/2]
+                weights = np.arange(n) - x_mean
+                
+                # 使用卷积计算加权移动和
+                y = df[ma].values
+                # 手动计算加权滚动和（避免apply）
+                weighted_sum = np.convolve(y * np.ones_like(y), weights[::-1], mode='valid')
+                # 对齐长度（前面填充nan）
+                slope = np.concatenate([np.full(n-1, np.nan), weighted_sum]) / denominator
 
                 # 4. 计算趋势强度（归一化斜率）
                 # 将斜率转换为每期的百分比变化
@@ -1091,20 +1099,22 @@ class StockSignalScanner:
         return pd.DataFrame()
     
     def _save_result(self, result: Dict, signal_type: str):
-        """保存扫描结果"""
+        """保存扫描结果 - 统一保存为 all，通过 signal_type 字段区分左右侧"""
         date_str = datetime.now().strftime('%Y%m%d')
-        filename = f"stock_signals_{signal_type}_{date_str}.json"
+        
+        # 始终使用 all 作为文件名，信号本身有 signal_type 字段区分
+        filename = f"stock_signals_{date_str}.json"
         filepath = self.output_dir / filename
         
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         
         # 同时保存最新结果（供Dashboard使用）
-        latest_path = self.output_dir / f"stock_signals_{signal_type}_latest.json"
+        latest_path = self.output_dir / "stock_signals_latest.json"
         with open(latest_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"结果已保存: {filepath}")
+        logger.info(f"结果已保存: {filepath} ({result['total_signals']} 个信号)")
 
 
 def main():
