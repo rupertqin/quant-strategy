@@ -461,7 +461,7 @@ class HistorySyncService:
         else:
             combined_df = new_df
         
-        # 保存
+        # 保存（不复权原始价格）
         combined_df.to_parquet(file_path, index=False, compression='zstd')
         
         # 同步复权因子

@@ -33,7 +33,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.formatters import format_technicals, format_flat_mas, render_flat_ma_badge, detect_flat_mas_for_symbol, render_signal_card, format_ma_bonding
-from utils.adjustment import convert_to_qfq, load_adjust_factor
+
+# 导入底层数据接口（默认前复权）
+sys.path.insert(0, str(BASE_DIR))
+from DataHub.core.data_reader import load_stock_prices, load_stock_prices_raw
 
 # ============= 配置 =============
 st.set_page_config(
@@ -300,49 +303,34 @@ def resample_to_monthly(df: pd.DataFrame) -> pd.DataFrame:
 @st.cache_data(ttl=3600)
 def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
     """
-    加载股票历史数据（默认前复权）
-    
+    加载股票历史数据（使用底层接口，默认前复权）
+
     Args:
         symbol: 股票代码
         force_adjust: 强制复权方式 - 'qfq'(前复权), None(不复权)
     """
-    file_path = BASE_DIR / "storage" / "raw" / "prices" / f"{symbol}.parquet"
-    
-    if not file_path.exists():
-        logger.warning(f"股票数据文件不存在: {file_path}")
-        return pd.DataFrame()
-    
     try:
-        # 加载原始价格数据
-        df = pd.read_parquet(file_path)
-        df['trade_date'] = pd.to_datetime(df['trade_date'])
-        
-        # 转换为前复权
-        if force_adjust == 'qfq':
-            df = convert_to_qfq(df, symbol=symbol)
-            if df is None or df.empty:
-                logger.warning(f"前复权转换失败: {symbol}")
-                return pd.DataFrame()
-        
-        # 过滤非交易日
-        df = df[df['volume'] > 0]
-        df = df[df['close'] > 0]
-        
-        df = df.sort_values('trade_date')
-        
+        # 使用底层接口，默认前复权
+        adjust = "qfq" if force_adjust == 'qfq' else None
+        df = load_stock_prices(symbol, adjust=adjust)
+
+        if df.empty:
+            logger.warning(f"股票数据为空: {symbol}")
+            return pd.DataFrame()
+
         # 计算均线
         df['ma5'] = df['close'].rolling(window=5).mean()
         df['ma10'] = df['close'].rolling(window=10).mean()
         df['ma20'] = df['close'].rolling(window=20).mean()
         df['ma60'] = df['close'].rolling(window=60).mean()
-        
+
         # 计算MACD
         df['macd_dif'], df['macd_dea'], df['macd_bar'] = calculate_macd(df)
-        
+
         # 计算KDJ
         df['kdj_k'], df['kdj_d'], df['kdj_j'] = calculate_kdj(df)
-        
-        logger.info(f"加载 {symbol} 前复权数据: {len(df)} 条")
+
+        logger.info(f"加载 {symbol} 数据: {len(df)} 条")
         return df
     except Exception as e:
         logger.error(f"加载数据失败 {symbol}: {e}")
@@ -826,6 +814,17 @@ def main():
     with st.sidebar:
         st.header("🔍 股票搜索")
         
+        # 复权方式选择
+        st.subheader("⚙️ 显示设置")
+        adjust_type = st.radio(
+            "复权方式",
+            options=["前复权", "不复权"],
+            index=0,  # 默认前复权
+            help="前复权: 以最新价格为基准调整历史价格 | 不复权: 原始价格"
+        )
+        
+        st.divider()
+        
         search_query = st.text_input(
             "输入代码或名称",
             placeholder="如: 600519 或 茅台",
@@ -877,8 +876,10 @@ def main():
     symbol = st.session_state['selected_stock']
     name = st.session_state.get('selected_name', '')
     
-    # 加载数据 - 强制使用前复权
-    df = load_stock_data(symbol, force_adjust='qfq')
+    # 根据选择加载数据
+    adjust_map = {"前复权": "qfq", "不复权": None}
+    selected_adjust = adjust_map.get(adjust_type, "qfq")
+    df = load_stock_data(symbol, force_adjust=selected_adjust)
     
     if df.empty:
         st.error(f"未找到 {symbol} 的数据，请先同步历史数据")
@@ -897,12 +898,16 @@ def main():
     bg_class = "price-up-bg" if is_up else "price-down-bg"
     change_symbol = "+" if is_up else ""
     
+    # 复权方式标签
+    adjust_badge = "前复权" if selected_adjust == "qfq" else "不复权"
+    badge_color = "#2ed573" if selected_adjust == "qfq" else "#95a5a6"
+    
     # ============= 头部信息区 =============
     st.markdown(f"""
     <div class="main-header">
         <div class="stock-info">
             <div>
-                <div class="stock-name">{name}</div>
+                <div class="stock-name">{name} <span style="font-size: 14px; background: {badge_color}; color: white; padding: 2px 8px; border-radius: 4px; margin-left: 8px;">{adjust_badge}</span></div>
                 <div class="stock-code">{symbol}</div>
             </div>
             <div style="flex: 1;"></div>

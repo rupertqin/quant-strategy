@@ -982,8 +982,71 @@ result = con.execute("""
 | **分区存储** | Parquet按年/月分区，查询只读必要文件 |
 | **双轨不重复** | 同一份数据不同时存两种格式，根据用途选择 |
 
-**下一步行动**：
-1. 创建历史数据同步脚本（下载到Parquet）
-2. 实现DuckDB查询工具类
-3. 迁移长线策略回测代码，改用Parquet数据源
-4. 建立Parquet文件分区管理（按年/月）
+---
+
+## 11. 复权数据使用规则
+
+### 11.1 核心原则
+
+**原始价格数据永不修改，复权在使用时实时计算。**
+
+### 11.2 存储层规则
+
+| 数据类型 | 存储位置 | 复权状态 | 说明 |
+|---------|---------|---------|------|
+| 原始价格 | `storage/raw/prices/*.parquet` | **不复权** | 已下载完成，**禁止修改** |
+| 复权因子 | `storage/raw/adjust_factors/*.parquet` | - | 用于前复权转换计算 |
+
+### 11.3 使用层规则
+
+**默认使用前复权**，通过 `convert_to_qfq()` 实时转换：
+
+```python
+from Dashboard.utils.adjustment import convert_to_qfq
+
+# 加载原始价格
+df = pd.read_parquet(f'storage/raw/prices/{symbol}.parquet')
+
+# 实时转换为前复权
+df_qfq = convert_to_qfq(df, symbol=symbol)
+```
+
+**转换时机：**
+- **图表展示** → 加载时转换
+- **信号计算** → 扫描时转换
+- **价格显示** → 展示时转换
+
+### 11.4 不复权数据用途
+
+不复权价格保留用于：
+- 真实成交计算（模拟撮合）
+- 分红送股事件分析
+- 特殊策略需求
+
+### 11.5 禁止行为
+
+❌ **严禁以下操作**：
+```python
+# 禁止：修改原始价格数据为前复权
+prices_df['close'] = prices_df['close'] * adjust_ratio  # 禁止！
+prices_df.to_parquet('storage/raw/prices/xxx.parquet')  # 禁止覆盖原始数据！
+
+# 禁止：重复存储前复权价格
+qfq_df.to_parquet('storage/raw/prices_qfq/xxx.parquet')  # 禁止！浪费空间
+```
+
+✅ **正确做法**：
+```python
+# 正确：使用时实时转换
+df = pd.read_parquet('storage/raw/prices/xxx.parquet')
+df_qfq = convert_to_qfq(df, symbol='xxx')
+```
+
+### 11.6 关键要点总结
+
+| 原则 | 说明 |
+|------|------|
+| **原始数据只读** | `storage/raw/prices/` 目录下的数据永不修改 |
+| **实时转换** | 前复权在使用时通过 `convert_to_qfq()` 计算 |
+| **默认前复权** | 图表、信号、展示默认使用前复权价格 |
+| **保留不复权** | 原始数据保留用于特殊场景 |

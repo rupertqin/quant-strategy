@@ -29,6 +29,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 
 from lib.utils import get_stock_name
+from DataHub.core.data_reader import load_stock_prices, load_stock_prices_raw
 
 logging.basicConfig(
     level=logging.INFO,
@@ -664,57 +665,29 @@ class StockSignalScanner:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.prices_dir = Path(project_root) / "storage" / "raw" / "prices"
     
-    def load_stock_data(self, symbol: str, period: str = "daily") -> pd.DataFrame:
+    def load_stock_data(self, symbol: str, period: str = "daily", adjust: str = "qfq") -> pd.DataFrame:
         """
-        加载股票数据（从Parquet文件）
-        
+        加载股票数据（使用底层接口，默认前复权）
+
         Args:
             symbol: 股票代码
             period: 周期 - daily(日线)/weekly(周线)/monthly(月线)
+            adjust: 复权方式 - "qfq"(前复权)/None(不复权)
         """
         try:
-            # 根据周期选择文件路径
             if period == "daily":
-                filepath = self.prices_dir / f"{symbol}.parquet"
-            elif period == "weekly":
-                filepath = self.prices_dir / "weekly" / f"{symbol}.parquet"
-            elif period == "monthly":
-                filepath = self.prices_dir / "monthly" / f"{symbol}.parquet"
+                # 使用底层接口，默认前复权
+                return load_stock_prices(symbol, adjust=adjust)
             else:
-                filepath = self.prices_dir / f"{symbol}.parquet"
-            
-            if not filepath.exists():
-                # 如果特定周期文件不存在，从日线合成
-                if period in ["weekly", "monthly"]:
-                    return self._resample_from_daily(symbol, period)
-                return pd.DataFrame()
-            
-            df = pd.read_parquet(filepath)
-            if df.empty:
-                return pd.DataFrame()
-            
-            # 确保列名正确
-            df.columns = [c.lower() for c in df.columns]
-            
-            # 转换日期格式
-            if 'trade_date' in df.columns:
-                df['trade_date'] = pd.to_datetime(df['trade_date'])
-            
-            # 过滤无效数据
-            df = df[df['volume'] > 0]
-            df = df[df['close'] > 0]
-            
-            # 按日期排序
-            df = df.sort_values('trade_date').reset_index(drop=True)
-            
-            return df
+                # 周线/月线从日线合成
+                return self._resample_from_daily(symbol, period, adjust=adjust)
         except Exception as e:
             logger.warning(f"加载 {symbol} {period} 数据失败: {e}")
             return pd.DataFrame()
     
-    def _resample_from_daily(self, symbol: str, period: str) -> pd.DataFrame:
-        """从日线数据合成周线/月线"""
-        daily_df = self.load_stock_data(symbol, "daily")
+    def _resample_from_daily(self, symbol: str, period: str, adjust: str = "qfq") -> pd.DataFrame:
+        """从日线数据合成周线/月线（基于前复权日线）"""
+        daily_df = self.load_stock_data(symbol, "daily", adjust=adjust)
         if daily_df.empty or len(daily_df) < 30:
             return pd.DataFrame()
         
@@ -835,6 +808,10 @@ class StockSignalScanner:
         if multi_period and len(signals) > 1:
             signals = self._detect_multi_period_resonance(signals)
 
+        # 应用信号组合评分（考虑信号数量和质量分布）
+        if len(signals) > 0:
+            signals = self._apply_signal_portfolio_scoring(signals)
+
         return signals
 
     def _detect_flat_mas(self, df_daily: pd.DataFrame, df_weekly: pd.DataFrame,
@@ -896,7 +873,7 @@ class StockSignalScanner:
             if base_name not in signal_groups:
                 signal_groups[base_name] = []
             signal_groups[base_name].append(sig)
-        
+
         # 检查共振
         for base_name, group in signal_groups.items():
             if len(group) >= 2:  # 至少两个周期有相同信号
@@ -905,8 +882,143 @@ class StockSignalScanner:
                     sig.score = min(sig.score + 15, 100)
                     if "共振" not in sig.description:
                         sig.description += " | 多周期共振"
-        
+
         return signals
+
+    def _apply_signal_portfolio_scoring(self, signals: List[StockSignal]) -> List[StockSignal]:
+        """
+        信号组合评分 - 综合考虑信号数量和质量分布
+
+        评分维度：
+        1. 基础质量分 (60%): 最高信号的原始评分
+        2. 信号集中度 (25%): 高分信号(≥80)占比
+        3. 信号数量 (15%): 适中数量(2-4个)最佳
+
+        原则：
+        - 信号过多(>6个)会扣分，因为可能是噪音
+        - 信号过少(1个)也扣分，缺乏验证
+        - 质量集中比数量更重要
+        """
+        if not signals:
+            return signals
+
+        n_signals = len(signals)
+        scores = [sig.score for sig in signals]
+        max_score = max(scores)
+        avg_score = sum(scores) / n_signals
+
+        # 1. 计算维度覆盖率（核心指标 - 多维度交叉验证）
+        dimension_coverage = self._calculate_dimension_coverage(signals)
+
+        # 2. 计算高分信号占比 (质量集中度)
+        high_quality_count = sum(1 for s in scores if s >= 80)
+        quality_concentration = high_quality_count / n_signals  # 0-1
+
+        # 3. 信号数量因子：2-5个信号最佳（放宽上限，更看重质量）
+        if n_signals <= 1:
+            quantity_factor = 0.8  # 信号太少
+        elif 2 <= n_signals <= 5:
+            quantity_factor = 1.0  # 最佳区间
+        elif 6 <= n_signals <= 8:
+            quantity_factor = 0.9  # 稍多
+        else:
+            quantity_factor = 0.8  # 过多，噪音风险
+
+        # 4. 计算综合评分（维度覆盖率最重要）
+        # 基础质量分
+        base_quality = max_score * 0.6 + avg_score * 0.4
+
+        # 维度覆盖率奖励（35%权重）- 核心！
+        dimension_bonus = dimension_coverage['score'] * 0.35
+
+        # 质量集中度奖励（15%权重）
+        quality_bonus = quality_concentration * 15
+
+        # 数量因子
+        adjusted_base = base_quality * quantity_factor
+
+        # 最终组合评分
+        portfolio_score = min(adjusted_base + dimension_bonus + quality_bonus, 100)
+
+        # 为每个信号添加维度信息
+        for sig in signals:
+            # 高分且多维度覆盖的组合获得额外加成
+            if sig.score >= 80 and dimension_coverage['coverage'] >= 0.6:
+                sig.score = min(sig.score + 5, 100)
+
+            # 添加组合评分和维度信息
+            sig.technicals['portfolio_score'] = round(portfolio_score, 1)
+            sig.technicals['signal_count'] = n_signals
+            sig.technicals['quality_concentration'] = round(quality_concentration, 2)
+            sig.technicals['dimension_coverage'] = round(dimension_coverage['coverage'], 2)
+            sig.technicals['dimension_details'] = dimension_coverage['details']
+
+        return signals
+
+    def _calculate_dimension_coverage(self, signals: List[StockSignal]) -> dict:
+        """
+        计算多维度覆盖率 - 核心指标
+
+        维度定义：
+        1. 交易方向维度: left(左侧) / right(右侧)
+        2. 周期维度: daily(日线) / weekly(周线) / monthly(月线)
+        3. 指标类型维度:
+           - trend(趋势): 均线多头排列、金叉
+           - momentum(动量): MACD、KDJ
+           - pattern(形态): 十字星、底背离、突破
+           - volume(量能): 放量、缩量
+
+        返回: {'score': 维度得分0-100, 'coverage': 覆盖率0-1, 'details': {各维度详情}}
+        """
+        if not signals:
+            return {'score': 0, 'coverage': 0, 'details': {}}
+
+        # 1. 交易方向维度
+        directions = set(sig.signal_type for sig in signals)
+        direction_score = min(len(directions) * 30, 50)  # 单侧30分，双侧50分
+
+        # 2. 周期维度
+        periods = set(sig.period for sig in signals)
+        period_score = len(periods) * 15  # 每个周期15分，最高45分
+
+        # 3. 指标类型维度（通过信号名称判断）
+        indicator_types = {'trend': 0, 'momentum': 0, 'pattern': 0, 'volume': 0}
+
+        for sig in signals:
+            name = sig.signal_name
+            if any(kw in name for kw in ['均线多头排列', '金叉', '突破']):
+                indicator_types['trend'] = 1
+            elif any(kw in name for kw in ['MACD', 'KDJ', 'RSI']):
+                indicator_types['momentum'] = 1
+            elif any(kw in name for kw in ['底背离', '十字星', '超跌', '长下影线']):
+                indicator_types['pattern'] = 1
+            elif any(kw in name for kw in ['放量', '缩量']):
+                indicator_types['volume'] = 1
+
+        unique_indicators = sum(indicator_types.values())
+        indicator_score = unique_indicators * 12  # 每种类型12分，最高48分
+
+        # 计算总维度分（满分100）
+        total_score = direction_score + period_score + indicator_score
+
+        # 计算覆盖率（实际覆盖维度 / 理想维度数）
+        # 理想：双侧 + 3周期 + 4种指标类型 = 8个维度
+        ideal_dimensions = 8
+        actual_dimensions = len(directions) + len(periods) + unique_indicators
+        coverage = actual_dimensions / ideal_dimensions
+
+        return {
+            'score': min(total_score, 100),
+            'coverage': coverage,
+            'details': {
+                'directions': list(directions),
+                'periods': list(periods),
+                'indicators': {k: v for k, v in indicator_types.items() if v > 0},
+                'direction_score': direction_score,
+                'period_score': period_score,
+                'indicator_score': indicator_score
+            }
+        }
     
     def scan_all(self, signal_type: str = "all", limit: int = None,
                  multi_period: bool = True) -> Dict:
@@ -943,8 +1055,11 @@ class StockSignalScanner:
                     stats["by_signal"][sig.signal_name] = 0
                 stats["by_signal"][sig.signal_name] += 1
 
-        # 按评分排序
-        all_signals.sort(key=lambda x: x['score'], reverse=True)
+        # 按组合评分排序（优先使用 portfolio_score，回退到 score）
+        all_signals.sort(
+            key=lambda x: (x.get('technicals', {}).get('portfolio_score', x['score']), x['score']),
+            reverse=True
+        )
 
         result = {
             "status": "success",

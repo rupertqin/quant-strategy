@@ -14,7 +14,12 @@ from datetime import datetime
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.formatters import format_technicals, format_flat_mas, render_flat_ma_badge, format_ma_bonding, render_signal_card
-from utils.adjustment import get_latest_price_qfq
+
+# 导入底层数据接口（默认前复权）
+BASE_DIR = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(BASE_DIR))
+from DataHub.core.data_reader import load_stock_latest_price
+
 import logging
 
 # 设置日志
@@ -215,12 +220,20 @@ def main():
     <div class="signal-header">
         <h1>📡 个股信号监控</h1>
         <p>基于技术面分析生成左侧（抄底）和右侧（追涨）交易信号</p>
+        <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
+            <span style="background: rgba(255,255,255,0.2); padding: 3px 10px; border-radius: 12px;">
+                📊 价格数据已前复权处理
+            </span>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
     # 侧边栏筛选
     with st.sidebar:
         st.header("🔍 筛选条件")
+        
+        # 数据说明
+        st.info("📊 当前显示的价格均为**前复权**数据", icon="📈")
         
         signal_type = st.radio(
             "信号类型",
@@ -368,15 +381,35 @@ def main():
             stock_groups[symbol]['periods'].add(sig.get('period', 'daily'))
             stock_groups[symbol]['types'].add(sig.get('signal_type', 'left'))
         
-        # 计算每个股票的总分（多个信号分数累加，但最高100）
+        # 计算每个股票的总分（使用后端计算的组合评分）
         for symbol, group in stock_groups.items():
-            base_score = max([s.get('score', 0) for s in group['signals']])  # 基础分取最高
-            # 额外加分：每多一个信号加10分
-            extra_score = (len(group['signals']) - 1) * 10
-            # 多周期共振额外加15分
-            if len(group['periods']) > 1:
-                extra_score += 15
-            group['total_score'] = min(base_score + extra_score, 100)
+            signals = group['signals']
+            # 优先使用后端计算的组合评分 portfolio_score
+            portfolio_scores = [
+                s.get('technicals', {}).get('portfolio_score', 0)
+                for s in signals
+                if s.get('technicals', {}).get('portfolio_score')
+            ]
+            if portfolio_scores:
+                # 使用组合评分（所有信号共享同一个 portfolio_score）
+                group['total_score'] = round(max(portfolio_scores))
+            else:
+                # 回退到旧计算方式
+                base_score = max([s.get('score', 0) for s in signals])
+                extra_score = (len(signals) - 1) * 10
+                if len(group['periods']) > 1:
+                    extra_score += 15
+                group['total_score'] = min(base_score + extra_score, 100)
+
+            # 添加信号数量、质量集中度和维度覆盖率信息用于展示
+            signal_count = len(signals)
+            quality_conc = signals[0].get('technicals', {}).get('quality_concentration', 0)
+            dim_coverage = signals[0].get('technicals', {}).get('dimension_coverage', 0)
+            dim_details = signals[0].get('technicals', {}).get('dimension_details', {})
+            group['signal_count'] = signal_count
+            group['quality_concentration'] = quality_conc
+            group['dimension_coverage'] = dim_coverage
+            group['dimension_details'] = dim_details
         
         return stock_groups
     
@@ -393,11 +426,18 @@ def main():
     # 排序选项
     sort_col1, sort_col2 = st.columns([1, 4])
     with sort_col1:
-        sort_by = st.selectbox("排序方式", ["评分", "日期", "涨跌幅"], index=0)
-    
+        sort_by = st.selectbox("排序方式", ["评分", "维度覆盖率", "质量集中度", "信号数量", "日期", "涨跌幅"], index=0)
+
     # 排序
     if sort_by == "评分":
         grouped_stocks.sort(key=lambda x: x['total_score'], reverse=True)
+    elif sort_by == "维度覆盖率":
+        grouped_stocks.sort(key=lambda x: x.get('dimension_coverage', 0), reverse=True)
+    elif sort_by == "质量集中度":
+        grouped_stocks.sort(key=lambda x: x.get('quality_concentration', 0), reverse=True)
+    elif sort_by == "信号数量":
+        # 适中数量(2-5个)排在前面
+        grouped_stocks.sort(key=lambda x: (abs(len(x['signals']) - 3.5), len(x['signals'])))
     elif sort_by == "日期":
         grouped_stocks.sort(key=lambda x: max([s.get('trigger_date', '') for s in x['signals']]), reverse=True)
     elif sort_by == "涨跌幅":
@@ -435,8 +475,8 @@ def main():
         change_color = "#ff4757" if change_pct > 0 else "#2ed573" if change_pct < 0 else "#333"
         change_symbol = "+" if change_pct > 0 else ""
         
-        # 获取前复权最新价格
-        latest_price = get_latest_price_qfq(symbol, base_dir=BASE_DIR / "storage")
+        # 获取最新价格（底层接口默认前复权）
+        latest_price = load_stock_latest_price(symbol)
         price_display = f"¥{latest_price:.2f}" if latest_price else "-"
         
         # 周期标签
@@ -479,6 +519,55 @@ def main():
                 # 总评分徽章
                 score_bg = "#ff6b6b" if total_score >= 80 else "#feca57" if total_score >= 60 else "#dfe6e9"
                 score_color = "white" if total_score >= 80 else "#333"
+
+                # 信号数量标签颜色
+                signal_count = stock_group.get('signal_count', len(signals))
+                if signal_count <= 4:
+                    count_color = "#27ae60"  # 绿色 - 适中
+                    count_label = "适中"
+                elif signal_count <= 6:
+                    count_color = "#f39c12"  # 橙色 - 偏多
+                    count_label = "偏多"
+                else:
+                    count_color = "#e74c3c"  # 红色 - 过多
+                    count_label = "过多"
+
+                # 质量集中度
+                quality_conc = stock_group.get('quality_concentration', 0)
+                quality_pct = int(quality_conc * 100)
+
+                # 维度覆盖率（核心指标）
+                dim_coverage = stock_group.get('dimension_coverage', 0)
+                dim_pct = int(dim_coverage * 100)
+                dim_details = stock_group.get('dimension_details', {})
+
+                # 维度详情文本
+                dim_text = []
+                if dim_details.get('directions'):
+                    dirs = dim_details['directions']
+                    if len(dirs) >= 2:
+                        dim_text.append("双侧")
+                    else:
+                        dim_text.append(dirs[0][:1].upper())
+                if dim_details.get('periods'):
+                    periods = dim_details['periods']
+                    if len(periods) >= 2:
+                        dim_text.append(f"{len(periods)}周期")
+                if dim_details.get('indicators'):
+                    n_indicators = len(dim_details['indicators'])
+                    if n_indicators >= 2:
+                        dim_text.append(f"{n_indicators}指标")
+
+                dim_badge = " | ".join(dim_text) if dim_text else "单维度"
+
+                # 维度覆盖率颜色
+                if dim_pct >= 75:
+                    dim_color = "#27ae60"  # 绿色 - 高覆盖
+                elif dim_pct >= 50:
+                    dim_color = "#f39c12"  # 橙色 - 中等
+                else:
+                    dim_color = "#e74c3c"  # 红色 - 低覆盖
+
                 st.markdown(f"""
                 <div style="
                     display: flex;
@@ -498,9 +587,18 @@ def main():
                         font-weight: bold;
                         font-size: 16px;
                     ">{total_score}</div>
-                    <div style="font-size: 11px; color: #888; margin-top: 5px;">综合评分</div>
-                    <div style="font-size: 12px; color: {change_color}; margin-top: 8px;">{change_symbol}{change_pct}%</div>
-                    <div style="font-size: 14px; color: #333; margin-top: 8px; font-weight: 600;">{price_display}</div>
+                    <div style="font-size: 11px; color: #888; margin-top: 5px;">组合评分</div>
+                    <div style="font-size: 10px; color: {dim_color}; margin-top: 4px; font-weight: 600;">
+                        维度覆盖: {dim_pct}% [{dim_badge}]
+                    </div>
+                    <div style="font-size: 10px; color: {count_color}; margin-top: 2px; font-weight: 500;">
+                        {signal_count}个信号({count_label})
+                    </div>
+                    <div style="font-size: 10px; color: #666; margin-top: 2px;">
+                        质量集中度: {quality_pct}%
+                    </div>
+                    <div style="font-size: 12px; color: {change_color}; margin-top: 6px;">{change_symbol}{change_pct}%</div>
+                    <div style="font-size: 14px; color: #333; margin-top: 6px; font-weight: 600;">{price_display}</div>
                     <div style="font-size: 10px; color: #999; margin-top: 2px;">前复权</div>
                 </div>
                 """, unsafe_allow_html=True)
