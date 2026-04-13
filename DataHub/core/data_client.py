@@ -325,7 +325,7 @@ class UnifiedDataClient:
             start_date=start_date,
             end_date=end_date,
             frequency="d",
-            adjustflag="2"
+            adjustflag="3"  # 与history_sync保持一致，flag=3用于统一历史数据
         )
         
         if rs.error_code != '0':

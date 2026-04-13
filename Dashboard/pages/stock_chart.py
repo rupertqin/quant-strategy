@@ -15,7 +15,12 @@ import numpy as np
 from pathlib import Path
 import sys
 import json
+import logging
 from datetime import datetime, timedelta
+
+# 设置日志
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 添加项目路径
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -23,9 +28,16 @@ sys.path.insert(0, str(BASE_DIR))
 
 from lib.utils import StockCodeUtil, get_stock_name
 
+# 导入共享格式化工具
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.formatters import format_technicals, format_flat_mas, render_flat_ma_badge, detect_flat_mas_for_symbol, render_signal_card, format_ma_bonding
+from utils.adjustment import convert_to_qfq, load_adjust_factor
+
 # ============= 配置 =============
 st.set_page_config(
-    page_title="股票K线",
+    page_title="Stock Chart",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -166,6 +178,37 @@ def calculate_kdj(df: pd.DataFrame, n=9, m1=3, m2=3):
     return k, d, j
 
 
+@st.cache_data(ttl=300)
+def load_stock_signals(symbol: str) -> list:
+    """加载指定股票的信号数据"""
+    import json
+    from pathlib import Path
+
+    BASE_DIR = Path(__file__).parent.parent.parent
+    signals_file = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_all_latest.json"
+
+    if not signals_file.exists():
+        return []
+
+    try:
+        with open(signals_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        if data.get("status") != "success":
+            return []
+
+        # 筛选当前股票的信号
+        all_signals = data.get("signals", [])
+        stock_signals = [s for s in all_signals if s.get('symbol') == symbol]
+
+        # 按日期和评分排序
+        stock_signals.sort(key=lambda x: (x.get('trigger_date', ''), x.get('score', 0)), reverse=True)
+
+        return stock_signals
+    except Exception:
+        return []
+
+
 def resample_to_weekly(df: pd.DataFrame) -> pd.DataFrame:
     """将日线数据重采样为周线数据"""
     df = df.copy()
@@ -185,6 +228,52 @@ def resample_to_weekly(df: pd.DataFrame) -> pd.DataFrame:
     weekly.reset_index(inplace=True)
     
     return weekly
+
+
+def convert_to_forward_adjusted(df: pd.DataFrame, latest_close: float = None) -> pd.DataFrame:
+    """
+    将后复权/不复权数据转换为前复权数据
+    
+    转换公式: 前复权价格 = 后复权价格 × (最新收盘价 / 最新后复权价)
+    
+    Args:
+        df: 包含后复权或不复权价格的DataFrame
+        latest_close: 最新的不复权收盘价（用于计算转换系数）
+        
+    Returns:
+        转换后的DataFrame
+    """
+    if df.empty:
+        return df
+    
+    df_adj = df.copy()
+    
+    # 如果没有提供最新收盘价，假设当前数据的后复权最新价需要转换
+    # 使用前复权公式：以最新交易日为基准，所有历史价格按比例缩放
+    latest_adj_close = df_adj['close'].iloc[-1]
+    
+    # 如果提供了实际最新价（不复权），计算转换系数
+    if latest_close is not None and latest_adj_close > 0:
+        ratio = latest_close / latest_adj_close
+    else:
+        # 假设当前是后复权数据，需要获取不复权的最新价作为基准
+        # 这里简化处理，使用一个估算值
+        # 实际使用时应该从接口获取最新不复权价格
+        ratio = 1.0  # 默认不转换，需要外部提供正确的ratio
+    
+    # 转换价格列
+    price_cols = ['open', 'high', 'low', 'close']
+    for col in price_cols:
+        if col in df_adj.columns:
+            df_adj[col] = df_adj[col] * ratio
+    
+    # 转换均线
+    ma_cols = ['ma5', 'ma10', 'ma20', 'ma60']
+    for col in ma_cols:
+        if col in df_adj.columns:
+            df_adj[col] = df_adj[col] * ratio
+    
+    return df_adj
 
 
 def resample_to_monthly(df: pd.DataFrame) -> pd.DataFrame:
@@ -208,17 +297,32 @@ def resample_to_monthly(df: pd.DataFrame) -> pd.DataFrame:
     return monthly
 
 
-@st.cache_data
-def load_stock_data(symbol: str) -> pd.DataFrame:
-    """从Parquet加载股票历史数据"""
+@st.cache_data(ttl=3600)
+def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
+    """
+    加载股票历史数据（默认前复权）
+    
+    Args:
+        symbol: 股票代码
+        force_adjust: 强制复权方式 - 'qfq'(前复权), None(不复权)
+    """
     file_path = BASE_DIR / "storage" / "raw" / "prices" / f"{symbol}.parquet"
     
     if not file_path.exists():
+        logger.warning(f"股票数据文件不存在: {file_path}")
         return pd.DataFrame()
     
     try:
+        # 加载原始价格数据
         df = pd.read_parquet(file_path)
         df['trade_date'] = pd.to_datetime(df['trade_date'])
+        
+        # 转换为前复权
+        if force_adjust == 'qfq':
+            df = convert_to_qfq(df, symbol=symbol)
+            if df is None or df.empty:
+                logger.warning(f"前复权转换失败: {symbol}")
+                return pd.DataFrame()
         
         # 过滤非交易日
         df = df[df['volume'] > 0]
@@ -238,8 +342,10 @@ def load_stock_data(symbol: str) -> pd.DataFrame:
         # 计算KDJ
         df['kdj_k'], df['kdj_d'], df['kdj_j'] = calculate_kdj(df)
         
+        logger.info(f"加载 {symbol} 前复权数据: {len(df)} 条")
         return df
     except Exception as e:
+        logger.error(f"加载数据失败 {symbol}: {e}")
         st.error(f"加载数据失败: {e}")
         return pd.DataFrame()
 
@@ -699,6 +805,19 @@ def main():
     # 加载股票列表
     stock_list = get_stock_list()
     
+    # 优先从 URL 参数获取股票代码 (支持 ?symbol=600519.SH)
+    query_params = st.query_params
+    if 'symbol' in query_params:
+        symbol_from_url = query_params['symbol']
+        if symbol_from_url:
+            st.session_state['selected_stock'] = symbol_from_url
+            st.session_state['selected_name'] = get_stock_name(symbol_from_url)
+    # 其次检查 session_state（从其他页面跳转）
+    elif 'selected_stock' not in st.session_state:
+        # 默认显示茅台
+        st.session_state['selected_stock'] = '600519.SH'
+        st.session_state['selected_name'] = '贵州茅台'
+    
     if stock_list.empty:
         st.error("股票列表为空，请先同步股票基础数据")
         return
@@ -758,8 +877,8 @@ def main():
     symbol = st.session_state['selected_stock']
     name = st.session_state.get('selected_name', '')
     
-    # 加载数据
-    df = load_stock_data(symbol)
+    # 加载数据 - 强制使用前复权
+    df = load_stock_data(symbol, force_adjust='qfq')
     
     if df.empty:
         st.error(f"未找到 {symbol} 的数据，请先同步历史数据")
@@ -818,7 +937,77 @@ def main():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+
+    # ============= 技术指标区域 =============
+    # 计算当前技术指标
+    tech = {}
+    if not df.empty:
+        latest = df.iloc[-1]
+        tech = {
+            'ma5': round(latest.get('ma5', 0), 2) if not pd.isna(latest.get('ma5')) else None,
+            'ma10': round(latest.get('ma10', 0), 2) if not pd.isna(latest.get('ma10')) else None,
+            'ma20': round(latest.get('ma20', 0), 2) if not pd.isna(latest.get('ma20')) else None,
+            'ma60': round(latest.get('ma60', 0), 2) if not pd.isna(latest.get('ma60')) else None,
+        }
+
+        # 计算MACD
+        dif, dea, macd = calculate_macd(df)
+        if not dif.empty:
+            tech['macd_dif'] = round(dif.iloc[-1], 3)
+            tech['macd_dea'] = round(dea.iloc[-1], 3)
+
+        # 计算KDJ
+        k, d, j = calculate_kdj(df)
+        if not k.empty:
+            tech['kdj_k'] = round(k.iloc[-1], 2)
+            tech['kdj_d'] = round(d.iloc[-1], 2)
+            tech['kdj_j'] = round(j.iloc[-1], 2)
+
+    # 检测均线走平
+    try:
+        from ShortTerm.daily_signal.stock_signal_scanner import StockSignalScanner
+        scanner = StockSignalScanner()
+        flat_ma_dict = detect_flat_mas_for_symbol(scanner, symbol)
+        # 合并所有周期的走平均线
+        all_flat_mas = []
+        for period, mas in flat_ma_dict.items():
+            all_flat_mas.extend(mas)
+        tech['flat_mas'] = all_flat_mas
+    except Exception:
+        tech['flat_mas'] = []
+
+    # ============ 技术指标区域 ============
+    tech_html = format_technicals(tech)
+    flat_ma_html, has_flat_ma = format_flat_mas(tech)
+
+    # 指标区域样式
+    indicator_html = f"""
+    <div style="
+        background: white;
+        border-radius: 12px;
+        padding: 15px 20px;
+        margin: 15px 0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    ">
+        <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
+            <b>📊 实时技术指标</b> (最新)
+        </div>
+        <div style="font-family: monospace; font-size: 13px; color: #333; line-height: 1.8;">
+            {tech_html}
+        </div>
+    </div>
+    """
+    st.markdown(indicator_html, unsafe_allow_html=True)
+
+    # 显示均线走平标签（如果有）
+    if has_flat_ma:
+        st.markdown(render_flat_ma_badge(flat_ma_html), unsafe_allow_html=True)
+
+    # 显示均线粘合（如果有）
+    ma_bonding_html = format_ma_bonding(tech)
+    if ma_bonding_html:
+        st.markdown(f'<div style="margin: 5px 0;"><span style="background: linear-gradient(135deg, #8e44ad 0%, #9b59b6 100%); color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">🧲 均线粘合 {ma_bonding_html}</span></div>', unsafe_allow_html=True)
+
     # ============= 周期选择 =============
     periods = [("日线", "D"), ("周线", "W"), ("月线", "M")]
     
@@ -899,6 +1088,17 @@ def main():
             use_container_width=True,
             hide_index=True
         )
+
+    # ============= 信号展示区域 (移到最后) =============
+    stock_signals = load_stock_signals(symbol)
+
+    if stock_signals:
+        st.markdown("---")
+        st.markdown("<div style='font-size: 16px; font-weight: 600; margin: 15px 0 10px 0;'>📡 当前信号</div>", unsafe_allow_html=True)
+
+        # 显示该股票的所有信号（使用模块化卡片）
+        for idx, sig in enumerate(stock_signals):
+            st.markdown(render_signal_card(sig, idx), unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

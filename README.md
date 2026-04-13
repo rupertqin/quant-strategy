@@ -113,6 +113,90 @@ storage/outputs/shortterm/pool_watch/
 └── pool_ranking_YYYYMMDD.csv     # 排名数据
 ```
 
+### 模块 3: 个股信号扫描 (Stock Signal) ⭐ 新增
+
+**功能**: 全市场个股技术面信号扫描，生成左侧（抄底/反转）和右侧（追涨/确认）信号
+
+**左侧信号**（抄底/反转）:
+- MACD底背离、KDJ底背离
+- 超跌反弹、缩量十字星、长下影线
+
+**右侧信号**（追涨/确认）:
+- MA5/MA10/MA20金叉、MACD金叉、KDJ金叉
+- 量价突破、均线多头排列、突破平台
+
+**多周期分析**（日线/周线/月线共振）:
+- 日线信号：基础信号（默认）
+- 周线信号：信号名称前缀"周线"，评分+10
+- 月线信号：信号名称前缀"月线"，评分+15
+- 多周期共振：同类型信号在多个周期同时出现，额外加分
+
+**📏 均线走平指标**（新增）:
+检测单根均线（MA10/MA20/MA60）是否趋于水平直线。均线走平意味着价格长期围绕某个中枢稳定波动，这个"走平"的价格位置就是强支撑/阻力位。
+
+显示格式：`MAxx@价格`
+- 🔴红色：强烈走平（分数≥0.90）- 长期稳定中枢
+- 🟡黄色：较走平（分数≥0.80）- 中期稳定区间
+- 🔵蓝色：走平（分数≥0.75）- 短期参考位
+
+**📊 均线粘合指标**（新增）:
+检测多根均线是否纠缠在一起。均线粘合意味着市场在选择方向，一旦突破往往有大行情。
+
+| 标记 | 含义 | 分数 |
+|------|------|------|
+| 🔴MAxx | 强烈粘合 | ≥0.90 |
+| 🟡MAxx | 较平缓 | ≥0.80 |
+| 🟢MAxx | 平缓 | ≥0.70 |
+
+**模块化设计**:
+指标格式化逻辑封装在 `Dashboard/utils/formatters.py`，供信号列表和个股图表页面共用：
+
+```python
+from utils.formatters import (
+    format_technicals,      # 格式化技术指标
+    format_flat_mas,        # 格式化均线走平
+    render_flat_ma_badge,   # 渲染均线走平徽章
+    detect_flat_mas_for_symbol  # 检测指定股票的走平均线
+)
+```
+
+**运行**:
+```bash
+# 扫描全部信号（全量扫描，默认多周期）
+python ShortTerm/run_signal_scan.py
+
+# 只扫描左侧信号
+python ShortTerm/run_signal_scan.py --left
+
+# 只扫描右侧信号
+python ShortTerm/run_signal_scan.py --right
+
+# 扫描单只股票
+python ShortTerm/run_signal_scan.py --symbol 600519.SH
+
+# 限制扫描数量（测试用）
+python ShortTerm/run_signal_scan.py --limit 100
+
+# 仅使用日线（禁用多周期，扫描更快）
+python ShortTerm/run_signal_scan.py --no-multi-period
+```
+
+**输出文件**:
+```
+storage/outputs/signals/
+├── stock_signals_all_latest.json      # 最新全部信号
+├── stock_signals_left_latest.json     # 最新左侧信号
+├── stock_signals_right_latest.json    # 最新右侧信号
+└── stock_signals_YYYYMMDD.json        # 历史归档
+```
+
+**查看结果**:
+```bash
+# 启动 Dashboard 查看信号列表
+streamlit run Dashboard/app.py
+# 然后导航到 "个股信号监控" 页面
+```
+
 ## DataHub 数据中台
 
 ### 存储结构

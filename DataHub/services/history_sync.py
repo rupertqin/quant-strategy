@@ -109,7 +109,7 @@ class HistorySyncService:
         end_date: str
     ) -> Optional[pd.DataFrame]:
         """
-        获取单只股票历史数据 (使用baostock)
+        获取单只股票历史数据 (使用baostock - 前复权)
         
         Args:
             symbol: 股票代码，如 '600519.SH'
@@ -126,14 +126,14 @@ class HistorySyncService:
             start_dt = datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y%m%d").strftime("%Y-%m-%d")
             
-            # 调用baostock接口
+            # 调用baostock接口 - flag=3 与历史数据保持一致
             rs = bs.query_history_k_data_plus(
                 code,
                 "date,code,open,high,low,close,volume,amount,pctChg",
                 start_date=start_dt,
                 end_date=end_dt,
                 frequency="d",
-                adjustflag="3"  # 前复权
+                adjustflag="3"  # 与历史数据保持一致
             )
             
             if rs.error_code != '0':
@@ -183,11 +183,191 @@ class HistorySyncService:
             ]
             df = df[[c for c in keep_cols if c in df.columns]]
             
+            logger.info(f"获取 {symbol} 数据: {len(df)} 条 (不复权)")
             return df
             
         except Exception as e:
             logger.error(f"获取 {symbol} 历史数据失败: {e}")
             return None
+    
+    def fetch_adjust_factor(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取复权因子数据
+        
+        Args:
+            symbol: 股票代码，如 '600519.SH'
+            start_date: 开始日期 'YYYYMMDD'
+            end_date: 结束日期 'YYYYMMDD'
+            
+        Returns:
+            DataFrame with columns: trade_date, adjust_factor
+        """
+        try:
+            code = self._format_code(symbol)
+            
+            # 转换日期格式
+            start_dt = datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y%m%d").strftime("%Y-%m-%d")
+            
+            # 调用baostock复权因子接口
+            rs = bs.query_adjust_factor(
+                code=code,
+                start_date=start_dt,
+                end_date=end_dt
+            )
+            
+            if rs.error_code != '0':
+                logger.warning(f"获取 {symbol} 复权因子失败: {rs.error_msg}")
+                return None
+            
+            # 读取数据
+            data_list = []
+            while (rs.error_code == '0') & rs.next():
+                data_list.append(rs.get_row_data())
+            
+            if not data_list:
+                logger.warning(f"{symbol} 没有复权因子数据")
+                return None
+            
+            # 创建DataFrame
+            df = pd.DataFrame(data_list, columns=rs.fields)
+            
+            # 调试: 打印字段名
+            logger.debug(f"{symbol} 复权因子字段: {rs.fields}")
+            
+            # 重命名列 - baostock 字段名: dividOperateDate, foreAdjustFactor
+            column_map = {}
+            for col in df.columns:
+                col_lower = col.lower()
+                if col_lower in ['dividoperatedate', 'date']:
+                    column_map[col] = 'trade_date'
+                elif col_lower == 'foreadjustfactor':  # 前复权因子
+                    column_map[col] = 'adjust_factor'
+            
+            df = df.rename(columns=column_map)
+            
+            # 检查必要的列是否存在
+            if 'trade_date' not in df.columns:
+                logger.warning(f"{symbol} 复权因子数据缺少 trade_date 列，可用列: {df.columns.tolist()}")
+                return None
+            
+            if 'adjust_factor' not in df.columns:
+                logger.warning(f"{symbol} 复权因子数据缺少 adjust_factor 列，可用列: {df.columns.tolist()}")
+                return None
+            
+            # 转换日期格式
+            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+            
+            # 转换复权因子为数值
+            df['adjust_factor'] = pd.to_numeric(df['adjust_factor'], errors='coerce')
+            
+            # 只保留需要的列
+            df = df[['trade_date', 'adjust_factor']]
+            
+            logger.info(f"获取 {symbol} 复权因子: {len(df)} 条")
+            return df
+            
+        except Exception as e:
+            logger.error(f"获取 {symbol} 复权因子失败: {e}")
+            return None
+    
+    def sync_adjust_factor(
+        self,
+        symbol: str,
+        start_date: str = None,
+        end_date: str = None,
+        incremental: bool = True
+    ) -> dict:
+        """
+        同步单只股票的复权因子
+        
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期 'YYYYMMDD'
+            end_date: 结束日期 'YYYYMMDD'
+            incremental: 是否增量更新
+            
+        Returns:
+            同步结果
+        """
+        adjust_dir = STORAGE_DIR / "raw" / "adjust_factors"
+        adjust_dir.mkdir(parents=True, exist_ok=True)
+        file_path = adjust_dir / f"{symbol}.parquet"
+        
+        if end_date is None:
+            end_date = datetime.now().strftime("%Y%m%d")
+        
+        existing_df = None
+        if incremental and file_path.exists():
+            try:
+                existing_df = pd.read_parquet(file_path)
+                existing_df['trade_date'] = pd.to_datetime(existing_df['trade_date']).dt.date
+                latest_date = existing_df['trade_date'].max()
+                start_date = (pd.to_datetime(latest_date) + pd.Timedelta(days=1)).strftime("%Y%m%d")
+            except Exception as e:
+                logger.warning(f"读取已有复权因子失败: {e}")
+                start_date = "19900101"
+        
+        if start_date is None:
+            start_date = "19900101"
+        
+        if start_date > end_date:
+            return {'status': 'success', 'symbol': symbol, 'records': 0, 'message': 'Already up to date'}
+        
+        # 获取新数据
+        new_df = self.fetch_adjust_factor(symbol, start_date, end_date)
+        
+        if new_df is None or new_df.empty:
+            # 如果没有复权因子数据，但有价格数据，创建一个默认因子为1的文件
+            # 这表示该股票从未分红送股
+            if not file_path.exists():
+                price_file = self.raw_prices_dir / f"{symbol}.parquet"
+                if price_file.exists():
+                    try:
+                        price_df = pd.read_parquet(price_file)
+                        if not price_df.empty:
+                            # 创建默认复权因子（factor=1）
+                            default_df = pd.DataFrame({
+                                'trade_date': pd.to_datetime(price_df['trade_date']).dt.date,
+                                'adjust_factor': 1.0
+                            })
+                            default_df.to_parquet(file_path, index=False, compression='zstd')
+                            logger.info(f"{symbol} 创建默认复权因子 (factor=1, 从未分红)")
+                            return {
+                                'status': 'success',
+                                'symbol': symbol,
+                                'records': len(default_df),
+                                'message': 'Created default factor=1'
+                            }
+                    except Exception as e:
+                        logger.debug(f"创建默认复权因子失败 {symbol}: {e}")
+            
+            return {'status': 'success', 'symbol': symbol, 'records': 0, 'message': 'No new data'}
+        
+        # 合并数据
+        if existing_df is not None and not existing_df.empty:
+            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+            combined_df = combined_df.drop_duplicates(subset=['trade_date'], keep='last')
+            combined_df = combined_df.sort_values('trade_date').reset_index(drop=True)
+        else:
+            combined_df = new_df
+        
+        # 保存
+        combined_df.to_parquet(file_path, index=False, compression='zstd')
+        
+        logger.info(f"{symbol} 复权因子同步完成: {len(new_df)} 条新数据，共 {len(combined_df)} 条")
+        
+        return {
+            'status': 'success',
+            'symbol': symbol,
+            'records': len(new_df),
+            'total_records': len(combined_df)
+        }
     
     def sync_stock(
         self,
@@ -283,6 +463,9 @@ class HistorySyncService:
         
         # 保存
         combined_df.to_parquet(file_path, index=False, compression='zstd')
+        
+        # 同步复权因子
+        factor_result = self.sync_adjust_factor(symbol, start_date, end_date, incremental)
         
         logger.info(f"{symbol} 同步完成: {len(new_df)} 条新数据，共 {len(combined_df)} 条")
         
@@ -404,6 +587,7 @@ def main():
     parser.add_argument('--skip-existing', action='store_true', help='首次同步时跳过已有文件的股票（大幅提速）')
     parser.add_argument('--summary', action='store_true', help='显示同步摘要')
     parser.add_argument('--limit', type=int, help='限制股票数量（测试用）')
+    parser.add_argument('--sync-factors', action='store_true', help='只同步复权因子（不下载价格数据）')
     
     args = parser.parse_args()
     
@@ -415,7 +599,43 @@ def main():
     
     service = HistorySyncService()
     
-    if args.summary:
+    if args.sync_factors:
+        # 只同步复权因子
+        print("\n" + "="*60)
+        print("只同步复权因子（不下载价格数据）")
+        print("="*60)
+        
+        # 获取已有价格数据的股票列表
+        symbols = [f.stem for f in service.raw_prices_dir.glob('*.parquet')]
+        print(f"发现 {len(symbols)} 只股票需要同步复权因子")
+        
+        success = 0
+        failed = 0
+        skipped = 0
+        
+        for i, symbol in enumerate(symbols):
+            try:
+                result = service.sync_adjust_factor(symbol)
+                if result['status'] == 'success':
+                    if result.get('records', 0) > 0:
+                        success += 1
+                    else:
+                        skipped += 1  # 没有复权记录（从未分红）
+                else:
+                    failed += 1
+                    if 'No new data' not in result.get('message', ''):
+                        logger.debug(f"同步失败 {symbol}: {result.get('message', '')}")
+            except Exception as e:
+                failed += 1
+                logger.debug(f"同步异常 {symbol}: {e}")
+            
+            if (i + 1) % 100 == 0:
+                print(f"已处理 {i+1}/{len(symbols)} 只... 成功:{success} 跳过:{skipped} 失败:{failed}")
+        
+        print(f"\n复权因子同步完成: 成功 {success}, 跳过 {skipped}, 失败 {failed}")
+        print("提示: '跳过'表示该股票从未分红送股，无需复权")
+    
+    elif args.summary:
         summary = service.get_sync_summary()
         print("\n同步摘要:")
         print(f"  总文件数: {summary['total_files']}")
