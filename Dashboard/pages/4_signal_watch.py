@@ -18,7 +18,7 @@ from utils.formatters import format_technicals, format_flat_mas, render_flat_ma_
 # 导入底层数据接口（默认前复权）
 BASE_DIR = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
-from DataHub.core.data_reader import load_stock_latest_price
+from DataHub.core.data_reader import load_stock_latest_price, load_stock_latest_date
 
 import logging
 
@@ -483,9 +483,10 @@ def main():
         change_color = "#ff4757" if change_pct > 0 else "#2ed573" if change_pct < 0 else "#333"
         change_symbol = "+" if change_pct > 0 else ""
         
-        # 获取最新价格（底层接口默认前复权）
+        # 获取最新价格和数据日期（底层接口默认前复权）
         latest_price = load_stock_latest_price(symbol)
         price_display = f"¥{latest_price:.2f}" if latest_price else "-"
+        latest_data_date = load_stock_latest_date(symbol) or '未知'
         
         # 周期标签
         period_tags = []
@@ -506,15 +507,21 @@ def main():
             col1, col2 = st.columns([6, 1])
             
             with col1:
-                # 点击股票名称跳转图表页面
-                if st.button(
-                    f"📈 {stock_name} ({symbol})",
-                    key=f"btn_stock_{symbol}_{idx}_{page}",
-                    help=f"点击跳转到 {symbol} K线图"
-                ):
-                    st.session_state['selected_stock'] = symbol
-                    st.session_state['selected_name'] = stock_name
-                    st.switch_page("pages/stock_chart.py")
+                # 股票名称和数据日期同一行左右分布
+                name_col, date_col = st.columns([3, 1])
+                with name_col:
+                    # 点击股票名称跳转图表页面
+                    if st.button(
+                        f"📈 {stock_name} ({symbol})",
+                        key=f"btn_stock_{symbol}_{idx}_{page}",
+                        help=f"点击跳转到 {symbol} K线图"
+                    ):
+                        st.session_state['selected_stock'] = symbol
+                        st.session_state['selected_name'] = stock_name
+                        st.switch_page("pages/stock_chart.py")
+                with date_col:
+                    # 数据日期右对齐
+                    st.markdown(f'<div style="text-align: right; font-size: 11px; color: #888; margin-top: 8px;">📅 {latest_data_date}</div>', unsafe_allow_html=True)
                 
                 # 周期标签和共振标识
                 st.markdown(f'<div style="margin: 5px 0;">{period_html}{resonance_badge}</div>', unsafe_allow_html=True)

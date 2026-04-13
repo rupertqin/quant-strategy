@@ -105,6 +105,37 @@ def load_stock_latest_price(
     return None
 
 
+def load_stock_latest_date(
+    symbol: str,
+    base_dir: Path = None
+) -> Optional[str]:
+    """
+    获取股票最新数据日期
+
+    Returns:
+        最新日期字符串 'YYYY-MM-DD'，失败返回 None
+    """
+    if base_dir is None:
+        base_dir = Path(__file__).parent.parent.parent / "storage"
+
+    price_path = base_dir / "raw" / "prices" / f"{symbol}.parquet"
+
+    if not price_path.exists():
+        return None
+
+    try:
+        # 只读取 trade_date 列的最后一行（高效）
+        df = pd.read_parquet(price_path, columns=['trade_date'])
+        if not df.empty:
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
+            latest_date = df['trade_date'].max()
+            return latest_date.strftime('%Y-%m-%d')
+    except Exception as e:
+        logger.error(f"获取最新日期失败 {symbol}: {e}")
+
+    return None
+
+
 def load_stock_price_at_date(
     symbol: str,
     date: str,
