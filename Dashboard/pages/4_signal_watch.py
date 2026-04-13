@@ -317,7 +317,7 @@ def main():
     # 主内容区
     if data.get("status") != "success":
         st.warning(data.get("message", "暂无数据"))
-        st.info("请运行扫描器生成数据:\n```\npython ShortTerm/daily_signal/stock_signal_scanner.py --all\n```")
+        st.info("请运行扫描器生成数据:\n```\npython ShortTerm/daily_signal/stock_signal_scanner.py\n```")
         return
     
     # 统计数据

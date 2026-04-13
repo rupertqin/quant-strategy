@@ -3,10 +3,8 @@
 个股信号扫描启动脚本
 
 用法:
-    python ShortTerm/run_signal_scan.py              # 扫描全部信号
-    python ShortTerm/run_signal_scan.py --left       # 只扫描左侧信号
-    python ShortTerm/run_signal_scan.py --right      # 只扫描右侧信号
-    python ShortTerm/run_signal_scan.py --symbol 600519.SH  # 扫描单只股票
+    python ShortTerm/run_signal_scan.py                    # 扫描全部信号（左右侧）
+    python ShortTerm/run_signal_scan.py --symbol 600519.SH # 扫描单只股票
 """
 
 import sys
@@ -22,8 +20,6 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser(description='个股信号扫描 - 支持多周期（日线/周线/月线）')
-    parser.add_argument('--left', action='store_true', help='只扫描左侧信号')
-    parser.add_argument('--right', action='store_true', help='只扫描右侧信号')
     parser.add_argument('--symbol', type=str, help='扫描指定股票')
     parser.add_argument('--limit', type=int, help='限制扫描数量（测试用）')
     parser.add_argument('--no-multi-period', action='store_true',
@@ -31,27 +27,20 @@ def main():
 
     args = parser.parse_args()
 
-    # 确定信号类型
-    signal_type = "all"
-    if args.left:
-        signal_type = "left"
-    elif args.right:
-        signal_type = "right"
-
     multi_period = not args.no_multi_period
     period_str = "多周期(日/周/月)" if multi_period else "仅日线"
 
     print("=" * 60)
-    print(f"🔍 开始扫描个股信号 - 类型: {signal_type} | 周期: {period_str}")
+    print(f"🔍 开始扫描个股信号 - 周期: {period_str}")
     print("=" * 60)
 
     scanner = StockSignalScanner()
 
     if args.symbol:
-        # 扫描单只股票
+        # 扫描单只股票（同时扫描左右侧）
         from lib.utils import get_stock_name
         name = get_stock_name(args.symbol)
-        signals = scanner.scan_stock(args.symbol, name, signal_type, multi_period)
+        signals = scanner.scan_stock(args.symbol, name, 'all', multi_period)
 
         print(f"\n📈 {args.symbol} {name} 扫描结果:")
         print("-" * 60)
@@ -65,8 +54,8 @@ def main():
         else:
             print("暂无信号")
     else:
-        # 扫描所有股票
-        result = scanner.scan_all(signal_type, args.limit, multi_period)
+        # 扫描所有股票（同时扫描左右侧）
+        result = scanner.scan_all('all', args.limit, multi_period)
 
         if result.get('status') == 'success':
             print("\n" + "=" * 60)

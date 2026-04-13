@@ -5,13 +5,13 @@
 
 用法:
     # 使用便捷脚本（推荐）
-    python ShortTerm/run_signal_scan.py --all
-    python ShortTerm/run_signal_scan.py --left
-    python ShortTerm/run_signal_scan.py --right
-    python ShortTerm/run_signal_scan.py --symbol 600519.SH
+    python ShortTerm/run_signal_scan.py              # 扫描全部信号
+    python ShortTerm/run_signal_scan.py --left       # 只扫描左侧信号
+    python ShortTerm/run_signal_scan.py --right      # 只扫描右侧信号
+    python ShortTerm/run_signal_scan.py --symbol 600519.SH  # 扫描单只股票
     
     # 或者直接运行扫描器
-    python ShortTerm/daily_signal/stock_signal_scanner.py --all
+    python ShortTerm/daily_signal/stock_signal_scanner.py
 """
 
 import sys
@@ -393,28 +393,89 @@ class LeftSignalDetector:
         )
     
     def _calculate_score(self, signal_name: str, strength: str, latest) -> int:
-        """计算信号评分"""
-        base_score = 50
+        """
+        计算信号评分 - 严格版，确保高分稀缺性
         
-        # 根据信号类型加分
+        评分逻辑：
+        - 基础分30（降低起点）
+        - 信号类型加分（最高+25）
+        - 强度加分（最高+20）
+        - 技术指标加分（最高+15）
+        - 负面因素扣分（最多-20）
+        - 满分100，90+为高置信度，80+为中等，<80为观察
+        """
+        score = 30  # 降低基础分
+        
+        # 1. 信号类型加分（更严格）
         if "底背离" in signal_name:
-            base_score += 20
+            score += 20  # MACD/KDJ底背离，较强信号
         elif "超跌" in signal_name:
-            base_score += 15
+            score += 15
         elif "十字星" in signal_name:
-            base_score += 10
+            score += 10
+        elif "长下影线" in signal_name:
+            score += 12
+        else:
+            score += 5  # 其他信号基础加分
         
-        # 根据强度加分
+        # 2. 强度加分（更细分）
         if strength == SignalStrength.STRONG.value:
-            base_score += 15
+            score += 20
         elif strength == SignalStrength.MEDIUM.value:
-            base_score += 10
+            score += 12
+        else:
+            score += 5
         
-        # 根据技术指标加分
-        if not pd.isna(latest.get('kdj_j')) and latest['kdj_j'] < 0:
-            base_score += 5
+        # 3. 技术指标加分（多指标叠加，但有上限）
+        tech_bonus = 0
         
-        return min(base_score, 100)
+        # KDJ超卖加分（J<0严重超卖，J<20轻度超卖）
+        kdj_j = latest.get('kdj_j')
+        if not pd.isna(kdj_j):
+            if kdj_j < 0:
+                tech_bonus += 8
+            elif kdj_j < 20:
+                tech_bonus += 4
+        
+        # MACD柱状体改善（绿柱缩短或红柱增长）
+        macd_hist = latest.get('macd_hist')
+        if not pd.isna(macd_hist) and macd_hist > 0:
+            tech_bonus += 5
+        
+        # 成交量配合（底部放量或缩量企稳）
+        vol_ratio = latest.get('volume_ratio')
+        if not pd.isna(vol_ratio):
+            if 0.8 <= vol_ratio <= 1.5:  # 缩量企稳
+                tech_bonus += 4
+            elif vol_ratio >= 2.0:  # 底部放量
+                tech_bonus += 6
+        
+        # 技术指标加分上限15分
+        score += min(tech_bonus, 15)
+        
+        # 4. 负面因素扣分（新增）
+        penalty = 0
+        
+        # 趋势恶化扣分（MA5<MA10且向下）
+        ma5 = latest.get('ma5')
+        ma10 = latest.get('ma10')
+        if not pd.isna(ma5) and not pd.isna(ma10):
+            if ma5 < ma10 * 0.95:  # MA5明显低于MA10
+                penalty += 8
+        
+        # 连续下跌扣分
+        change_pct = latest.get('change_pct')
+        if not pd.isna(change_pct) and change_pct < -7:
+            penalty += 5  # 单日暴跌，可能有利空
+        
+        # 流动性差扣分
+        if not pd.isna(vol_ratio) and vol_ratio < 0.5:
+            penalty += 4  # 极度缩量，流动性差
+        
+        score -= min(penalty, 20)  # 扣分上限20
+        
+        # 确保分数在合理范围
+        return max(30, min(score, 100))
 
 
 class RightSignalDetector:
@@ -643,24 +704,88 @@ class RightSignalDetector:
         )
     
     def _calculate_score(self, signal_name: str, strength: str, latest) -> int:
-        """计算信号评分"""
-        base_score = 55
+        """
+        计算右侧信号评分 - 严格版
         
-        if "突破" in signal_name or "多头排列" in signal_name:
-            base_score += 20
+        右侧信号要求更严格的量价配合和趋势确认
+        """
+        score = 35  # 右侧信号基础分稍高（趋势已确认）
+        
+        # 1. 信号类型加分
+        if "突破" in signal_name:
+            score += 25  # 突破最重要
+        elif "多头排列" in signal_name:
+            score += 20
         elif "金叉" in signal_name:
-            base_score += 15
+            score += 15
+        elif "量价" in signal_name:
+            score += 18
+        else:
+            score += 8
         
+        # 2. 强度加分
         if strength == SignalStrength.STRONG.value:
-            base_score += 15
+            score += 18
         elif strength == SignalStrength.MEDIUM.value:
-            base_score += 10
+            score += 10
+        else:
+            score += 4
         
-        # 量价配合加分
-        if not pd.isna(latest.get('volume_ratio')) and latest['volume_ratio'] > 2:
-            base_score += 5
+        # 3. 技术指标加分（右侧信号关注动能和量能）
+        tech_bonus = 0
         
-        return min(base_score, 100)
+        # MACD红柱且扩大
+        macd_hist = latest.get('macd_hist')
+        if not pd.isna(macd_hist) and macd_hist > 0:
+            tech_bonus += 6
+        
+        # KDJ金叉区域（K>D且向上）
+        kdj_k = latest.get('kdj_k')
+        kdj_d = latest.get('kdj_d')
+        if not pd.isna(kdj_k) and not pd.isna(kdj_d):
+            if kdj_k > kdj_d and kdj_k < 80:  # 金叉且未超买
+                tech_bonus += 6
+            elif kdj_k > 80:  # 超买区域扣分
+                tech_bonus -= 5
+        
+        # 成交量配合（右侧信号更重视量能）
+        vol_ratio = latest.get('volume_ratio')
+        if not pd.isna(vol_ratio):
+            if vol_ratio >= 2.5:  # 明显放量
+                tech_bonus += 10
+            elif vol_ratio >= 1.5:  # 温和放量
+                tech_bonus += 6
+            elif vol_ratio < 0.8:  # 缩量上涨，不健康
+                tech_bonus -= 3
+        
+        # 价格在均线上方
+        close = latest.get('close')
+        ma20 = latest.get('ma20')
+        if not pd.isna(close) and not pd.isna(ma20):
+            if close > ma20 * 1.05:  # 明显站上MA20
+                tech_bonus += 5
+            elif close < ma20:  # 还在MA20下方
+                tech_bonus -= 5
+        
+        score += min(max(tech_bonus, -10), 20)  # 限制在-10到+20
+        
+        # 4. 负面因素扣分
+        penalty = 0
+        
+        # 涨速过快（可能回调）
+        change_pct = latest.get('change_pct')
+        if not pd.isna(change_pct):
+            if change_pct > 9:  # 涨停或接近涨停，追高风险
+                penalty += 8
+            elif change_pct < 0:  # 信号日下跌，信号失效
+                penalty += 15
+        
+        # 上方压力（接近前期高点）
+        # 注：这里需要历史数据，暂时简化
+        
+        score -= min(penalty, 20)
+        
+        return max(35, min(score, 100))
 
 
 class StockSignalScanner:
@@ -895,73 +1020,136 @@ class StockSignalScanner:
 
     def _apply_signal_portfolio_scoring(self, signals: List[StockSignal]) -> List[StockSignal]:
         """
-        信号组合评分 - 综合考虑信号数量和质量分布
-
-        评分维度：
-        1. 基础质量分 (60%): 最高信号的原始评分
-        2. 信号集中度 (25%): 高分信号(≥80)占比
-        3. 信号数量 (15%): 适中数量(2-4个)最佳
-
-        原则：
-        - 信号过多(>6个)会扣分，因为可能是噪音
-        - 信号过少(1个)也扣分，缺乏验证
-        - 质量集中比数量更重要
+        信号组合评分 - 严格分级制度
+        
+        分数等级（稀缺性控制）：
+        - 95-100分（极品）: <2% - 必须双侧+多周期+多指标
+        - 90-94分（强烈推荐）: <5% - 必须双侧或多周期覆盖
+        - 85-89分（值得关注）: <15% - 需要较好维度覆盖
+        - 80-84分（观察）: <30% - 基础条件满足
+        - <80分（普通）: >50% - 一般信号
+        
+        硬性门槛：
+        - 单一信号（无论多强）≤ 85分
+        - 单侧信号（只有左或只有右）≤ 90分  
+        - 要达到95+必须有：双侧 + 多周期 + 多指标
         """
         if not signals:
             return signals
-
+        
         n_signals = len(signals)
         scores = [sig.score for sig in signals]
         max_score = max(scores)
         avg_score = sum(scores) / n_signals
-
-        # 1. 计算维度覆盖率（核心指标 - 多维度交叉验证）
+        
+        # 计算维度
         dimension_coverage = self._calculate_dimension_coverage(signals)
-
-        # 2. 计算高分信号占比 (质量集中度)
-        high_quality_count = sum(1 for s in scores if s >= 80)
-        quality_concentration = high_quality_count / n_signals  # 0-1
-
-        # 3. 信号数量因子：2-5个信号最佳（放宽上限，更看重质量）
-        if n_signals <= 1:
-            quantity_factor = 0.8  # 信号太少
-        elif 2 <= n_signals <= 5:
-            quantity_factor = 1.0  # 最佳区间
-        elif 6 <= n_signals <= 8:
-            quantity_factor = 0.9  # 稍多
+        dim_coverage = dimension_coverage['coverage']
+        dim_details = dimension_coverage['details']
+        
+        # 检查关键条件
+        has_both_sides = len(set(sig.signal_type for sig in signals)) >= 2
+        has_multi_period = len(set(sig.period for sig in signals)) >= 2
+        has_multi_indicator = len(dim_details.get('indicators', {})) >= 2
+        
+        # === 硬性上限控制（更严格）===
+        # 基础上限
+        if n_signals == 1:
+            max_possible = 82  # 单一信号上限82
+        elif not has_multi_period:
+            max_possible = 85  # 单周期上限85
+        elif not has_both_sides:
+            max_possible = 88  # 单侧上限88
+        elif has_both_sides and has_multi_period and has_multi_indicator and dim_coverage >= 0.7:
+            max_possible = 100  # 完美条件可达100
+        elif has_both_sides and has_multi_period and has_multi_indicator:
+            max_possible = 95   # 较好条件95
+        elif has_both_sides and has_multi_period:
+            max_possible = 92   # 双侧+多周期92
+        elif has_both_sides and has_multi_indicator:
+            max_possible = 90   # 双侧+多指标90
         else:
-            quantity_factor = 0.8  # 过多，噪音风险
-
-        # 4. 计算综合评分（维度覆盖率最重要）
-        # 基础质量分
-        base_quality = max_score * 0.6 + avg_score * 0.4
-
-        # 维度覆盖率奖励（35%权重）- 核心！
-        dimension_bonus = dimension_coverage['score'] * 0.35
-
-        # 质量集中度奖励（15%权重）
-        quality_bonus = quality_concentration * 15
-
-        # 数量因子
-        adjusted_base = base_quality * quantity_factor
-
-        # 最终组合评分
-        portfolio_score = min(adjusted_base + dimension_bonus + quality_bonus, 100)
-
-        # 为每个信号添加维度信息
+            max_possible = 88
+        
+        # === 基础分计算（降低）===
+        base_quality = max_score * 0.3 + avg_score * 0.4 + min(scores) * 0.3
+        
+        # === 维度奖励（降低）===
+        if dim_coverage >= 0.75:
+            dim_bonus = 8
+        elif dim_coverage >= 0.5:
+            dim_bonus = 5
+        elif dim_coverage >= 0.3:
+            dim_bonus = 2
+        else:
+            dim_bonus = 0
+        
+        # === 共振奖励（降低）===
+        resonance_bonus = 0
+        if has_both_sides:
+            resonance_bonus += 3
+        if has_multi_period:
+            resonance_bonus += 2
+        if has_multi_indicator:
+            resonance_bonus += 1
+        
+        # === 计算最终分 ===
+        portfolio_score = base_quality + dim_bonus + resonance_bonus
+        portfolio_score = min(portfolio_score, max_possible)
+        portfolio_score = max(30, min(portfolio_score, 100))
+        
+        # === 稀缺性标签 ===
+        if portfolio_score >= 95:
+            scarcity_label = "极品 ⭐⭐⭐"
+        elif portfolio_score >= 90:
+            scarcity_label = "强烈推荐 ⭐⭐"
+        elif portfolio_score >= 85:
+            scarcity_label = "值得关注 ⭐"
+        elif portfolio_score >= 80:
+            scarcity_label = "观察"
+        else:
+            scarcity_label = "普通"
+        
         for sig in signals:
-            # 高分且多维度覆盖的组合获得额外加成
-            if sig.score >= 80 and dimension_coverage['coverage'] >= 0.6:
-                sig.score = min(sig.score + 5, 100)
-
-            # 添加组合评分和维度信息
             sig.technicals['portfolio_score'] = round(portfolio_score, 1)
             sig.technicals['signal_count'] = n_signals
-            sig.technicals['quality_concentration'] = round(quality_concentration, 2)
-            sig.technicals['dimension_coverage'] = round(dimension_coverage['coverage'], 2)
-            sig.technicals['dimension_details'] = dimension_coverage['details']
-
+            sig.technicals['dimension_coverage'] = round(dim_coverage, 2)
+            sig.technicals['scarcity_label'] = scarcity_label
+        
         return signals
+    
+    def _calculate_consistency(self, signals: List[StockSignal]) -> float:
+        """计算信号间一致性（0-1），1表示完全一致，0表示矛盾"""
+        if len(signals) <= 1:
+            return 1.0
+        
+        # 检查方向一致性
+        directions = [sig.signal_type for sig in signals]
+        if len(set(directions)) == 1:
+            return 1.0  # 同向
+        
+        # 左右都有时，检查是否合理（左抄底+右确认是合理的）
+        has_left = 'left' in directions
+        has_right = 'right' in directions
+        
+        if has_left and has_right:
+            # 检查是否有时间逻辑（先左后右或同时）
+            return 0.8  # 合理但有差异
+        
+        return 0.6  # 一般一致性
+    
+    def _get_scarcity_label(self, portfolio_score: float, dim_coverage: float) -> str:
+        """获取稀缺性标签"""
+        if portfolio_score >= 95 and dim_coverage >= 0.7:
+            return "极品信号"
+        elif portfolio_score >= 90:
+            return "强烈推荐"
+        elif portfolio_score >= 85:
+            return "值得关注"
+        elif portfolio_score >= 80:
+            return "观察"
+        else:
+            return "普通"
 
     def _calculate_dimension_coverage(self, signals: List[StockSignal]) -> dict:
         """
@@ -1122,10 +1310,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='个股信号扫描器 - 支持多周期（日线/周线/月线）')
-    parser.add_argument('--all', action='store_true', help='扫描所有股票')
     parser.add_argument('--symbol', type=str, help='扫描指定股票')
-    parser.add_argument('--signal-type', type=str, choices=['left', 'right', 'all'],
-                        default='all', help='信号类型')
     parser.add_argument('--limit', type=int, help='限制扫描数量（测试用）')
     parser.add_argument('--no-multi-period', action='store_true',
                         help='禁用多周期分析，仅使用日线')
@@ -1136,9 +1321,9 @@ def main():
     multi_period = not args.no_multi_period
 
     if args.symbol:
-        # 扫描单只股票
+        # 扫描单只股票（同时扫描左右侧）
         name = get_stock_name(args.symbol)
-        signals = scanner.scan_stock(args.symbol, name, args.signal_type, multi_period)
+        signals = scanner.scan_stock(args.symbol, name, 'all', multi_period)
 
         print(f"\n{args.symbol} {name} 的信号:")
         print("-" * 60)
@@ -1149,9 +1334,9 @@ def main():
             print(f"  {sig.description}")
             print()
 
-    elif args.all or not args.symbol:
-        # 扫描所有股票（默认行为）
-        result = scanner.scan_all(args.signal_type, args.limit, multi_period)
+    else:
+        # 扫描所有股票（默认行为，同时扫描左右侧）
+        result = scanner.scan_all('all', args.limit, multi_period)
 
         print(f"\n扫描完成!")
         print(f"总信号数: {result['total_signals']}")
