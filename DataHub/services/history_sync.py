@@ -2,27 +2,50 @@
 历史数据同步服务 - 下载全市场股票历史日线数据到 Parquet
 
 每只股票一个文件，包含全部历史数据
+存储位置: storage/raw/prices/{symbol}.parquet
 
 用法:
-    # 首次全量同步所有股票（断点续传）
-    python DataHub/services/history_sync.py --all --skip-existing
-    
-    # 每日增量更新（只更新到最新交易日）
+    # ========== 每日增量更新（推荐日常使用）==========
     python DataHub/services/history_sync.py --daily
     
-    # 同步单只股票
-    python DataHub/services/history_sync.py --symbol 600519.SH
+    # 测试模式，只同步前10只
+    python DataHub/services/history_sync.py --daily --limit 10
     
-    # 查看同步摘要
+    
+    # ========== 首次全量同步（断点续传）==========
+    python DataHub/services/history_sync.py --all --skip-existing
+    
+    
+    # ========== 全量更新（覆盖已有数据）==========
+    python DataHub/services/history_sync.py --symbol 600519.SH --full
+    
+    
+    # ========== 指定日期范围 ==========
+    python DataHub/services/history_sync.py --symbol 600519.SH --start-date 20260101 --end-date 20260414
+    
+    
+    # ========== 复权因子同步 ==========
+    python DataHub/services/history_sync.py --sync-factors
+    
+    
+    # ========== 查看同步摘要 ==========
     python DataHub/services/history_sync.py --summary
 
 参数说明:
     --all              同步所有股票
+    --daily            每日增量更新模式（自动跳过非交易日，从已有数据最新日期开始）
+    --symbol SYMBOL    指定单只股票同步，如 600519.SH
+    --start-date DATE  开始日期，格式 YYYYMMDD，如 20260101
+    --end-date DATE    结束日期，格式 YYYYMMDD，如 20260414
+    --full             全量更新（覆盖已有数据，默认增量）
     --skip-existing    跳过已有文件的股票（首次同步时大幅提速，不读取文件内容）
-    --daily            每日增量更新模式（自动跳过非交易日）
-    --symbol           指定单只股票同步
-    --full             全量更新（覆盖已有数据）
     --summary          显示已同步数据摘要
+    --sync-factors     只同步复权因子（不下载价格数据）
+    --limit N          限制股票数量（测试用）
+
+日期格式: YYYYMMDD (8位数字)
+    例如: 20260101 = 2026年1月1日
+         20260414 = 2026年4月14日
 """
 
 import sys
@@ -323,31 +346,15 @@ class HistorySyncService:
         new_df = self.fetch_adjust_factor(symbol, start_date, end_date)
         
         if new_df is None or new_df.empty:
-            # 如果没有复权因子数据，但有价格数据，创建一个默认因子为1的文件
-            # 这表示该股票从未分红送股
-            if not file_path.exists():
-                price_file = self.raw_prices_dir / f"{symbol}.parquet"
-                if price_file.exists():
-                    try:
-                        price_df = pd.read_parquet(price_file)
-                        if not price_df.empty:
-                            # 创建默认复权因子（factor=1）
-                            default_df = pd.DataFrame({
-                                'trade_date': pd.to_datetime(price_df['trade_date']).dt.date,
-                                'adjust_factor': 1.0
-                            })
-                            default_df.to_parquet(file_path, index=False, compression='zstd')
-                            logger.info(f"{symbol} 创建默认复权因子 (factor=1, 从未分红)")
-                            return {
-                                'status': 'success',
-                                'symbol': symbol,
-                                'records': len(default_df),
-                                'message': 'Created default factor=1'
-                            }
-                    except Exception as e:
-                        logger.debug(f"创建默认复权因子失败 {symbol}: {e}")
-            
-            return {'status': 'success', 'symbol': symbol, 'records': 0, 'message': 'No new data'}
+            # 没有复权因子数据，表示该股票从未分红送股
+            # 不创建文件，直接返回（节省空间）
+            if file_path.exists():
+                # 如果已有文件但新数据为空，保持现有文件
+                return {'status': 'success', 'symbol': symbol, 'records': 0, 'message': 'No new adjust data'}
+            else:
+                # 从未分红，不创建文件
+                logger.debug(f"{symbol} 无复权因子数据（从未分红），跳过创建")
+                return {'status': 'success', 'symbol': symbol, 'records': 0, 'message': 'Never distributed dividend'}
         
         # 合并数据
         if existing_df is not None and not existing_df.empty:
@@ -357,10 +364,21 @@ class HistorySyncService:
         else:
             combined_df = new_df
         
+        # 只保存 factor != 1 的记录（实际发生复权的日期）
+        # factor=1 表示没有分红送股，无需存储
+        combined_df = combined_df[combined_df['adjust_factor'] != 1.0]
+        
+        if combined_df.empty:
+            # 如果过滤后为空，删除已有文件（如果存在）
+            if file_path.exists():
+                file_path.unlink()
+                logger.info(f"{symbol} 删除复权因子文件（无有效复权记录）")
+            return {'status': 'success', 'symbol': symbol, 'records': 0, 'message': 'No valid adjust factors'}
+        
         # 保存
         combined_df.to_parquet(file_path, index=False, compression='zstd')
         
-        logger.info(f"{symbol} 复权因子同步完成: {len(new_df)} 条新数据，共 {len(combined_df)} 条")
+        logger.info(f"{symbol} 复权因子同步完成: {len(new_df)} 条新数据，共 {len(combined_df)} 条有效记录")
         
         return {
             'status': 'success',

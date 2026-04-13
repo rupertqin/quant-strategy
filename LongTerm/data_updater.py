@@ -18,8 +18,8 @@ import time
 import yaml
 from scipy import stats
 
-from DataHub.services.data_service import DataService
 from DataHub.core.data_client import UnifiedDataClient
+from DataHub.core.data_reader import load_stock_prices
 
 # 尝试导入可选库
 try:
@@ -194,19 +194,7 @@ class DataUpdater:
 
         # 初始化统一数据客户端
         self.data_client = UnifiedDataClient(enable_baostock_fallback=True)
-
-        # 初始化 DataHub
-        self.use_datahub = use_datahub
-        if self.use_datahub:
-            try:
-                self.datahub = DataService()
-                print("DataUpdater initialized with DataHub support")
-            except Exception as e:
-                print(f"DataHub initialization failed: {e}, using local mode")
-                self.use_datahub = False
-                self.datahub = None
-        else:
-            self.datahub = None
+        print("DataUpdater initialized")
 
     def _load_config(self, path: str) -> dict:
         """加载配置文件"""
@@ -275,18 +263,6 @@ class DataUpdater:
         下载所有配置中的股票数据
         返回合并的收盘价序列
         """
-        # 如果启用 DataHub，使用 DataHub 获取数据
-        if self.use_datahub and self.datahub:
-            print("使用 DataHub 获取价格数据...")
-            prices = self.datahub.get_prices(use_cache=False)
-            if not prices.empty:
-                # 保存到本地目录
-                prices.to_csv(os.path.join(self.data_dir, "prices.csv"))
-                print(f"数据已保存至 {self.data_dir}/prices.csv")
-                return prices
-            else:
-                print("DataHub 获取数据为空，回退到本地下载")
-
         # 本地下载
         price_data = {}
         symbols = self.config['data_source']['stock_list']
@@ -337,10 +313,6 @@ class DataUpdater:
 
         returns = prices.pct_change().dropna()
         returns.to_csv(os.path.join(self.data_dir, "returns.csv"))
-
-        # 如果启用 DataHub，同步到 DataHub
-        if self.use_datahub and self.datahub and not returns.empty:
-            self.datahub.storage.save_returns(returns)
 
         return returns
 

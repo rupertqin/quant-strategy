@@ -5,8 +5,14 @@
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
+from pathlib import Path
 
 from .base_repository import BaseRepository
+from DataHub.config import RAW_PRICES_DIR
+
+
+# 价格数据存储路径（Parquet格式，符合规则10.1和11.1）
+PRICES_DIR = RAW_PRICES_DIR
 
 
 class StockRepository(BaseRepository):
@@ -86,6 +92,8 @@ class StockRepository(BaseRepository):
         """
         获取股票日线数据
         
+        从Parquet文件读取（价格数据唯一数据源）
+        
         Args:
             symbol: 股票代码
             start_date: 开始日期 'YYYY-MM-DD'
@@ -95,37 +103,42 @@ class StockRepository(BaseRepository):
         Returns:
             DataFrame with index=trade_date
         """
-        # 默认字段
-        all_fields = [
-            'trade_date', 'open', 'high', 'low', 'close',
-            'volume', 'amount', 'change_pct', 'turnover_ratio'
-        ]
+        parquet_path = PRICES_DIR / f"{symbol}.parquet"
         
-        select_fields = fields if fields else all_fields
-        field_str = ', '.join(select_fields)
+        if not parquet_path.exists():
+            return pd.DataFrame()
         
-        sql = f"""
-            SELECT {field_str}
-            FROM stock_daily_price
-            WHERE symbol = ?
-        """
-        params = [symbol]
-        
-        if start_date:
-            sql += " AND trade_date >= ?"
-            params.append(start_date)
-        if end_date:
-            sql += " AND trade_date <= ?"
-            params.append(end_date)
-        
-        sql += " ORDER BY trade_date"
-        
-        df = self.read_sql(sql, tuple(params), parse_dates=['trade_date'])
-        
-        if not df.empty and 'trade_date' in df.columns:
-            df.set_index('trade_date', inplace=True)
-        
-        return df
+        try:
+            df = pd.read_parquet(parquet_path)
+            
+            if df.empty:
+                return pd.DataFrame()
+            
+            # 转换日期格式
+            if 'trade_date' in df.columns:
+                df['trade_date'] = pd.to_datetime(df['trade_date'])
+            
+            # 日期过滤
+            if start_date:
+                df = df[df['trade_date'] >= start_date]
+            if end_date:
+                df = df[df['trade_date'] <= end_date]
+            
+            # 字段选择
+            if fields:
+                available_fields = ['trade_date'] + [f for f in fields if f in df.columns]
+                df = df[available_fields]
+            
+            # 排序并设置索引
+            df = df.sort_values('trade_date')
+            if 'trade_date' in df.columns:
+                df = df.set_index('trade_date')
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"读取 {symbol} 价格数据失败: {e}")
+            return pd.DataFrame()
     
     def get_multiple_prices(
         self,
@@ -136,6 +149,8 @@ class StockRepository(BaseRepository):
     ) -> pd.DataFrame:
         """
         获取多只股票的价格数据（宽格式）
+        
+        从Parquet文件读取（价格数据唯一数据源）
         
         Args:
             symbols: 股票代码列表
@@ -149,24 +164,41 @@ class StockRepository(BaseRepository):
         if not symbols:
             return pd.DataFrame()
         
-        # 构建IN子句
-        placeholders = ', '.join(['?' for _ in symbols])
+        all_data = []
         
-        sql = f"""
-            SELECT trade_date, symbol, {field}
-            FROM stock_daily_price
-            WHERE symbol IN ({placeholders})
-        """
-        params = list(symbols)
+        for symbol in symbols:
+            parquet_path = PRICES_DIR / f"{symbol}.parquet"
+            
+            if not parquet_path.exists():
+                continue
+            
+            try:
+                df = pd.read_parquet(parquet_path)
+                
+                if df.empty or field not in df.columns:
+                    continue
+                
+                # 日期过滤
+                if 'trade_date' in df.columns:
+                    df['trade_date'] = pd.to_datetime(df['trade_date'])
+                    
+                    if start_date:
+                        df = df[df['trade_date'] >= start_date]
+                    if end_date:
+                        df = df[df['trade_date'] <= end_date]
+                
+                df = df[['trade_date', field]].copy()
+                df['symbol'] = symbol
+                all_data.append(df)
+                
+            except Exception as e:
+                self.logger.warning(f"读取 {symbol} 失败: {e}")
+                continue
         
-        if start_date:
-            sql += " AND trade_date >= ?"
-            params.append(start_date)
-        if end_date:
-            sql += " AND trade_date <= ?"
-            params.append(end_date)
+        if not all_data:
+            return pd.DataFrame()
         
-        df = self.read_sql(sql, tuple(params), parse_dates=['trade_date'])
+        df = pd.concat(all_data, ignore_index=True)
         
         if df.empty:
             return pd.DataFrame()
@@ -177,7 +209,9 @@ class StockRepository(BaseRepository):
     
     def save_daily_prices(self, df: pd.DataFrame) -> int:
         """
-        保存日线数据到数据库
+        保存日线数据到Parquet文件
+        
+        价格数据唯一存储位置：storage/raw/prices/{symbol}.parquet
         
         Args:
             df: DataFrame with columns: symbol, trade_date, open, high, low, close, volume...
@@ -198,39 +232,53 @@ class StockRepository(BaseRepository):
         if 'trade_date' in df.columns:
             df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
         
-        # 使用INSERT OR REPLACE处理重复数据
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        total_saved = 0
         
-        try:
-            # 准备插入语句
-            columns = df.columns.tolist()
-            placeholders = ', '.join(['?' for _ in columns])
-            sql = f"""
-                INSERT OR REPLACE INTO stock_daily_price 
-                ({', '.join(columns)})
-                VALUES ({placeholders})
-            """
+        # 按symbol分组保存到各自的Parquet文件
+        for symbol in df['symbol'].unique():
+            symbol_df = df[df['symbol'] == symbol].copy()
             
-            # 批量插入
-            data = [tuple(row) for row in df.values]
-            cursor.executemany(sql, data)
-            conn.commit()
+            parquet_path = PRICES_DIR / f"{symbol}.parquet"
             
-            saved_count = cursor.rowcount
-            self.logger.info(f"保存日线数据: {saved_count} 条记录")
-            return saved_count
-            
-        except Exception as e:
-            conn.rollback()
-            self.logger.error(f"保存日线数据失败: {e}")
-            raise
-        finally:
-            conn.close()
+            try:
+                if parquet_path.exists():
+                    # 读取现有数据
+                    existing_df = pd.read_parquet(parquet_path)
+                    existing_df['trade_date'] = pd.to_datetime(existing_df['trade_date']).dt.date
+                    
+                    # 合并并去重（保留新数据）
+                    combined_df = pd.concat([existing_df, symbol_df], ignore_index=True)
+                    combined_df = combined_df.drop_duplicates(
+                        subset=['symbol', 'trade_date'], 
+                        keep='last'
+                    )
+                    saved_count = len(combined_df) - len(existing_df)
+                else:
+                    # 新文件
+                    combined_df = symbol_df
+                    saved_count = len(symbol_df)
+                    
+                    # 确保目录存在
+                    PRICES_DIR.mkdir(parents=True, exist_ok=True)
+                
+                # 保存到Parquet（按日期排序）
+                combined_df = combined_df.sort_values('trade_date').reset_index(drop=True)
+                combined_df.to_parquet(parquet_path, index=False, compression='zstd')
+                
+                total_saved += saved_count
+                
+            except Exception as e:
+                self.logger.error(f"保存 {symbol} 价格数据失败: {e}")
+                raise
+        
+        self.logger.info(f"保存日线数据: {total_saved} 条记录到Parquet")
+        return total_saved
     
     def get_latest_price_date(self, symbol: str) -> Optional[str]:
         """
         获取某只股票的最新价格日期
+        
+        从Parquet文件读取（价格数据唯一数据源）
         
         Args:
             symbol: 股票代码
@@ -238,16 +286,21 @@ class StockRepository(BaseRepository):
         Returns:
             最新日期字符串 'YYYY-MM-DD'，无数据返回None
         """
-        sql = """
-            SELECT MAX(trade_date) as latest_date
-            FROM stock_daily_price
-            WHERE symbol = ?
-        """
-        result = self.execute(sql, (symbol,), fetch=True)
+        parquet_path = PRICES_DIR / f"{symbol}.parquet"
         
-        if result and result[0]['latest_date']:
-            return result[0]['latest_date']
-        return None
+        if not parquet_path.exists():
+            return None
+        
+        try:
+            df = pd.read_parquet(parquet_path)
+            if df.empty or 'trade_date' not in df.columns:
+                return None
+            
+            latest_date = pd.to_datetime(df['trade_date']).max()
+            return latest_date.strftime('%Y-%m-%d')
+        except Exception as e:
+            self.logger.warning(f"读取 {symbol} Parquet文件失败: {e}")
+            return None
     
     # ==================== 基本面数据 ====================
     

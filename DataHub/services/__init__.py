@@ -1,5 +1,5 @@
 """Services layer for DataHub"""
 
-from .data_service import DataService
+# 价格数据同步请使用 history_sync.py
 
-__all__ = ["DataService"]
+__all__ = []

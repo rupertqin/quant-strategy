@@ -19,7 +19,6 @@ from collections import defaultdict
 import warnings
 import logging
 
-from DataHub.services.data_service import DataService
 from DataHub.core.data_client import UnifiedDataClient
 from .market_regime import MarketRegime
 
@@ -203,14 +202,12 @@ class LimitUpScanner:
             self.cache_dir = os.path.join(self.base_dir, self.cache_dir)
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        # DataHub 集成
-        self.datahub_service = DataService()
         self.data_client = UnifiedDataClient()
         
         # 市场状态判断（宏观+技术）
         self.market_regime = MarketRegime(config_path)
         
-        logger.info("LimitUpScanner initialized with DataHub")
+        logger.info("LimitUpScanner initialized")
 
     def _load_config(self, path: str) -> dict:
         import yaml
@@ -238,16 +235,7 @@ class LimitUpScanner:
         if date is None:
             date = get_trading_date()
 
-        # 优先从 DataHub 获取
-        try:
-            df = self.datahub_service.get_zt_pool(date)
-            if not df.empty:
-                logger.info(f"Loaded ZT pool from DataHub for {date}")
-                return df
-        except Exception as e:
-            logger.warning(f"DataHub unavailable: {e}")
-
-        # 回退到本地缓存
+        # 优先从本地缓存获取
         cache_file = os.path.join(self.cache_dir, f"zt_pool_{date}.csv")
 
         if os.path.exists(cache_file):
@@ -261,12 +249,6 @@ class LimitUpScanner:
             
             if not df.empty:
                 df.to_csv(cache_file, index=False, encoding='utf-8-sig')
-
-                # 同时保存到 DataHub
-                try:
-                    self.datahub_service.storage.save_zt_pool(df, date)
-                except Exception as e:
-                    logger.warning(f"Failed to save ZT pool to DataHub: {e}")
 
             return df
         except Exception as e:

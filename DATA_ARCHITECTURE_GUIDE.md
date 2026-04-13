@@ -208,29 +208,65 @@ python DataHub/services/sync_service.py --status
 
 ### 历史数据同步（Parquet）
 
+`history_sync.py` 是统一的价格数据同步入口，所有价格数据通过此脚本入库，存储为 `storage/raw/prices/{symbol}.parquet`。
+
+#### 参数说明
+
+| 参数 | 简写 | 说明 | 默认值 |
+|------|------|------|--------|
+| `--daily` | 无 | 每日增量更新模式，自动同步到最新交易日 | 无 |
+| `--all` | 无 | 同步所有股票（可配合其他参数使用） | 无 |
+| `--symbol` | 无 | 同步指定股票，如 `600519.SH` | 无 |
+| `--start-date` | 无 | 开始日期，格式 `YYYYMMDD` | 上市首日/已有数据最新日期 |
+| `--end-date` | 无 | 结束日期，格式 `YYYYMMDD` | 当天 |
+| `--full` | 无 | 全量更新（覆盖已有数据，默认增量） | False |
+| `--skip-existing` | 无 | 跳过已有文件的股票（首次同步大幅提速） | False |
+| `--summary` | 无 | 显示已同步数据摘要 | 无 |
+| `--sync-factors` | 无 | 只同步复权因子（不下载价格数据） | 无 |
+| `--limit` | 无 | 限制股票数量（测试用） | 无 |
+
+#### 日期格式
+
+所有日期参数统一使用 **YYYYMMDD** 格式（8位数字）：
+- `20260101` = 2026年1月1日
+- `20260414` = 2026年4月14日
+
+#### 常用命令
+
 ```bash
 # ========== 每日增量更新（推荐日常使用）==========
-# 同步所有股票，只获取最新数据（从已有数据的最新日期开始）
+# 自动从已有数据的最新日期同步到当天，跳过非交易日
 python DataHub/services/history_sync.py --daily
 
 # 每日增量更新（测试模式，只同步前10只）
 python DataHub/services/history_sync.py --daily --limit 10
 
 
-# ========== 全量更新（首次同步或数据损坏）==========
-# 单只股票全量同步（从上市日期开始）
+# ========== 首次全量同步（断点续传）==========
+# 使用 --skip-existing 跳过已有文件的股票，大幅提速
+# 中断后可重新运行，自动跳过已完成的
+python DataHub/services/history_sync.py --all --skip-existing
+
+
+# ========== 全量更新（覆盖已有数据）==========
+# 单只股票全量同步（从上市日期开始，覆盖已有）
 python DataHub/services/history_sync.py --symbol 600519.SH --full
 
-# 所有股票全量同步（耗时较长）
+# 所有股票全量同步（耗时较长，谨慎使用）
 python DataHub/services/history_sync.py --all --full
 
 
 # ========== 指定日期范围（补数据）==========
 # 单只股票指定日期范围
-python DataHub/services/history_sync.py --symbol 600519.SH --start-date 20240101 --end-date 20240331
+python DataHub/services/history_sync.py --symbol 600519.SH --start-date 20260101 --end-date 20260414
 
-# 所有股票指定日期范围
-python DataHub/services/history_sync.py --all --start-date 20240101 --end-date 20240331
+# 所有股票指定日期范围（增量模式，只补充缺失的）
+python DataHub/services/history_sync.py --all --start-date 20260101 --end-date 20260414
+
+
+# ========== 复权因子同步 ==========
+# 只同步复权因子（用于前复权计算，不下载价格）
+python DataHub/services/history_sync.py --sync-factors
 
 
 # ========== 查看同步状态 ==========

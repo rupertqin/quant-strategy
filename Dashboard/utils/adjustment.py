@@ -75,7 +75,8 @@ def convert_to_qfq(
         factor_df = load_adjust_factor(symbol)
     
     if factor_df is None or factor_df.empty:
-        logger.warning("没有复权因子数据，返回原始价格")
+        # 没有复权因子文件表示该股票从未分红送股，无需复权
+        logger.debug(f"{symbol} 无复权因子（从未分红），使用原始价格")
         return df
     
     # 合并价格数据和复权因子
