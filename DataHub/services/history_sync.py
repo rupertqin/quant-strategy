@@ -11,6 +11,9 @@
     # 测试模式，只同步前10只
     python DataHub/services/history_sync.py --daily --limit 10
     
+    # 使用更多并发（更快但可能被IP限制）
+    python DataHub/services/history_sync.py --daily --workers 5
+    
     
     # ========== 首次全量同步（断点续传）==========
     python DataHub/services/history_sync.py --all --skip-existing
@@ -33,7 +36,7 @@
 
 参数说明:
     --all              同步所有股票
-    --daily            每日增量更新模式（自动跳过非交易日，从已有数据最新日期开始）
+    --daily            每日增量更新模式（自动同步价格数据+复权因子）
     --symbol SYMBOL    指定单只股票同步，如 600519.SH
     --start-date DATE  开始日期，格式 YYYYMMDD，如 20260101
     --end-date DATE    结束日期，格式 YYYYMMDD，如 20260414
@@ -42,6 +45,7 @@
     --summary          显示已同步数据摘要
     --sync-factors     只同步复权因子（不下载价格数据）
     --limit N          限制股票数量（测试用）
+    --workers N        并发线程数（默认3，建议3-5，过多可能被IP屏蔽）
 
 日期格式: YYYYMMDD (8位数字)
     例如: 20260101 = 2026年1月1日
@@ -59,6 +63,9 @@ import baostock as bs
 from datetime import datetime
 from typing import List, Optional
 import time
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 from DataHub.config import CRAWLER_REQUEST_DELAY, STORAGE_DIR
 
@@ -496,19 +503,43 @@ class HistorySyncService:
             'file_path': str(file_path)
         }
     
+    def _sync_single_stock(self, symbol: str, incremental: bool) -> dict:
+        """
+        同步单只股票（线程安全包装）
+        
+        Args:
+            symbol: 股票代码
+            incremental: 是否增量更新
+            
+        Returns:
+            同步结果
+        """
+        # 随机延迟 0.5-2 秒，避免请求过于规律
+        delay = random.uniform(0.5, 2.0)
+        time.sleep(delay)
+        
+        try:
+            result = self.sync_stock(symbol, incremental=incremental)
+            return result
+        except Exception as e:
+            logger.error(f"同步 {symbol} 异常: {e}")
+            return {'status': 'failed', 'symbol': symbol, 'error': str(e)}
+    
     def sync_all(
         self,
         symbols: List[str] = None,
         incremental: bool = True,
-        skip_existing: bool = False
+        skip_existing: bool = False,
+        max_workers: int = 3
     ) -> dict:
         """
-        同步所有股票数据
+        同步所有股票数据（并行版本）
         
         Args:
             symbols: 股票代码列表，None表示全部
             incremental: 是否增量更新
             skip_existing: 是否完全跳过已存在的文件（首次全量同步时用）
+            max_workers: 最大并发数（默认3，建议3-5）
             
         Returns:
             同步结果统计
@@ -529,32 +560,55 @@ class HistorySyncService:
             skipped_count = original_count - len(symbols)
             logger.info(f"跳过已有文件的 {skipped_count} 只股票，实际需同步 {len(symbols)} 只")
         
-        logger.info(f"开始同步 {len(symbols)} 只股票")
+        total = len(symbols)
+        logger.info(f"开始同步 {total} 只股票，并发数: {max_workers}")
         
         success_count = 0
         failed_symbols = []
         total_new_records = 0
+        completed = 0
+        lock = Lock()
         
-        for i, symbol in enumerate(symbols, 1):
-            if i % 100 == 0 or i == 1:
-                logger.info(f"进度: {i}/{len(symbols)} ({i/len(symbols)*100:.1f}%)")
+        def update_progress(result: dict, symbol: str):
+            """更新进度（线程安全）"""
+            nonlocal completed, success_count, total_new_records
+            with lock:
+                completed += 1
+                if result['status'] == 'success':
+                    success_count += 1
+                    total_new_records += result.get('new_records', 0)
+                else:
+                    failed_symbols.append(symbol)
+                
+                # 每10只或完成时打印进度
+                if completed % 10 == 0 or completed == total:
+                    logger.info(f"进度: {completed}/{total} ({completed/total*100:.1f}%) - 成功: {success_count}")
+        
+        # 使用线程池并发执行
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_symbol = {
+                executor.submit(self._sync_single_stock, symbol, incremental): symbol
+                for symbol in symbols
+            }
             
-            result = self.sync_stock(symbol, incremental=incremental)
-            
-            if result['status'] == 'success':
-                success_count += 1
-                total_new_records += result.get('new_records', 0)
-            else:
-                failed_symbols.append(symbol)
-            
-            # 请求间隔
-            time.sleep(CRAWLER_REQUEST_DELAY)
+            # 处理完成的任务
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    result = future.result()
+                    update_progress(result, symbol)
+                except Exception as e:
+                    logger.error(f"处理 {symbol} 结果时异常: {e}")
+                    with lock:
+                        completed += 1
+                        failed_symbols.append(symbol)
         
         logger.info(f"同步完成: {success_count} 只成功, {len(failed_symbols)} 只失败")
         
         return {
             'status': 'success',
-            'total_symbols': len(symbols),
+            'total_symbols': total,
             'success': success_count,
             'failed': len(failed_symbols),
             'new_records': total_new_records,
@@ -589,6 +643,76 @@ class HistorySyncService:
                 logger.warning(f"读取文件失败 {f}: {e}")
         
         return summary
+    
+    def get_latest_date_distribution(self) -> dict:
+        """
+        获取所有股票的最新日期分布统计
+        
+        Returns:
+            {
+                'total_stocks': 总股票数,
+                'latest_overall': 全局最新日期,
+                'distribution': {
+                    '2025-04-14': 1500,
+                    '2025-04-13': 200,
+                    ...
+                },
+                'outdated_stocks': [股票列表]  # 最新日期不是全局最新日期的股票
+            }
+        """
+        from collections import Counter
+        
+        files = self.list_existing_files()
+        latest_dates = []
+        stock_latest = {}  # symbol -> latest_date
+        
+        print(f"正在扫描 {len(files)} 只股票...")
+        
+        for f in files:
+            try:
+                df = pd.read_parquet(f)
+                if df.empty or 'trade_date' not in df.columns:
+                    continue
+                    
+                latest_date = df['trade_date'].max()
+                symbol = f.stem
+                
+                # 统一转换为date类型
+                if hasattr(latest_date, 'date'):
+                    latest_date = latest_date.date()
+                elif isinstance(latest_date, str):
+                    latest_date = pd.to_datetime(latest_date).date()
+                
+                latest_dates.append(latest_date)
+                stock_latest[symbol] = latest_date
+                
+            except Exception as e:
+                logger.warning(f"读取文件失败 {f}: {e}")
+        
+        if not latest_dates:
+            return {
+                'total_stocks': 0,
+                'latest_overall': None,
+                'distribution': {},
+                'outdated_stocks': []
+            }
+        
+        # 统计分布
+        latest_overall = max(latest_dates)
+        date_counter = Counter(latest_dates)
+        
+        # 找出不是最新日期的股票
+        outdated_stocks = [
+            symbol for symbol, date in stock_latest.items()
+            if date != latest_overall
+        ]
+        
+        return {
+            'total_stocks': len(latest_dates),
+            'latest_overall': latest_overall,
+            'distribution': dict(sorted(date_counter.items(), key=lambda x: x[0], reverse=True)),
+            'outdated_stocks': outdated_stocks
+        }
 
 
 def main():
@@ -606,6 +730,7 @@ def main():
     parser.add_argument('--summary', action='store_true', help='显示同步摘要')
     parser.add_argument('--limit', type=int, help='限制股票数量（测试用）')
     parser.add_argument('--sync-factors', action='store_true', help='只同步复权因子（不下载价格数据）')
+    parser.add_argument('--workers', type=int, default=3, help='并发线程数（默认3，建议3-5）')
     
     args = parser.parse_args()
     
@@ -626,43 +751,94 @@ def main():
         # 获取已有价格数据的股票列表
         symbols = [f.stem for f in service.raw_prices_dir.glob('*.parquet')]
         print(f"发现 {len(symbols)} 只股票需要同步复权因子")
+        print(f"并发数: {args.workers}，每只请求间隔: 0.5-2秒")
+        
+        def _sync_single_factor(symbol: str) -> dict:
+            """同步单只股票的复权因子"""
+            time.sleep(random.uniform(0.5, 2.0))
+            try:
+                return service.sync_adjust_factor(symbol)
+            except Exception as e:
+                return {'status': 'failed', 'error': str(e)}
         
         success = 0
         failed = 0
         skipped = 0
+        completed = 0
+        total = len(symbols)
+        lock = Lock()
         
-        for i, symbol in enumerate(symbols):
-            try:
-                result = service.sync_adjust_factor(symbol)
-                if result['status'] == 'success':
-                    if result.get('records', 0) > 0:
-                        success += 1
-                    else:
-                        skipped += 1  # 没有复权记录（从未分红）
-                else:
-                    failed += 1
-                    if 'No new data' not in result.get('message', ''):
-                        logger.debug(f"同步失败 {symbol}: {result.get('message', '')}")
-            except Exception as e:
-                failed += 1
-                logger.debug(f"同步异常 {symbol}: {e}")
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            future_to_symbol = {
+                executor.submit(_sync_single_factor, symbol): symbol
+                for symbol in symbols
+            }
             
-            if (i + 1) % 100 == 0:
-                print(f"已处理 {i+1}/{len(symbols)} 只... 成功:{success} 跳过:{skipped} 失败:{failed}")
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    result = future.result()
+                    with lock:
+                        completed += 1
+                        if result['status'] == 'success':
+                            if result.get('records', 0) > 0:
+                                success += 1
+                            else:
+                                skipped += 1
+                        else:
+                            failed += 1
+                        
+                        if completed % 100 == 0 or completed == total:
+                            print(f"进度: {completed}/{total} ({completed/total*100:.1f}%) - 成功:{success} 跳过:{skipped} 失败:{failed}")
+                except Exception as e:
+                    with lock:
+                        completed += 1
+                        failed += 1
         
         print(f"\n复权因子同步完成: 成功 {success}, 跳过 {skipped}, 失败 {failed}")
         print("提示: '跳过'表示该股票从未分红送股，无需复权")
     
     elif args.summary:
+        # 1. 基础同步摘要
         summary = service.get_sync_summary()
-        print("\n同步摘要:")
+        print("\n" + "="*60)
+        print("同步摘要")
+        print("="*60)
         print(f"  总文件数: {summary['total_files']}")
         print(f"  总记录数: {summary['total_records']:,}")
-        print("\n文件列表 (前20个):")
+        
+        # 2. 最新日期分布统计
+        print("\n" + "-"*60)
+        print("最新日期分布")
+        print("-"*60)
+        
+        dist = service.get_latest_date_distribution()
+        
+        if dist['total_stocks'] == 0:
+            print("  没有找到任何股票数据文件")
+        else:
+            print(f"  全局最新日期: {dist['latest_overall']}")
+            print(f"  落后股票数: {len(dist['outdated_stocks'])} ({len(dist['outdated_stocks'])/dist['total_stocks']*100:.1f}%)")
+            
+            print("\n  日期分布:")
+            print(f"  {'日期':<15} {'股票数':>10} {'占比':>10}")
+            print("  " + "-"*40)
+            
+            for date, count in dist['distribution'].items():
+                pct = count / dist['total_stocks'] * 100
+                marker = " <-- 最新" if date == dist['latest_overall'] else ""
+                print(f"  {str(date):<15} {count:>10,} {pct:>9.1f}%{marker}")
+        
+        # 3. 文件列表
+        print("\n" + "-"*60)
+        print(f"文件列表 (前20个):")
+        print("-"*60)
         for f in summary['files'][:20]:
             print(f"  {f['symbol']}: {f['records']:,} 条 ({f['date_range']})")
         if len(summary['files']) > 20:
             print(f"  ... 还有 {len(summary['files']) - 20} 个文件")
+        
+        print("="*60)
     
     elif args.symbol:
         # 同步单只股票
@@ -693,13 +869,21 @@ def main():
         else:
             print(f"将同步全部 {len(service.stock_list)} 只股票")
         
+        print(f"并发数: {args.workers}，每只请求间隔: 0.5-2秒")
+        
+        # ========== 第1步：同步价格数据 ==========
+        print("\n" + "-"*60)
+        print("步骤 1/2: 同步价格数据")
+        print("-"*60)
+        
         # 默认使用增量模式，从已有数据的最新日期开始
         result = service.sync_all(
             symbols=symbols,
             incremental=True,  # 强制增量模式
+            max_workers=args.workers,
             skip_existing=args.skip_existing
         )
-        print("\n同步结果:")
+        print("\n价格同步结果:")
         print(f"  状态: {result['status']}")
         print(f"  总股票: {result['total_symbols']}")
         print(f"  成功: {result['success']}")
@@ -707,6 +891,68 @@ def main():
         print(f"  新增记录: {result['new_records']:,}")
         if result['failed_symbols']:
             print(f"  失败股票: {', '.join(result['failed_symbols'])}")
+        
+        # ========== 第2步：同步复权因子 ==========
+        print("\n" + "-"*60)
+        print("步骤 2/2: 同步复权因子")
+        print("-"*60)
+        
+        # 使用已同步成功的股票列表
+        if symbols is None:
+            # 获取已有价格数据的股票列表
+            symbols = [f.stem for f in service.raw_prices_dir.glob('*.parquet')]
+        
+        print(f"发现 {len(symbols)} 只股票需要同步复权因子")
+        print(f"并发数: {args.workers}，每只请求间隔: 0.5-2秒")
+        
+        def _sync_single_factor(symbol: str) -> dict:
+            """同步单只股票的复权因子"""
+            time.sleep(random.uniform(0.5, 2.0))
+            try:
+                return service.sync_adjust_factor(symbol)
+            except Exception as e:
+                return {'status': 'failed', 'error': str(e)}
+        
+        success = 0
+        failed = 0
+        skipped = 0
+        completed = 0
+        total = len(symbols)
+        lock = Lock()
+        
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            future_to_symbol = {
+                executor.submit(_sync_single_factor, symbol): symbol
+                for symbol in symbols
+            }
+            
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    result_factor = future.result()
+                    with lock:
+                        completed += 1
+                        if result_factor['status'] == 'success':
+                            if result_factor.get('records', 0) > 0:
+                                success += 1
+                            else:
+                                skipped += 1
+                        else:
+                            failed += 1
+                        
+                        if completed % 100 == 0 or completed == total:
+                            print(f"进度: {completed}/{total} ({completed/total*100:.1f}%) - 成功:{success} 跳过:{skipped} 失败:{failed}")
+                except Exception as e:
+                    with lock:
+                        completed += 1
+                        failed += 1
+        
+        print(f"\n复权因子同步完成: 成功 {success}, 跳过 {skipped}, 失败 {failed}")
+        print("提示: '跳过'表示该股票从未分红送股，无需复权")
+        
+        print("\n" + "="*60)
+        print("每日增量更新全部完成")
+        print("="*60)
     
     elif args.all:
         # 同步所有股票（可指定全量或增量）
@@ -717,7 +963,8 @@ def main():
         result = service.sync_all(
             symbols=symbols,
             incremental=not args.full,
-            skip_existing=args.skip_existing
+            skip_existing=args.skip_existing,
+            max_workers=args.workers
         )
         print("\n同步结果:")
         print(f"  状态: {result['status']}")
