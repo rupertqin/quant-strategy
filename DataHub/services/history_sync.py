@@ -22,6 +22,11 @@
     python DataHub/services/history_sync.py --daily 20260413~20260414
     python DataHub/services/history_sync.py --daily 2026-04-13~2026-04-14
     
+    # 指定股票同步（单只或多只，支持省略后缀）
+    python DataHub/services/history_sync.py --daily --symbol 600519
+    python DataHub/services/history_sync.py --daily 20260413 --symbol 600519,300750,000858
+    python DataHub/services/history_sync.py --daily --symbol 600519.SH,300750.SZ
+    
     
     # ========== 首次全量同步（断点续传）==========
     python DataHub/services/history_sync.py --all --skip-existing
@@ -44,7 +49,8 @@
                          无参数: 自动同步到最新日期
                          单日: 20260413, 2026-04-13
                          范围: 20260413~20260414, 2026-04-13~2026-04-14
-    --symbol SYMBOL    指定单只股票同步，如 600519.SH
+    --symbol SYMBOL    指定股票，支持单只或多只逗号分隔，后缀可省略
+                         如: 600519, 600519.SH, 600519,300750,000858
     --full             全量更新（覆盖已有数据，默认增量）
     --skip-existing    跳过已有文件的股票（首次同步时大幅提速，不读取文件内容）
     --summary          显示已同步数据摘要
@@ -127,6 +133,7 @@ class HistorySyncService:
             return 'sh.' + symbol.replace('.SH', '')
         elif '.SZ' in symbol:
             return 'sz.' + symbol.replace('.SZ', '')
+        return symbol
         return symbol
     
     def get_stock_file_path(self, symbol: str) -> Path:
@@ -822,7 +829,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='历史数据同步服务')
-    parser.add_argument('--symbol', type=str, help='同步指定股票，如 600519.SH')
+    parser.add_argument('--symbol', type=str, help='指定股票，支持单只或多只逗号分隔，如 600519.SH 或 600519.SH,300750.SZ')
     parser.add_argument('--all', action='store_true', help='同步所有股票')
     parser.add_argument('--daily', nargs='?', const=True, default=False, 
                         help='每日增量更新。可指定日期: 20260413, 2026-04-13, 20260413~20260414')
@@ -959,20 +966,42 @@ def main():
         print("="*60)
     
     elif args.symbol:
-        # 同步单只股票
-        result = service.sync_stock(
-            args.symbol,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            incremental=not args.full
-        )
-        print("\n同步结果:")
-        print(f"  状态: {result['status']}")
-        print(f"  股票: {result['symbol']}")
-        print(f"  新数据: {result.get('new_records', 0)} 条")
-        print(f"  总数据: {result.get('total_records', 0)} 条")
-        if result.get('date_range'):
-            print(f"  日期范围: {result['date_range']}")
+        # 同步指定股票（支持逗号分隔）
+        symbol_list = [s.strip() for s in args.symbol.split(',')]
+        
+        # 补全代码后缀
+        from lib.utils import StockCodeUtil
+        symbol_list = [StockCodeUtil.with_suffix(s) or s for s in symbol_list]
+        
+        if len(symbol_list) == 1:
+            # 单只股票
+            result = service.sync_stock(
+                symbol_list[0],
+                start_date=args.start_date,
+                end_date=args.end_date,
+                incremental=not args.full
+            )
+            print("\n同步结果:")
+            print(f"  状态: {result['status']}")
+            print(f"  股票: {result['symbol']}")
+            print(f"  新数据: {result.get('new_records', 0)} 条")
+            print(f"  总数据: {result.get('total_records', 0)} 条")
+            if result.get('date_range'):
+                print(f"  日期范围: {result['date_range']}")
+        else:
+            # 多只股票，使用批量同步
+            print(f"\n同步 {len(symbol_list)} 只股票: {', '.join(symbol_list[:5])}{'...' if len(symbol_list) > 5 else ''}")
+            result = service.sync_all(
+                symbols=symbol_list,
+                incremental=not args.full,
+                max_workers=args.workers,
+                start_date=args.start_date,
+                end_date=args.end_date
+            )
+            print("\n批量同步结果:")
+            print(f"  成功: {result['success']}/{result['total_symbols']}")
+            print(f"  失败: {result['failed']}")
+            print(f"  新增记录: {result.get('new_records', 0):,}")
     
     elif args.daily:
         # 每日增量更新 - 自动同步所有股票到最新日期
@@ -980,8 +1009,15 @@ def main():
         print("执行每日增量更新")
         print("="*60)
         
+        # 处理指定股票列表（支持逗号分隔，自动补全后缀）
+        from lib.utils import StockCodeUtil
         symbols = None
-        if args.limit:
+        if args.symbol:
+            symbols = [s.strip() for s in args.symbol.split(',')]
+            symbols = [StockCodeUtil.with_suffix(s) or s for s in symbols]  # 补全后缀
+            print(f"指定股票: {len(symbols)} 只")
+            print(f"  {', '.join(symbols[:5])}{'...' if len(symbols) > 5 else ''}")
+        elif args.limit:
             symbols = service.stock_list['symbol'].tolist()[:args.limit]
             print(f"测试模式: 只同步前 {args.limit} 只股票")
         else:

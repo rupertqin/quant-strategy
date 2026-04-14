@@ -832,30 +832,30 @@ def main():
 
         st.divider()
 
-        search_query = st.text_input(
-            "输入代码或名称",
-            placeholder="如: 600519 或 茅台",
-            key="stock_search"
+        # ========== 股票搜索 ==========
+        st.subheader("🔎 搜索股票")
+
+        # 准备选项列表
+        all_options = [f"{row['symbol']} - {row['name']}" for _, row in stock_list.iterrows()]
+
+        # 使用 selectbox 搜索（Streamlit 内置搜索功能）
+        selected = st.selectbox(
+            "选择股票",
+            options=all_options,
+            key="stock_selector",
+            index=None,
+            placeholder="输入代码或名称搜索...",
+            label_visibility="collapsed"
         )
 
-        # 搜索结果
-        if search_query:
-            query = search_query.upper()
-            code_match = stock_list[stock_list['symbol'].str.contains(query, na=False)]
-            name_match = stock_list[stock_list['name'].str.contains(query, na=False)]
-            search_results = pd.concat([code_match, name_match]).drop_duplicates().head(20)
-
-            if not search_results.empty:
-                st.write(f"找到 {len(search_results)} 个结果:")
-                for _, row in search_results.iterrows():
-                    if st.button(
-                        f"{row['symbol']} {row['name']}",
-                        key=f"btn_{row['symbol']}",
-                        use_container_width=True
-                    ):
-                        st.session_state['selected_stock'] = row['symbol']
-                        st.session_state['selected_name'] = row['name']
-                        st.rerun()
+        # 处理选择
+        if selected:
+            symbol = selected.split(' - ')[0]
+            name = selected.split(' - ')[1]
+            if st.session_state.get('selected_stock') != symbol:
+                st.session_state['selected_stock'] = symbol
+                st.session_state['selected_name'] = name
+                st.rerun()
 
         # 常用股票快捷选择
         st.divider()
