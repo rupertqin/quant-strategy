@@ -1062,19 +1062,22 @@ def main():
         print("执行每日增量更新")
         print("="*60)
 
-        # 处理指定股票列表（支持逗号分隔，自动补全后缀）
+        # 处理股票列表（统一逻辑：全量/指定/limit 都生成 symbol 列表）
         from lib.utils import StockCodeUtil
-        symbols = None
         if args.symbol:
+            # 指定股票列表（逗号分隔）
             symbols = [s.strip() for s in args.symbol.split(',')]
             symbols = [StockCodeUtil.with_suffix(s) or s for s in symbols]  # 补全后缀
             print(f"指定股票: {len(symbols)} 只")
             print(f"  {', '.join(symbols[:5])}{'...' if len(symbols) > 5 else ''}")
         elif args.limit:
+            # 测试模式：限制数量
             symbols = service.stock_list['symbol'].tolist()[:args.limit]
             print(f"测试模式: 只同步前 {args.limit} 只股票")
         else:
-            print(f"将同步全部 {len(service.stock_list)} 只股票")
+            # 全量模式：获取全部股票代码
+            symbols = service.stock_list['symbol'].tolist()
+            print(f"将同步全部 {len(symbols)} 只股票")
 
         # 如果指定了日期范围，使用指定日期（用于快速补数据）
         if args.start_date or args.end_date:
