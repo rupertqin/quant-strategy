@@ -14,6 +14,14 @@
     # 使用更多并发（更快但可能被IP限制）
     python DataHub/services/history_sync.py --daily --workers 5
     
+    # 指定单日同步（快速补数据）
+    python DataHub/services/history_sync.py --daily 20260413
+    python DataHub/services/history_sync.py --daily 2026-04-13
+    
+    # 指定日期范围
+    python DataHub/services/history_sync.py --daily 20260413~20260414
+    python DataHub/services/history_sync.py --daily 2026-04-13~2026-04-14
+    
     
     # ========== 首次全量同步（断点续传）==========
     python DataHub/services/history_sync.py --all --skip-existing
@@ -21,10 +29,6 @@
     
     # ========== 全量更新（覆盖已有数据）==========
     python DataHub/services/history_sync.py --symbol 600519.SH --full
-    
-    
-    # ========== 指定日期范围 ==========
-    python DataHub/services/history_sync.py --symbol 600519.SH --start-date 20260101 --end-date 20260414
     
     
     # ========== 复权因子同步 ==========
@@ -36,10 +40,11 @@
 
 参数说明:
     --all              同步所有股票
-    --daily            每日增量更新模式（自动同步价格数据+复权因子）
+    --daily [DATE]     每日增量更新。可选指定日期:
+                         无参数: 自动同步到最新日期
+                         单日: 20260413, 2026-04-13
+                         范围: 20260413~20260414, 2026-04-13~2026-04-14
     --symbol SYMBOL    指定单只股票同步，如 600519.SH
-    --start-date DATE  开始日期，格式 YYYYMMDD，如 20260101
-    --end-date DATE    结束日期，格式 YYYYMMDD，如 20260414
     --full             全量更新（覆盖已有数据，默认增量）
     --skip-existing    跳过已有文件的股票（首次同步时大幅提速，不读取文件内容）
     --summary          显示已同步数据摘要
@@ -47,9 +52,12 @@
     --limit N          限制股票数量（测试用）
     --workers N        并发线程数（默认3，建议3-5，过多可能被IP屏蔽）
 
-日期格式: YYYYMMDD (8位数字)
-    例如: 20260101 = 2026年1月1日
-         20260414 = 2026年4月14日
+日期格式:
+    支持多种格式，自动识别:
+    - YYYYMMDD: 20260413
+    - YYYY-MM-DD: 2026-04-13
+    - YYYY/MM/DD: 2026/04/13
+    - 范围分隔符: ~ 或 — 或 －
 """
 
 import sys
@@ -80,14 +88,15 @@ class HistorySyncService:
     """
     
     def __init__(self):
+        """初始化服务（不自动登录baostock，按需登录）"""
         self.raw_prices_dir = STORAGE_DIR / "raw" / "prices"
         self.raw_prices_dir.mkdir(parents=True, exist_ok=True)
         
         # 加载股票列表
         self.stock_list = self._load_stock_list()
         
-        # 登录baostock
-        self._login_baostock()
+        # 登录状态标记
+        self._baostock_logged_in = False
         
     def _load_stock_list(self) -> pd.DataFrame:
         """加载股票基础信息列表"""
@@ -101,12 +110,16 @@ class HistorySyncService:
             return pd.DataFrame()
     
     def _login_baostock(self):
-        """登录baostock"""
+        """登录baostock（延迟加载，避免不必要的登录）"""
+        if self._baostock_logged_in:
+            return
+        
         lg = bs.login()
         if lg.error_code != '0':
             logger.error(f"baostock登录失败: {lg.error_msg}")
         else:
             logger.info("baostock登录成功")
+            self._baostock_logged_in = True
     
     def _format_code(self, symbol: str) -> str:
         """转换代码格式: 600519.SH -> sh.600519 (baostock格式)"""
@@ -149,6 +162,9 @@ class HistorySyncService:
         Returns:
             DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
         """
+        # 确保已登录
+        self._login_baostock()
+        
         try:
             code = self._format_code(symbol)
             
@@ -237,6 +253,9 @@ class HistorySyncService:
         Returns:
             DataFrame with columns: trade_date, adjust_factor
         """
+        # 确保已登录
+        self._login_baostock()
+        
         try:
             code = self._format_code(symbol)
             
@@ -503,23 +522,60 @@ class HistorySyncService:
             'file_path': str(file_path)
         }
     
-    def _sync_single_stock(self, symbol: str, incremental: bool) -> dict:
+    def _sync_single_stock(
+        self,
+        symbol: str,
+        incremental: bool,
+        start_date: str = None,
+        end_date: str = None
+    ) -> dict:
         """
         同步单只股票（线程安全包装）
         
         Args:
             symbol: 股票代码
             incremental: 是否增量更新
+            start_date: 指定开始日期（可选）
+            end_date: 指定结束日期（可选）
             
         Returns:
             同步结果
         """
+        # 如果指定了日期范围，先快速检查是否已包含该日期范围
+        if start_date and end_date:
+            file_path = self.get_stock_file_path(symbol)
+            if file_path.exists():
+                try:
+                    df = pd.read_parquet(file_path)
+                    if not df.empty and 'trade_date' in df.columns:
+                        latest_date = df['trade_date'].max()
+                        if hasattr(latest_date, 'strftime'):
+                            latest_date_str = latest_date.strftime('%Y%m%d')
+                        else:
+                            latest_date_str = str(latest_date).replace('-', '')
+                        
+                        # 如果最新日期 >= 目标结束日期，直接跳过
+                        if latest_date_str >= end_date:
+                            return {
+                                'status': 'success',
+                                'symbol': symbol,
+                                'records': 0,
+                                'message': f'Skipped (already up to {latest_date_str})'
+                            }
+                except Exception:
+                    pass  # 读取失败则继续同步
+        
         # 随机延迟 0.5-2 秒，避免请求过于规律
         delay = random.uniform(0.5, 2.0)
         time.sleep(delay)
         
         try:
-            result = self.sync_stock(symbol, incremental=incremental)
+            result = self.sync_stock(
+                symbol,
+                start_date=start_date,
+                end_date=end_date,
+                incremental=incremental
+            )
             return result
         except Exception as e:
             logger.error(f"同步 {symbol} 异常: {e}")
@@ -530,7 +586,9 @@ class HistorySyncService:
         symbols: List[str] = None,
         incremental: bool = True,
         skip_existing: bool = False,
-        max_workers: int = 3
+        max_workers: int = 3,
+        start_date: str = None,
+        end_date: str = None
     ) -> dict:
         """
         同步所有股票数据（并行版本）
@@ -540,6 +598,8 @@ class HistorySyncService:
             incremental: 是否增量更新
             skip_existing: 是否完全跳过已存在的文件（首次全量同步时用）
             max_workers: 最大并发数（默认3，建议3-5）
+            start_date: 指定开始日期（覆盖自动计算的日期）
+            end_date: 指定结束日期（覆盖自动计算的日期）
             
         Returns:
             同步结果统计
@@ -586,9 +646,9 @@ class HistorySyncService:
         
         # 使用线程池并发执行
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
+            # 提交所有任务（传递日期参数用于快速跳过检查）
             future_to_symbol = {
-                executor.submit(self._sync_single_stock, symbol, incremental): symbol
+                executor.submit(self._sync_single_stock, symbol, incremental, start_date, end_date): symbol
                 for symbol in symbols
             }
             
@@ -715,6 +775,48 @@ class HistorySyncService:
         }
 
 
+def parse_date_arg(date_str: str) -> tuple:
+    """
+    解析日期参数，支持多种格式
+    
+    支持格式:
+        - 单日: 20260413, 2026-04-13, 2026/04/13
+        - 范围: 20260413~20260414, 2026-04-13~2026-04-14, 2026/04/13~2026/04/14
+    
+    Returns:
+        (start_date, end_date) 格式为 YYYYMMDD
+    """
+    import re
+    
+    if not date_str:
+        return None, None
+    
+    # 统一分隔符为 ~
+    date_str = date_str.replace('—', '~').replace('－', '~')
+    
+    # 提取所有日期数字
+    def extract_date(s: str) -> str:
+        """从字符串中提取 YYYYMMDD 格式"""
+        # 移除所有非数字字符
+        digits = re.sub(r'\D', '', s)
+        if len(digits) == 8:
+            return digits
+        raise ValueError(f"无法解析日期: {s}")
+    
+    if '~' in date_str:
+        # 范围格式
+        parts = date_str.split('~')
+        if len(parts) != 2:
+            raise ValueError(f"日期范围格式错误: {date_str}")
+        start = extract_date(parts[0].strip())
+        end = extract_date(parts[1].strip())
+        return start, end
+    else:
+        # 单日格式
+        date = extract_date(date_str.strip())
+        return date, date
+
+
 def main():
     """命令行入口"""
     import argparse
@@ -722,9 +824,10 @@ def main():
     parser = argparse.ArgumentParser(description='历史数据同步服务')
     parser.add_argument('--symbol', type=str, help='同步指定股票，如 600519.SH')
     parser.add_argument('--all', action='store_true', help='同步所有股票')
-    parser.add_argument('--daily', action='store_true', help='每日增量更新（同步到最新日期）')
-    parser.add_argument('--start-date', type=str, help='开始日期 YYYYMMDD')
-    parser.add_argument('--end-date', type=str, help='结束日期 YYYYMMDD')
+    parser.add_argument('--daily', nargs='?', const=True, default=False, 
+                        help='每日增量更新。可指定日期: 20260413, 2026-04-13, 20260413~20260414')
+    parser.add_argument('--start-date', type=str, help='开始日期 YYYYMMDD（已废弃，建议使用 --daily DATE）')
+    parser.add_argument('--end-date', type=str, help='结束日期 YYYYMMDD（已废弃，建议使用 --daily DATE')
     parser.add_argument('--full', action='store_true', help='全量更新（非增量）')
     parser.add_argument('--skip-existing', action='store_true', help='首次同步时跳过已有文件的股票（大幅提速）')
     parser.add_argument('--summary', action='store_true', help='显示同步摘要')
@@ -733,6 +836,21 @@ def main():
     parser.add_argument('--workers', type=int, default=3, help='并发线程数（默认3，建议3-5）')
     
     args = parser.parse_args()
+    
+    # 处理 --daily 参数的日期
+    if args.daily and isinstance(args.daily, str):
+        try:
+            start_date, end_date = parse_date_arg(args.daily)
+            args.start_date = start_date
+            args.end_date = end_date
+        except ValueError as e:
+            print(f"错误: {e}")
+            print("日期格式示例:")
+            print("  --daily 20260413")
+            print("  --daily 2026-04-13")
+            print("  --daily 20260413~20260414")
+            print("  --daily 2026-04-13~2026-04-14")
+            return
     
     # 设置日志
     logging.basicConfig(
@@ -869,6 +987,16 @@ def main():
         else:
             print(f"将同步全部 {len(service.stock_list)} 只股票")
         
+        # 如果指定了日期范围，使用指定日期（用于快速补数据）
+        if args.start_date or args.end_date:
+            start_date = args.start_date or datetime.now().strftime('%Y%m%d')
+            end_date = args.end_date or datetime.now().strftime('%Y%m%d')
+            print(f"指定日期范围: {start_date} ~ {end_date}")
+            print(f"提示: 已包含此日期范围的股票将被快速跳过")
+        else:
+            start_date = None
+            end_date = None
+        
         print(f"并发数: {args.workers}，每只请求间隔: 0.5-2秒")
         
         # ========== 第1步：同步价格数据 ==========
@@ -876,12 +1004,14 @@ def main():
         print("步骤 1/2: 同步价格数据")
         print("-"*60)
         
-        # 默认使用增量模式，从已有数据的最新日期开始
+        # 使用增量模式，从已有数据的最新日期开始
         result = service.sync_all(
             symbols=symbols,
-            incremental=True,  # 强制增量模式
+            incremental=True,
             max_workers=args.workers,
-            skip_existing=args.skip_existing
+            skip_existing=args.skip_existing,
+            start_date=start_date,
+            end_date=end_date
         )
         print("\n价格同步结果:")
         print(f"  状态: {result['status']}")
@@ -907,9 +1037,33 @@ def main():
         
         def _sync_single_factor(symbol: str) -> dict:
             """同步单只股票的复权因子"""
+            # 如果指定了日期范围，先快速检查
+            if start_date and end_date:
+                factor_file = STORAGE_DIR / "raw" / "adjust_factors" / f"{symbol}.parquet"
+                if factor_file.exists():
+                    try:
+                        df = pd.read_parquet(factor_file)
+                        if not df.empty and 'trade_date' in df.columns:
+                            latest_date = df['trade_date'].max()
+                            if hasattr(latest_date, 'strftime'):
+                                latest_date_str = latest_date.strftime('%Y%m%d')
+                            else:
+                                latest_date_str = str(latest_date).replace('-', '')
+                            
+                            # 如果最新日期 >= 目标结束日期，直接跳过
+                            if latest_date_str >= end_date:
+                                return {
+                                    'status': 'success',
+                                    'symbol': symbol,
+                                    'records': 0,
+                                    'message': 'Skipped'
+                                }
+                    except Exception:
+                        pass
+            
             time.sleep(random.uniform(0.5, 2.0))
             try:
-                return service.sync_adjust_factor(symbol)
+                return service.sync_adjust_factor(symbol, start_date, end_date, incremental=True)
             except Exception as e:
                 return {'status': 'failed', 'error': str(e)}
         
@@ -976,9 +1130,10 @@ def main():
     else:
         parser.print_help()
     
-    # 退出时登出baostock
-    bs.logout()
-    logger.info("baostock已登出")
+    # 退出时登出baostock（只在已登录时）
+    if service._baostock_logged_in:
+        bs.logout()
+        logger.info("baostock已登出")
 
 
 if __name__ == "__main__":
