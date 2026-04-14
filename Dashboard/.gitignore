@@ -10,6 +10,7 @@ ENV/
 *.egg-info/
 dist/
 build/
+.streamlit/secrets.toml
 
 # Data files (从父目录读取)
 data/

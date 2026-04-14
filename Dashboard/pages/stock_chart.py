@@ -821,6 +821,18 @@ def main():
     with st.sidebar:
         st.header("🔍 股票搜索")
 
+        # 检测运行环境（从 secrets.toml 读取，不存在则默认 prod）
+        try:
+            mode = st.secrets.get("environment", {}).get("mode", "prod")
+        except Exception:
+            mode = "prod"
+        is_dev = mode == "dev"
+
+        # 开发模式显示标签
+        if is_dev:
+            st.info("🛠️ 开发模式")
+            st.divider()
+
         # 复权方式选择
         st.subheader("⚙️ 显示设置")
         adjust_type = st.radio(
