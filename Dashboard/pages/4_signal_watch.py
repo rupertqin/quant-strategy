@@ -14,7 +14,7 @@ from datetime import datetime
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.formatters import format_technicals, format_flat_mas, render_flat_ma_badge, format_ma_bonding, render_signal_card
-from utils.scoring import calculate_stock_score
+from utils.scoring import calculate_stock_score, get_score_color, get_score_label
 
 # 导入底层数据接口（默认前复权）
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -413,19 +413,31 @@ def main():
             stock_groups[symbol]['periods'].add(sig.get('period', 'daily'))
             stock_groups[symbol]['types'].add(sig.get('signal_type', 'left'))
 
-        # 计算每个股票的总分（复用公共函数）
+        # 计算每个股票的总分（复用公共函数，传入涨跌幅信息）
         for symbol, group in stock_groups.items():
-            group['total_score'] = calculate_stock_score(group['signals'])
+            # 获取该股票的涨跌幅信息（用于风险过滤）
+            latest_signal = max(group['signals'], key=lambda x: x.get('trigger_date', ''))
+            change_pct = latest_signal.get('change_pct', 0)
+            
+            # 计算评分，传入涨跌幅
+            group['total_score'] = calculate_stock_score(
+                group['signals'], 
+                change_pct=change_pct
+            )
 
             # 添加信号数量、质量集中度和维度覆盖率信息用于展示
-            signal_count = len(signals)
-            quality_conc = signals[0].get('technicals', {}).get('quality_concentration', 0)
-            dim_coverage = signals[0].get('technicals', {}).get('dimension_coverage', 0)
-            dim_details = signals[0].get('technicals', {}).get('dimension_details', {})
+            stock_signals = group['signals']
+            signal_count = len(stock_signals)
+            # 从该股票的信号中取技术指标（取最高分的信号）
+            best_signal = max(stock_signals, key=lambda x: x.get('score', 0))
+            quality_conc = best_signal.get('technicals', {}).get('quality_concentration', 0)
+            dim_coverage = best_signal.get('technicals', {}).get('dimension_coverage', 0)
+            dim_details = best_signal.get('technicals', {}).get('dimension_details', {})
             group['signal_count'] = signal_count
             group['quality_concentration'] = quality_conc
             group['dimension_coverage'] = dim_coverage
             group['dimension_details'] = dim_details
+            group['change_pct'] = change_pct  # 保存涨跌幅供显示
 
         return stock_groups
 
@@ -442,22 +454,18 @@ def main():
     # 排序选项
     sort_col1, sort_col2 = st.columns([1, 4])
     with sort_col1:
-        sort_by = st.selectbox("排序方式", ["评分", "维度覆盖率", "质量集中度", "信号数量", "日期", "涨跌幅"], index=0)
+        sort_by = st.selectbox("排序方式", ["综合评分", "维度覆盖率", "信号数量", "日期"], index=0)
 
     # 排序
-    if sort_by == "评分":
+    if sort_by == "综合评分":
         grouped_stocks.sort(key=lambda x: x['total_score'], reverse=True)
     elif sort_by == "维度覆盖率":
         grouped_stocks.sort(key=lambda x: x.get('dimension_coverage', 0), reverse=True)
-    elif sort_by == "质量集中度":
-        grouped_stocks.sort(key=lambda x: x.get('quality_concentration', 0), reverse=True)
     elif sort_by == "信号数量":
-        # 适中数量(2-5个)排在前面
-        grouped_stocks.sort(key=lambda x: (abs(len(x['signals']) - 3.5), len(x['signals'])))
+        # 适中数量(2-4个)排在前面，过多降权
+        grouped_stocks.sort(key=lambda x: (abs(len(x['signals']) - 3), -len(x['signals'])))
     elif sort_by == "日期":
         grouped_stocks.sort(key=lambda x: max([s.get('trigger_date', '') for s in x['signals']]), reverse=True)
-    elif sort_by == "涨跌幅":
-        grouped_stocks.sort(key=lambda x: max([s.get('change_pct', 0) for s in x['signals']]), reverse=True)
 
     # 分页显示
     page_size = 20
@@ -485,15 +493,7 @@ def main():
         dominant_type = 'right' if 'right' in signal_types else 'left'
         signal_type_class = f"signal-{dominant_type}"
 
-        # 获取最新价格和涨跌幅
-        latest_signal = max(signals, key=lambda x: x.get('trigger_date', ''))
-        change_pct = latest_signal.get('change_pct', 0)
-        change_color = "#ff4757" if change_pct > 0 else "#2ed573" if change_pct < 0 else "#333"
-        change_symbol = "+" if change_pct > 0 else ""
-
-        # 获取最新价格和数据日期（底层接口默认前复权）
-        latest_price = load_stock_latest_price(symbol)
-        price_display = f"¥{latest_price:.2f}" if latest_price else "-"
+        # 获取最新数据日期
         latest_data_date = load_stock_latest_date(symbol) or '未知'
 
         # 获取扫描时使用的实时数据时间（信号数据里的价格时间）
@@ -553,9 +553,9 @@ def main():
                     st.markdown(render_signal_card(sig, idx), unsafe_allow_html=True)
 
             with col2:
-                # 总评分徽章
-                score_bg = "#ff6b6b" if total_score >= 80 else "#feca57" if total_score >= 60 else "#dfe6e9"
-                score_color = "white" if total_score >= 80 else "#333"
+                # 总评分徽章（使用新颜色体系）
+                score_bg = get_score_color(total_score)
+                score_color = "white" if total_score >= 75 else "#333"
 
                 # 信号数量标签颜色
                 signal_count = stock_group.get('signal_count', len(signals))
@@ -624,7 +624,7 @@ def main():
                         font-weight: bold;
                         font-size: 16px;
                     ">{total_score}</div>
-                    <div style="font-size: 11px; color: #888; margin-top: 5px;">组合评分</div>
+                    <div style="font-size: 11px; color: #888; margin-top: 5px;">{get_score_label(total_score)}</div>
                     <div style="font-size: 10px; color: {dim_color}; margin-top: 4px; font-weight: 600;">
                         维度覆盖: {dim_pct}% [{dim_badge}]
                     </div>
@@ -634,9 +634,6 @@ def main():
                     <div style="font-size: 10px; color: #666; margin-top: 2px;">
                         质量集中度: {quality_pct}%
                     </div>
-                    <div style="font-size: 12px; color: {change_color}; margin-top: 6px;">{change_symbol}{change_pct}%</div>
-                    <div style="font-size: 14px; color: #333; margin-top: 6px; font-weight: 600;">{price_display}</div>
-                    <div style="font-size: 10px; color: #999; margin-top: 2px;">前复权</div>
                 </div>
                 """, unsafe_allow_html=True)
 

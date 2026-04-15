@@ -38,6 +38,51 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def format_date_safe(date_value) -> str:
+    """
+    安全地格式化日期为字符串
+    
+    处理各种可能的日期格式：
+    - pd.Timestamp -> '2026-04-17'
+    - datetime -> '2026-04-17'
+    - str (已格式化) -> 原样返回
+    - 数字字符串 (异常) -> 尝试解析或返回空
+    """
+    if pd.isna(date_value):
+        return ''
+    
+    # 已经是 Timestamp 或 datetime
+    if isinstance(date_value, (pd.Timestamp, datetime)):
+        return date_value.strftime('%Y-%m-%d')
+    
+    # 字符串类型
+    if isinstance(date_value, str):
+        # 检查是否已是标准格式
+        if len(date_value) == 10 and date_value[4] == '-' and date_value[7] == '-':
+            return date_value
+        # 尝试解析其他格式
+        try:
+            dt = pd.to_datetime(date_value)
+            return dt.strftime('%Y-%m-%d')
+        except:
+            # 无法解析，可能是异常数据
+            logger.warning(f"无法解析日期: {date_value}")
+            return ''
+    
+    # 数字类型（Excel日期序列号等）
+    if isinstance(date_value, (int, float)):
+        try:
+            # 尝试作为Excel日期序列号解析
+            from datetime import timedelta
+            base = datetime(1899, 12, 30)  # Excel日期基准
+            dt = base + timedelta(days=int(date_value))
+            return dt.strftime('%Y-%m-%d')
+        except:
+            return ''
+    
+    return ''
+
+
 # 排除的交易所列表（北交所数据不稳定，暂时排除）
 EXCLUDED_EXCHANGES = ['BJ']
 
@@ -444,7 +489,7 @@ class LeftSignalDetector:
             signal_name=signal_name,
             strength=strength,
             period=period,
-            trigger_date=latest['trade_date'].strftime('%Y-%m-%d') if isinstance(latest['trade_date'], pd.Timestamp) else str(latest['trade_date']),
+            trigger_date=format_date_safe(latest['trade_date']),
             close_price=round(latest['close'], 2),
             change_pct=round(latest.get('change_pct', 0), 2),
             volume_ratio=round(latest.get('volume_ratio', 1), 2),
@@ -452,7 +497,7 @@ class LeftSignalDetector:
             score=score,
             technicals=technicals
         )
-    
+
     def _calculate_score(self, signal_name: str, strength: str, latest) -> int:
         """
         计算信号评分 - 严格版，确保高分稀缺性
@@ -795,7 +840,7 @@ class RightSignalDetector:
             signal_name=signal_name,
             strength=strength,
             period=period,
-            trigger_date=latest['trade_date'].strftime('%Y-%m-%d') if isinstance(latest['trade_date'], pd.Timestamp) else str(latest['trade_date']),
+            trigger_date=format_date_safe(latest['trade_date']),
             close_price=round(latest['close'], 2),
             change_pct=round(latest.get('change_pct', 0), 2),
             volume_ratio=round(latest.get('volume_ratio', 1), 2),
@@ -803,7 +848,7 @@ class RightSignalDetector:
             score=score,
             technicals=technicals
         )
-    
+
     def _calculate_score(self, signal_name: str, strength: str, latest) -> int:
         """
         计算右侧信号评分 - 严格版
@@ -924,11 +969,11 @@ class StockSignalScanner:
         daily_df = self.load_stock_data(symbol, "daily", adjust=adjust)
         if daily_df.empty or len(daily_df) < 30:
             return pd.DataFrame()
-        
+
         try:
             df = daily_df.copy()
             df.set_index('trade_date', inplace=True)
-            
+
             if period == "weekly":
                 # 周线：周五为结束日
                 rule = 'W-FRI'
@@ -937,7 +982,7 @@ class StockSignalScanner:
                 rule = 'ME'
             else:
                 return pd.DataFrame()
-            
+
             # 重采样
             resampled = df.resample(rule).agg({
                 'open': 'first',
@@ -947,16 +992,24 @@ class StockSignalScanner:
                 'volume': 'sum',
                 'amount': 'sum' if 'amount' in df.columns else 'sum'
             }).dropna()
-            
+
+            # 过滤掉未来的日期（重要！）
+            from datetime import datetime
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            resampled = resampled[resampled.index <= today]
+
+            if resampled.empty:
+                return pd.DataFrame()
+
             # 计算涨跌幅
             resampled['change_pct'] = resampled['close'].pct_change() * 100
-            
+
             # 重置索引
             resampled = resampled.reset_index()
             resampled.rename(columns={'index': 'trade_date'}, inplace=True)
-            
+
             return resampled
-            
+
         except Exception as e:
             logger.warning(f"合成 {symbol} {period} 数据失败: {e}")
             return pd.DataFrame()
