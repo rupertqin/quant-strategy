@@ -212,6 +212,10 @@ class LeftSignalDetector:
     
     def __init__(self):
         self.calc = SignalCalculator()
+        # 集成量价信号检测器
+        from .volume_price_signals import VolumePriceDetector, VolumePriceAdapter
+        self.vp_detector = VolumePriceDetector()
+        self.vp_adapter = VolumePriceAdapter
     
     def detect_all(self, df: pd.DataFrame, symbol: str, name: str, period: str = "daily") -> List[StockSignal]:
         """检测所有左侧信号"""
@@ -273,6 +277,41 @@ class LeftSignalDetector:
                 symbol, name, "长下影线", long_shadow,
                 latest, "出现长下影线，下方有支撑", df, period
             ))
+        
+        # 6. 新增：左侧量价信号（缩量整理、量价背离）
+        vp_signals = self._detect_volume_price_signals(df, symbol, name, period, latest)
+        signals.extend(vp_signals)
+        
+        return signals
+    
+    def _detect_volume_price_signals(self, df: pd.DataFrame, symbol: str, name: str, 
+                                     period: str, latest: pd.Series) -> List[StockSignal]:
+        """
+        检测左侧量价信号（回调/背离/缩量类）
+        """
+        signals = []
+        from .volume_price_signals import VolumePricePattern
+        
+        # 只关注左侧信号（背离、缩量整理）
+        left_patterns = [
+            VolumePricePattern.VOLUME_PRICE_DIVERGENCE,  # 量价背离
+            VolumePricePattern.VOLUME_CONTRACTION,        # 缩量整理
+        ]
+        
+        for pattern in left_patterns:
+            vp_signal = self.vp_detector.detect(df, pattern)
+            if vp_signal:
+                stock_signal = self.vp_adapter.to_stock_signal(
+                    vp_signal, symbol, name, period,
+                    close_price=latest['close'],
+                    change_pct=latest.get('change_pct', 0) * 100,
+                    technicals={
+                        "date": str(latest.name) if hasattr(latest, 'name') else "",
+                        "ma20": latest.get('ma20'),
+                        "volume_ratio": vp_signal.volume_ratio,
+                    }
+                )
+                signals.append(StockSignal(**stock_signal))
         
         return signals
     
@@ -505,6 +544,10 @@ class RightSignalDetector:
     
     def __init__(self):
         self.calc = SignalCalculator()
+        # 集成量价信号检测器
+        from .volume_price_signals import VolumePriceDetector, VolumePriceAdapter
+        self.vp_detector = VolumePriceDetector()
+        self.vp_adapter = VolumePriceAdapter
     
     def detect_all(self, df: pd.DataFrame, symbol: str, name: str, period: str = "daily") -> List[StockSignal]:
         """检测所有右侧信号"""
@@ -559,7 +602,7 @@ class RightSignalDetector:
                 latest, "K线上穿D线，短期超买", df, period
             ))
         
-        # 5. 量价突破（放量上涨）
+        # 5. 量价突破（放量上涨）- 保留原有逻辑，与新模块互补
         volume_breakout = self._detect_volume_breakout(df, latest, prev)
         if volume_breakout:
             signals.append(self._create_signal(
@@ -582,6 +625,42 @@ class RightSignalDetector:
                 symbol, name, "突破平台", platform_break,
                 latest, "放量突破近期整理平台", df, period
             ))
+        
+        # 8. 新增：右侧量价信号（放量突破、倍量启动）
+        vp_signals = self._detect_volume_price_signals(df, symbol, name, period, latest)
+        signals.extend(vp_signals)
+        
+        return signals
+    
+    def _detect_volume_price_signals(self, df: pd.DataFrame, symbol: str, name: str, 
+                                     period: str, latest: pd.Series) -> List[StockSignal]:
+        """
+        检测右侧量价信号（突破/放量类）
+        """
+        signals = []
+        from .volume_price_signals import VolumePricePattern
+        
+        # 只关注右侧信号（放量突破、倍量启动）
+        right_patterns = [
+            VolumePricePattern.BREAKOUT_VOLUME,    # 放量突破
+            VolumePricePattern.DOUBLE_VOLUME,       # 倍量启动
+            VolumePricePattern.VOLUME_ACCUMULATION, # 量能堆积
+        ]
+        
+        for pattern in right_patterns:
+            vp_signal = self.vp_detector.detect(df, pattern)
+            if vp_signal:
+                stock_signal = self.vp_adapter.to_stock_signal(
+                    vp_signal, symbol, name, period,
+                    close_price=latest['close'],
+                    change_pct=latest.get('change_pct', 0) * 100,
+                    technicals={
+                        "date": str(latest.name) if hasattr(latest, 'name') else "",
+                        "ma20": latest.get('ma20'),
+                        "volume_ratio": vp_signal.volume_ratio,
+                    }
+                )
+                signals.append(StockSignal(**stock_signal))
         
         return signals
     

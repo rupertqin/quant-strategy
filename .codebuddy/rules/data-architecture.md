@@ -1126,3 +1126,112 @@ df_qfq = convert_to_qfq(df, symbol='xxx')
 | **实时转换** | 前复权在使用时通过 `convert_to_qfq()` 计算 |
 | **默认前复权** | 图表、信号、展示默认使用前复权价格 |
 | **保留不复权** | 原始数据保留用于特殊场景 |
+
+---
+
+## 12. 开发者快速指南
+
+### 12.1 初始化数据库
+
+```bash
+python DataHub/database/init_db.py
+```
+
+这会：
+- 创建 SQLite 数据库: `storage/database/quant.db`
+- 创建所有必要的表
+- 导入股票和 ETF 基础信息
+
+### 12.2 同步数据
+
+```bash
+# 每日增量更新（推荐日常使用）
+python DataHub/services/history_sync.py --daily
+
+# 首次全量同步（断点续传）
+python DataHub/services/history_sync.py --all --skip-existing
+
+# 单只股票全量同步
+python DataHub/services/history_sync.py --symbol 600519.SH --full
+
+# 只同步复权因子
+python DataHub/services/history_sync.py --sync-factors
+
+# 查看同步状态
+python DataHub/services/history_sync.py --summary
+```
+
+### 12.3 在代码中使用
+
+```python
+from DataHub.repositories import StockRepository
+from DataHub.processors import IndexCalculator
+
+# 初始化仓库
+repo = StockRepository()
+
+# 获取股票列表
+stocks = repo.get_all_stocks()
+
+# 获取某只股票历史价格
+prices = repo.get_daily_price('600519.SH', start_date='2024-01-01')
+
+# 计算指数
+calc = IndexCalculator()
+index_value = calc.calculate_index_value(prices, '自定义指数')
+```
+
+### 12.4 目录结构
+
+```
+DataHub/
+├── database/
+│   └── init_db.py              # 数据库初始化脚本
+├── crawlers/
+│   ├── base_crawler.py         # 爬虫基类
+│   ├── stock_price_crawler.py  # 股票价格爬虫
+│   └── etf_crawler.py          # ETF爬虫
+├── repositories/
+│   ├── base_repository.py      # 仓库基类
+│   └── stock_repository.py     # 股票数据仓库
+├── processors/
+│   └── index_calculator.py     # 指数计算器
+└── services/
+    └── sync_service.py         # 数据同步服务
+```
+
+### 12.5 常用命令速查
+
+| 命令 | 说明 |
+|------|------|
+| `history_sync.py --daily` | 每日增量更新 |
+| `history_sync.py --all --skip-existing` | 首次同步（断点续传） |
+| `history_sync.py --symbol 600519.SH --full` | 单只全量 |
+| `history_sync.py --sync-factors` | 同步复权因子 |
+| `history_sync.py --summary` | 查看状态 |
+| `init_db.py` | 初始化数据库 |
+
+### 12.6 首次部署工作流
+
+```bash
+# 1. 初始化数据库
+python DataHub/database/init_db.py
+
+# 2. 同步历史数据（全量，建议后台运行）
+python DataHub/services/history_sync.py --all --skip-existing
+
+# 3. 验证数据
+python DataHub/services/history_sync.py --summary
+```
+
+### 12.7 日常维护
+
+```bash
+# 每个交易日收盘后执行（15:30后）
+python DataHub/services/history_sync.py --daily
+```
+
+**定时任务配置（crontab）：**
+```bash
+30 15 * * 1-5 cd /Users/rupert/code/quant-strategy && python DataHub/services/history_sync.py --daily >> logs/daily_sync.log 2>&1
+```
