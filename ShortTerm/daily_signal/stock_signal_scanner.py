@@ -38,6 +38,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# 排除的交易所列表（北交所数据不稳定，暂时排除）
+EXCLUDED_EXCHANGES = ['BJ']
+
+
+def filter_excluded_symbols(symbols_or_df) -> list:
+    """
+    过滤掉排除的交易所股票（如北交所）
+    
+    Args:
+        symbols_or_df: 股票代码列表或包含symbol列的DataFrame
+        
+    Returns:
+        过滤后的股票代码列表
+    """
+    if isinstance(symbols_or_df, pd.DataFrame):
+        symbols = symbols_or_df['symbol'].tolist()
+    else:
+        symbols = list(symbols_or_df)
+    
+    return [s for s in symbols if not any(s.endswith(f'.{ex}') for ex in EXCLUDED_EXCHANGES)]
+
+
 class SignalType(Enum):
     """信号类型"""
     LEFT = "left"      # 左侧信号（抄底/反转）
@@ -1279,10 +1301,12 @@ class StockSignalScanner:
         return result
     
     def _get_stock_list(self) -> pd.DataFrame:
-        """获取股票列表"""
+        """获取股票列表（排除北交所股票）"""
         stock_csv = Path(project_root) / "storage" / "stock_basic_info.csv"
         if stock_csv.exists():
             df = pd.read_csv(stock_csv)
+            # 过滤掉排除的交易所股票
+            df = df[df['symbol'].apply(lambda x: not any(x.endswith(f'.{ex}') for ex in EXCLUDED_EXCHANGES))]
             return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
         return pd.DataFrame()
     

@@ -38,9 +38,13 @@ from utils.formatters import render_signal_card
 sys.path.insert(0, str(BASE_DIR))
 from DataHub.core.data_reader import load_stock_prices, load_stock_prices_raw
 
-# 导入实时数据加载工具
+# 导入实时数据加载工具（统一数据访问层）
 sys.path.insert(0, str(BASE_DIR))
-from ShortTerm.run_signal_scan import load_realtime_data as load_scanner_realtime_data, find_todays_realtime_file
+from Dashboard.utils.data_access import get_latest_realtime_data, get_todays_realtime_file
+
+# 测试数据访问层是否正常工作（仅在启动时执行一次）
+_test_df, _test_time = get_latest_realtime_data(force_fetch=False, full_format=False)
+logger.info(f"[初始化测试] 实时数据: {_test_time if not _test_df.empty else '无'}")
 
 # ============= 配置 =============
 st.set_page_config(
@@ -346,11 +350,12 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
     change_pct = float(realtime_data.get('change_pct', 0))
     
     if last_date == today:
-        # 更新今天的数据（使用更高价、更低价、最新收盘价）
+        # 更新今天的数据（用实时数据覆盖，因为实时数据更准确）
         idx = df.index[-1]
         df.loc[idx, 'close'] = close
-        df.loc[idx, 'high'] = max(float(df.loc[idx, 'high']), high)
-        df.loc[idx, 'low'] = min(float(df.loc[idx, 'low']), low)
+        df.loc[idx, 'open'] = open_price
+        df.loc[idx, 'high'] = high
+        df.loc[idx, 'low'] = low
         df.loc[idx, 'volume'] = volume
         if 'amount' in df.columns:
             df.loc[idx, 'amount'] = amount
@@ -377,8 +382,13 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
     return df
 
 
-@st.cache_data(ttl=60)  # 缓存时间缩短到1分钟，确保实时数据及时更新
-def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
+@st.cache_data(ttl=60)
+def _load_stock_data_cached(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
+    """带缓存的数据加载（生产环境使用）"""
+    return _load_stock_data_impl(symbol, force_adjust)
+
+
+def _load_stock_data_impl(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
     """
     加载股票历史数据（使用底层接口，默认前复权）
     
@@ -397,28 +407,30 @@ def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
             logger.warning(f"股票数据为空: {symbol}")
             return pd.DataFrame()
         
-        # 尝试加载当天实时数据并合并
-        fetch_time_str = None
-        try:
-            realtime_file = find_todays_realtime_file()
-            if realtime_file:
-                # 提取 fetch_time 从文件名 (realtime_file 是字符串路径)
-                import re
-                from pathlib import Path
-                match = re.search(r'realtime_(\d{8})_(\d{6})\.json', Path(realtime_file).name)
-                if match:
-                    fetch_time_str = f"{match.group(2)[:2]}:{match.group(2)[2:4]}"
+        # 尝试加载当天实时数据并合并（简洁格式用于tooltip）
+        from Dashboard.utils.data_access import get_latest_realtime_data
+        realtime_df, fetch_time_str = get_latest_realtime_data(force_fetch=False, full_format=False)
+        
+        if not realtime_df.empty:
+            try:
+                logger.info(f"加载实时数据: {len(realtime_df)} 条记录 (时间: {fetch_time_str})")
                 
-                realtime_df = load_scanner_realtime_data(realtime_file)
                 # 查找该股票的实时数据
                 stock_realtime = realtime_df[realtime_df['symbol'] == symbol]
+                logger.info(f"股票 {symbol} 实时数据: {len(stock_realtime)} 条")
                 if not stock_realtime.empty:
                     realtime_row = stock_realtime.iloc[0].to_dict()
                     df = merge_realtime_to_df(df, realtime_row, fetch_time_str)
                     logger.info(f"{symbol} 已合并实时数据")
-        except Exception as e:
-            logger.debug(f"合并实时数据失败 {symbol}: {e}")
-            # 不影响主流程，继续使用历史数据
+                else:
+                    logger.warning(f"{symbol} 在实时数据中未找到")
+            except Exception as e:
+                logger.error(f"合并实时数据失败 {symbol}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                # 不影响主流程，继续使用历史数据
+        else:
+            logger.info("当天没有实时数据文件")
 
         # 计算均线
         df['ma5'] = df['close'].rolling(window=5).mean()
@@ -438,6 +450,24 @@ def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
         logger.error(f"加载数据失败 {symbol}: {e}")
         st.error(f"加载数据失败: {e}")
         return pd.DataFrame()
+
+
+def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
+    """
+    加载股票数据（开发环境无缓存，生产环境有缓存）
+    """
+    # 检查是否在开发模式
+    try:
+        mode = st.secrets.get("environment", {}).get("mode", "prod")
+        is_dev = mode == "dev"
+    except Exception:
+        is_dev = False
+    
+    # 开发模式直接加载，生产模式使用缓存
+    if is_dev:
+        return _load_stock_data_impl(symbol, force_adjust)
+    else:
+        return _load_stock_data_cached(symbol, force_adjust)
 
 
 @st.cache_data
@@ -947,6 +977,16 @@ def main():
             st.info("🛠️ 开发模式")
             st.divider()
 
+        # 实时数据状态（简洁格式）
+        _rt_df, _rt_time = get_latest_realtime_data(force_fetch=False, full_format=False)
+        if not _rt_df.empty and _rt_time:
+            st.success(f"📡 实时数据已加载\n⏱️ {_rt_time}")
+        elif not _rt_df.empty:
+            st.success(f"📡 实时数据已加载")
+        else:
+            st.warning("⚠️ 无实时数据\n使用历史数据")
+        st.divider()
+
         # 复权方式选择
         st.subheader("⚙️ 显示设置")
         adjust_type = st.radio(
@@ -1038,30 +1078,14 @@ def main():
     # 获取最新数据日期
     latest_date = pd.to_datetime(latest['trade_date']).strftime('%Y-%m-%d') if 'trade_date' in latest else '未知'
     
-    # 检查是否使用了实时数据（今天数据且是盘中时间）
+    # 检查是否使用了实时数据（今天数据且有实时时间戳）
     today_str = datetime.now().strftime('%Y-%m-%d')
-    is_realtime_data = (latest_date == today_str and find_todays_realtime_file() is not None)
+    is_realtime_data = (latest_date == today_str and 'realtime_time' in latest and pd.notna(latest['realtime_time']))
     realtime_badge = '<span style="font-size: 14px; background: #ff6b6b; color: white; padding: 2px 8px; border-radius: 4px; margin-left: 8px;">● 实时</span>' if is_realtime_data else ''
     
-    # 如果是实时数据，显示精确到分的时间
+    # 显示日期和时间
     if is_realtime_data:
-        # 从实时数据文件获取 fetch_time
-        try:
-            realtime_file = find_todays_realtime_file()
-            if realtime_file:
-                import json
-                with open(realtime_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                fetch_time = data.get('fetch_time', '')  # 格式: YYYYMMDD_HHMMSS
-                if fetch_time and len(fetch_time) >= 15:
-                    # 格式化为: YYYY-MM-DD HH:MM
-                    date_display = f"{fetch_time[:4]}-{fetch_time[4:6]}-{fetch_time[6:8]} {fetch_time[9:11]}:{fetch_time[11:13]}"
-                else:
-                    date_display = latest_date
-            else:
-                date_display = latest_date
-        except Exception:
-            date_display = latest_date
+        date_display = f"{latest_date} {latest['realtime_time']}"
     else:
         date_display = latest_date
 

@@ -153,9 +153,8 @@ st.markdown("""
 
 
 # ============= 数据加载 =============
-@st.cache_data(ttl=300)
-def load_signals() -> dict:
-    """加载信号数据 - 从 stock_signals_latest.json 读取"""
+def _load_signals_impl() -> dict:
+    """加载信号数据实现 - 从 stock_signals_latest.json 读取"""
     filepath = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
 
     if not filepath.exists():
@@ -173,6 +172,26 @@ def load_signals() -> dict:
             return json.load(f)
 
     return {"status": "error", "message": "暂无信号数据，请先运行扫描器"}
+
+
+@st.cache_data(ttl=60)
+def _load_signals_cached() -> dict:
+    """带缓存的信号加载（生产环境使用）"""
+    return _load_signals_impl()
+
+
+def load_signals() -> dict:
+    """加载信号数据（开发环境无缓存，生产环境有缓存）"""
+    try:
+        mode = st.secrets.get("environment", {}).get("mode", "prod")
+        is_dev = mode == "dev"
+    except Exception:
+        is_dev = False
+
+    if is_dev:
+        return _load_signals_impl()
+    else:
+        return _load_signals_cached()
 
 
 def format_technicals(tech: dict) -> str:
@@ -350,35 +369,19 @@ def main():
 
     with col4:
         scan_time = data.get('scan_time', '未知')
-        
-        # 检查是否是盘中模式，如果是则显示实时数据时间
         intraday_mode = data.get('intraday_mode', False)
-        if intraday_mode:
-            # 尝试获取实时数据文件的时间
-            try:
-                from ShortTerm.run_signal_scan import find_todays_realtime_file
-                import json
-                realtime_file = find_todays_realtime_file()
-                if realtime_file:
-                    with open(realtime_file, 'r', encoding='utf-8') as f:
-                        rt_data = json.load(f)
-                    fetch_time = rt_data.get('fetch_time', '')
-                    if fetch_time and len(fetch_time) >= 15:
-                        # 格式: YYYYMMDD_HHMMSS -> MM-DD HH:MM
-                        price_time = f"{fetch_time[4:6]}-{fetch_time[6:8]} {fetch_time[9:11]}:{fetch_time[11:13]}"
-                    else:
-                        price_time = "未知"
-                else:
-                    price_time = "未知"
-            except Exception:
-                price_time = "未知"
-            
-            time_display = f"扫描: {scan_time}<br><span style='color:#ff6b6b'>● 价格: {price_time}</span>"
-            label_text = "盘中监控"
+
+        # 获取扫描时使用的实时数据时间（信号数据里的价格时间）
+        price_fetch_time = data.get('price_fetch_time')
+
+        if price_fetch_time:
+            time_display = f"扫描: {scan_time}<br><span style='color:#ff6b6b'>● 价格: {price_fetch_time}</span>"
+            label_text = "盘中监控" if intraday_mode else "扫描时间"
         else:
+            # 没有实时数据，只显示扫描时间
             time_display = scan_time
             label_text = "扫描时间"
-        
+
         st.markdown(f"""
         <div class="stats-card">
             <div class="stats-number" style="font-size: 14px;">{time_display}</div>
@@ -517,6 +520,19 @@ def main():
         price_display = f"¥{latest_price:.2f}" if latest_price else "-"
         latest_data_date = load_stock_latest_date(symbol) or '未知'
 
+        # 获取扫描时使用的实时数据时间（信号数据里的价格时间）
+        price_fetch_time = data.get('price_fetch_time')
+
+        # 显示价格时间（优先使用信号扫描时的价格时间）
+        if price_fetch_time:
+            time_display = f"⏱️ {price_fetch_time}"
+            time_color = "#ff6b6b"  # 红色表示盘中
+            time_tooltip = "价格最新时间"
+        else:
+            time_display = f"📅 {latest_data_date}"
+            time_color = "#888"  # 灰色表示历史
+            time_tooltip = "历史数据日期"
+
         # 周期标签
         period_tags = []
         period_colors = {'daily': '#3498db', 'weekly': '#9b59b6', 'monthly': '#e74c3c'}
@@ -550,8 +566,8 @@ def main():
                         st.session_state['selected_name'] = stock_name
                         st.switch_page("pages/stock_chart.py")
                 with date_col:
-                    # 数据日期右对齐
-                    st.markdown(f'<div style="text-align: right; font-size: 11px; color: #888; margin-top: 8px;">📅 {latest_data_date}</div>', unsafe_allow_html=True)
+                    # 价格时间右对齐（优先显示盘中时间）
+                    st.markdown(f'<div style="text-align: right; font-size: 11px; color: {time_color}; margin-top: 8px;"><span style="font-size: 10px; opacity: 0.7;">{time_tooltip}</span>: {time_display}</div>', unsafe_allow_html=True)
 
                 # 周期标签和共振标识
                 st.markdown(f'<div style="margin: 5px 0;">{period_html}{resonance_badge}</div>', unsafe_allow_html=True)
