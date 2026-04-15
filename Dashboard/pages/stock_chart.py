@@ -977,15 +977,24 @@ def main():
             st.info("🛠️ 开发模式")
             st.divider()
 
-        # 实时数据状态（简洁格式）
+        # 实时数据状态（简洁格式）- 只在盘中显示
         _rt_df, _rt_time = get_latest_realtime_data(force_fetch=False, full_format=False)
+        from datetime import datetime
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+        is_trading_hours = (hour == 9 and minute >= 30) or (10 <= hour < 15)
+
         if not _rt_df.empty and _rt_time:
             st.success(f"📡 实时数据已加载\n⏱️ {_rt_time}")
+            st.divider()
         elif not _rt_df.empty:
             st.success(f"📡 实时数据已加载")
-        else:
+            st.divider()
+        elif is_trading_hours:
+            # 只在盘中时段显示无实时数据警告
             st.warning("⚠️ 无实时数据\n使用历史数据")
-        st.divider()
+            st.divider()
 
         # 复权方式选择
         st.subheader("⚙️ 显示设置")
