@@ -1354,9 +1354,6 @@ def main():
         for sig_name, count in sorted(result['stats']['by_signal'].items(), key=lambda x: -x[1])[:15]:
             print(f"  {sig_name}: {count}")
 
-    else:
-        parser.print_help()
-
 
 if __name__ == "__main__":
     main()

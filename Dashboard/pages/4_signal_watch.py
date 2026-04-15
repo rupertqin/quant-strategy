@@ -350,10 +350,39 @@ def main():
 
     with col4:
         scan_time = data.get('scan_time', '未知')
+        
+        # 检查是否是盘中模式，如果是则显示实时数据时间
+        intraday_mode = data.get('intraday_mode', False)
+        if intraday_mode:
+            # 尝试获取实时数据文件的时间
+            try:
+                from ShortTerm.run_signal_scan import find_todays_realtime_file
+                import json
+                realtime_file = find_todays_realtime_file()
+                if realtime_file:
+                    with open(realtime_file, 'r', encoding='utf-8') as f:
+                        rt_data = json.load(f)
+                    fetch_time = rt_data.get('fetch_time', '')
+                    if fetch_time and len(fetch_time) >= 15:
+                        # 格式: YYYYMMDD_HHMMSS -> MM-DD HH:MM
+                        price_time = f"{fetch_time[4:6]}-{fetch_time[6:8]} {fetch_time[9:11]}:{fetch_time[11:13]}"
+                    else:
+                        price_time = "未知"
+                else:
+                    price_time = "未知"
+            except Exception:
+                price_time = "未知"
+            
+            time_display = f"扫描: {scan_time}<br><span style='color:#ff6b6b'>● 价格: {price_time}</span>"
+            label_text = "盘中监控"
+        else:
+            time_display = scan_time
+            label_text = "扫描时间"
+        
         st.markdown(f"""
         <div class="stats-card">
-            <div class="stats-number" style="font-size: 14px;">{scan_time}</div>
-            <div class="stats-label">扫描时间</div>
+            <div class="stats-number" style="font-size: 14px;">{time_display}</div>
+            <div class="stats-label">{label_text}</div>
         </div>
         """, unsafe_allow_html=True)
 

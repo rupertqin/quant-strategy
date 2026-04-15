@@ -1,0 +1,65 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-15T03:18:28.551Z
+provider: 
+---
+
+# 全局规则：默认不限制扫描数量
+
+## 原则
+所有扫描/同步类命令，**默认应该处理全部数据**，不应该有默认的数量限制。
+
+## 规则详情
+
+### 1. `--limit` 参数设计
+- `--limit` 参数**仅用于测试/调试目的**
+- 默认值为 `None`，表示不限制
+- 不应该有类似 `limit = args.limit or 50` 的默认限制逻辑
+
+### 2. 正确示例
+
+✅ **正确** - 默认全部，limit 仅用于测试：
+```python
+# 命令行参数定义
+parser.add_argument('--limit', type=int, default=None,
+                    help='限制扫描数量（仅用于测试）')
+
+# 使用逻辑
+if args.limit:
+    symbols = all_symbols[:args.limit]
+    print(f"测试模式: 只处理前 {args.limit} 只")
+else:
+    symbols = all_symbols
+    print(f"处理全部 {len(symbols)} 只")
+```
+
+❌ **错误** - 隐式默认限制：
+```python
+# 不要这样写
+limit = args.limit or 50  # 错误！默认限制了50只
+symbols = all_symbols[:limit]
+```
+
+### 3. 适用场景
+此规则适用于：
+- 股票信号扫描 (`run_signal_scan.py`)
+- 历史数据同步 (`history_sync.py`)
+- 股票列表更新 (`stock_list_manager.py`)
+- 任何批量处理任务
+
+### 4. 理由
+- **一致性**：用户期望默认处理全部数据
+- **可预测性**：避免因默认限制导致遗漏信号
+- **明确性**：数量限制必须显式指定，避免意外
+
+## 代码审查清单
+
+在审查涉及批量处理的代码时，检查：
+
+- [ ] `--limit` 参数默认值为 `None`，不是具体数字
+- [ ] 没有使用 `args.limit or 50` 这种隐式默认值
+- [ ] 使用 `if args.limit:` 判断是否限制，而不是 `if args.limit is not None:`（虽然两者都可以，但前者更简洁）
+- [ ] 日志输出明确说明是"测试模式"还是"全量模式"
+- [ ] 帮助文档说明 `--limit` 仅用于测试

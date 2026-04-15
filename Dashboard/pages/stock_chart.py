@@ -38,6 +38,10 @@ from utils.formatters import render_signal_card
 sys.path.insert(0, str(BASE_DIR))
 from DataHub.core.data_reader import load_stock_prices, load_stock_prices_raw
 
+# 导入实时数据加载工具
+sys.path.insert(0, str(BASE_DIR))
+from ShortTerm.run_signal_scan import load_realtime_data as load_scanner_realtime_data, find_todays_realtime_file
+
 # ============= 配置 =============
 st.set_page_config(
     page_title="Stock Chart",
@@ -300,10 +304,85 @@ def resample_to_monthly(df: pd.DataFrame) -> pd.DataFrame:
     return monthly
 
 
-@st.cache_data(ttl=3600)
+def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: str = None) -> pd.DataFrame:
+    """
+    将实时数据合并到历史DataFrame中
+    
+    Args:
+        df: 历史数据DataFrame
+        realtime_data: 实时数据字典，包含open/high/low/close/volume/change_pct等
+        fetch_time_str: 实时数据获取时间字符串，格式 HH:MM
+        
+    Returns:
+        合并后的DataFrame
+    """
+    if df.empty or not realtime_data:
+        return df
+    
+    today = datetime.now().date()
+    
+    # 确保trade_date是datetime类型
+    df['trade_date'] = pd.to_datetime(df['trade_date'])
+    
+    # 获取最后一天日期
+    last_date = df['trade_date'].iloc[-1].date()
+    
+    # 检查实时数据是否是今天的
+    realtime_date = pd.to_datetime(realtime_data.get('trade_date', today)).date()
+    
+    if realtime_date != today:
+        return df  # 不是今天的数据，不合并
+    
+    # 提取实时数据值
+    close = float(realtime_data.get('close', 0))
+    if close == 0:
+        return df  # 无效数据
+    
+    open_price = float(realtime_data.get('open', close))
+    high = float(realtime_data.get('high', close))
+    low = float(realtime_data.get('low', close))
+    volume = float(realtime_data.get('volume', 0))
+    amount = float(realtime_data.get('amount', 0))
+    change_pct = float(realtime_data.get('change_pct', 0))
+    
+    if last_date == today:
+        # 更新今天的数据（使用更高价、更低价、最新收盘价）
+        idx = df.index[-1]
+        df.loc[idx, 'close'] = close
+        df.loc[idx, 'high'] = max(float(df.loc[idx, 'high']), high)
+        df.loc[idx, 'low'] = min(float(df.loc[idx, 'low']), low)
+        df.loc[idx, 'volume'] = volume
+        if 'amount' in df.columns:
+            df.loc[idx, 'amount'] = amount
+        if 'change_pct' in df.columns:
+            df.loc[idx, 'change_pct'] = change_pct
+        # 记录实时数据时间
+        if fetch_time_str:
+            df.loc[idx, 'realtime_time'] = fetch_time_str
+    else:
+        # 添加新行（今天的盘中数据）
+        new_row = pd.DataFrame([{
+            'trade_date': pd.Timestamp(today),
+            'open': open_price,
+            'high': high,
+            'low': low,
+            'close': close,
+            'volume': volume,
+            'amount': amount,
+            'change_pct': change_pct,
+            'realtime_time': fetch_time_str if fetch_time_str else None
+        }])
+        df = pd.concat([df, new_row], ignore_index=True)
+    
+    return df
+
+
+@st.cache_data(ttl=60)  # 缓存时间缩短到1分钟，确保实时数据及时更新
 def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
     """
     加载股票历史数据（使用底层接口，默认前复权）
+    
+    如果存在当天的实时数据文件，会自动合并到历史数据中
 
     Args:
         symbol: 股票代码
@@ -317,6 +396,29 @@ def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
         if df.empty:
             logger.warning(f"股票数据为空: {symbol}")
             return pd.DataFrame()
+        
+        # 尝试加载当天实时数据并合并
+        fetch_time_str = None
+        try:
+            realtime_file = find_todays_realtime_file()
+            if realtime_file:
+                # 提取 fetch_time 从文件名 (realtime_file 是字符串路径)
+                import re
+                from pathlib import Path
+                match = re.search(r'realtime_(\d{8})_(\d{6})\.json', Path(realtime_file).name)
+                if match:
+                    fetch_time_str = f"{match.group(2)[:2]}:{match.group(2)[2:4]}"
+                
+                realtime_df = load_scanner_realtime_data(realtime_file)
+                # 查找该股票的实时数据
+                stock_realtime = realtime_df[realtime_df['symbol'] == symbol]
+                if not stock_realtime.empty:
+                    realtime_row = stock_realtime.iloc[0].to_dict()
+                    df = merge_realtime_to_df(df, realtime_row, fetch_time_str)
+                    logger.info(f"{symbol} 已合并实时数据")
+        except Exception as e:
+            logger.debug(f"合并实时数据失败 {symbol}: {e}")
+            # 不影响主流程，继续使用历史数据
 
         # 计算均线
         df['ma5'] = df['close'].rolling(window=5).mean()
@@ -386,15 +488,20 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
 
     # 准备K线数据
     candles = []
+    today = datetime.now().date()
     for _, row in df.iterrows():
         timestamp = int(row['trade_date'].timestamp())
-        candles.append({
+        candle = {
             'time': timestamp,
             'open': round(row['open'], 2),
             'high': round(row['high'], 2),
             'low': round(row['low'], 2),
             'close': round(row['close'], 2)
-        })
+        }
+        # 如果是今天的数据且有实时时间戳，添加精确时间
+        if row['trade_date'].date() == today and 'realtime_time' in row and pd.notna(row['realtime_time']):
+            candle['realtimeTime'] = str(row['realtime_time'])
+        candles.append(candle)
 
     # 准备成交量数据
     volumes = []
@@ -738,6 +845,13 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
                 var dateStr = date.getFullYear() + '-' + 
                              String(date.getMonth() + 1).padStart(2, '0') + '-' + 
                              String(date.getDate()).padStart(2, '0');
+                
+                // 查找当前悬停的蜡烛数据，检查是否有实时时间
+                var candleData = candles.find(c => c.time === param.time);
+                if (candleData && candleData.realtimeTime) {{
+                    dateStr += ' ' + candleData.realtimeTime;
+                }}
+                
                 document.getElementById('tt-date').textContent = dateStr;
                 
                 // 更新K线数据
@@ -923,14 +1037,41 @@ def main():
 
     # 获取最新数据日期
     latest_date = pd.to_datetime(latest['trade_date']).strftime('%Y-%m-%d') if 'trade_date' in latest else '未知'
+    
+    # 检查是否使用了实时数据（今天数据且是盘中时间）
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    is_realtime_data = (latest_date == today_str and find_todays_realtime_file() is not None)
+    realtime_badge = '<span style="font-size: 14px; background: #ff6b6b; color: white; padding: 2px 8px; border-radius: 4px; margin-left: 8px;">● 实时</span>' if is_realtime_data else ''
+    
+    # 如果是实时数据，显示精确到分的时间
+    if is_realtime_data:
+        # 从实时数据文件获取 fetch_time
+        try:
+            realtime_file = find_todays_realtime_file()
+            if realtime_file:
+                import json
+                with open(realtime_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                fetch_time = data.get('fetch_time', '')  # 格式: YYYYMMDD_HHMMSS
+                if fetch_time and len(fetch_time) >= 15:
+                    # 格式化为: YYYY-MM-DD HH:MM
+                    date_display = f"{fetch_time[:4]}-{fetch_time[4:6]}-{fetch_time[6:8]} {fetch_time[9:11]}:{fetch_time[11:13]}"
+                else:
+                    date_display = latest_date
+            else:
+                date_display = latest_date
+        except Exception:
+            date_display = latest_date
+    else:
+        date_display = latest_date
 
     # ============= 头部信息区 =============
     st.markdown(f"""
     <div class="main-header">
         <div class="stock-info">
             <div>
-                <div class="stock-name">{name} <span style="font-size: 14px; background: {badge_color}; color: white; padding: 2px 8px; border-radius: 4px; margin-left: 8px;">{adjust_badge}</span></div>
-                <div class="stock-code">{symbol} <span style="font-size: 12px; color: #aaa; margin-left: 8px;">数据日期: {latest_date}</span></div>
+                <div class="stock-name">{name} <span style="font-size: 14px; background: {badge_color}; color: white; padding: 2px 8px; border-radius: 4px; margin-left: 8px;">{adjust_badge}</span>{realtime_badge}</div>
+                <div class="stock-code">{symbol} <span style="font-size: 12px; color: #aaa; margin-left: 8px;">数据日期: {date_display}</span></div>
             </div>
             <div style="flex: 1;"></div>
             <div style="text-align: right;">

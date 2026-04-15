@@ -14,6 +14,9 @@
     # 使用更多并发（更快但可能被IP限制）
     python DataHub/services/history_sync.py --daily --workers 5
 
+    # 包含北交所股票（默认跳过，因数据源不稳定）
+    python DataHub/services/history_sync.py --daily --include-bj
+
     # 指定单日同步（快速补数据）
     python DataHub/services/history_sync.py --daily 20260413
     python DataHub/services/history_sync.py --daily 2026-04-13
@@ -57,6 +60,7 @@
     --sync-factors     只同步复权因子（不下载价格数据）
     --limit N          限制股票数量（测试用）
     --workers N        并发线程数（默认3，建议3-5，过多可能被IP屏蔽）
+    --include-bj       包含北交所股票（默认跳过，因数据源不稳定）
 
 日期格式:
     支持多种格式，自动识别:
@@ -143,6 +147,9 @@ class HistorySyncService:
 
         # 登录状态标记
         self._baostock_logged_in = False
+        
+        # 待处理列表（无法自动获取的股票）
+        self.pending_symbols = []
 
     def _load_stock_list(self) -> pd.DataFrame:
         """加载股票基础信息列表"""
@@ -173,13 +180,47 @@ class HistorySyncService:
                 logger.info("baostock登录成功")
                 self._baostock_logged_in = True
 
-    def _format_code(self, symbol: str) -> str:
-        """转换代码格式: 600519.SH -> sh.600519 (baostock格式)"""
+    def _format_code(self, symbol: str) -> Optional[str]:
+        """
+        转换代码格式: 600519.SH -> sh.600519 (baostock格式)
+        
+        Returns:
+            baostock格式代码，如果不支持则返回 None
+        """
         if '.SH' in symbol:
             return 'sh.' + symbol.replace('.SH', '')
         elif '.SZ' in symbol:
             return 'sz.' + symbol.replace('.SZ', '')
+        elif '.BJ' in symbol:
+            # baostock 不支持北交所，返回None以便使用akshare
+            return None
         return symbol
+    
+    def _is_bj_stock(self, symbol: str) -> bool:
+        """判断是否为北交所股票"""
+        return '.BJ' in symbol
+    
+    def _add_to_pending_list(self, symbol: str, reason: str = 'unknown'):
+        """
+        添加到待处理列表
+        
+        Args:
+            symbol: 股票代码
+            reason: 原因，如 'bj_not_supported'
+        """
+        self.pending_symbols.append({
+            'symbol': symbol,
+            'reason': reason,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    def get_pending_symbols(self) -> List[Dict]:
+        """获取待处理列表"""
+        return self.pending_symbols
+    
+    def clear_pending_symbols(self):
+        """清空待处理列表"""
+        self.pending_symbols = []
 
     def get_stock_file_path(self, symbol: str) -> Path:
         """获取股票数据文件路径"""
@@ -219,6 +260,18 @@ class HistorySyncService:
 
         try:
             code = self._format_code(symbol)
+            
+            # 检查是否支持该交易所
+            if code is None and self._is_bj_stock(symbol):
+                # 北交所：尝试akshare，但接口不稳定
+                result = self._fetch_bj_stock_history(symbol, start_date, end_date)
+                if result is None:
+                    # 记录到待处理列表
+                    self._add_to_pending_list(symbol, 'bj_not_supported')
+                return result
+            elif code is None:
+                logger.warning(color_log('warning', f"⚠️  {symbol} 跳过: 不支持的交易所"))
+                return None
 
             # 转换日期格式为 baostock 格式 YYYY-MM-DD
             start_dt = datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d")
@@ -290,6 +343,122 @@ class HistorySyncService:
             logger.error(color_log('error', f"❌ 获取 {symbol} 历史数据失败: {e}"))
             return None
 
+    def _fetch_bj_stock_history(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        使用 akshare 获取北交所股票历史数据
+        
+        注意：东财源接口不稳定，北交所数据获取可能受限
+        
+        Args:
+            symbol: 股票代码，如 '920000.BJ'
+            start_date: 开始日期 'YYYYMMDD'
+            end_date: 结束日期 'YYYYMMDD'
+            
+        Returns:
+            DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
+        """
+        try:
+            import akshare as ak
+            import time
+            
+            # 转换代码格式: 920000.BJ -> 920000
+            code = symbol.replace('.BJ', '')
+            
+            # 添加重试机制
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # 使用 akshare 获取历史数据（东财源）
+                    df = ak.stock_zh_a_hist(
+                        symbol=code,
+                        period="daily",
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust=""  # 不复权，与baostock保持一致
+                    )
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)  # 指数退避
+                        continue
+                    raise
+            
+            if df.empty:
+                return None
+            
+            # 添加symbol列
+            df['symbol'] = symbol
+            
+            # 重命名列以统一格式
+            column_map = {
+                '日期': 'trade_date',
+                '开盘': 'open',
+                '最高': 'high',
+                '最低': 'low',
+                '收盘': 'close',
+                '成交量': 'volume',
+                '成交额': 'amount',
+                '涨跌幅': 'change_pct'
+            }
+            df = df.rename(columns=column_map)
+            
+            # 转换日期格式
+            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+            
+            # 转换数值类型
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # 选择需要的列
+            keep_cols = [
+                'symbol', 'trade_date', 'open', 'high', 'low', 'close',
+                'volume', 'amount', 'change_pct'
+            ]
+            df = df[[c for c in keep_cols if c in df.columns]]
+            
+            logger.info(f"获取 {symbol} 数据: {len(df)} 条 (akshare/北交所)")
+            return df
+            
+        except Exception as e:
+            error_msg = str(e)
+            if 'Connection' in error_msg or 'RemoteDisconnected' in error_msg:
+                logger.warning(color_log('warning', f"⚠️  {symbol} 跳过: 东财接口限制，北交所数据暂无法自动获取"))
+            else:
+                logger.warning(color_log('warning', f"⚠️  akshare获取 {symbol} 失败: {e}"))
+            return None
+
+    def save_pending_list(self, output_path: Optional[str] = None):
+        """
+        保存待处理列表到文件
+        
+        Args:
+            output_path: 输出文件路径，默认 storage/outputs/pending_symbols.json
+        """
+        if not self.pending_symbols:
+            return
+        
+        if output_path is None:
+            output_dir = STORAGE_DIR / "outputs"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / f"pending_symbols_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        import json
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'timestamp': datetime.now().isoformat(),
+                'count': len(self.pending_symbols),
+                'symbols': self.pending_symbols
+            }, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"待处理列表已保存: {output_path} ({len(self.pending_symbols)} 只)")
+
     def fetch_adjust_factor(
         self,
         symbol: str,
@@ -312,6 +481,11 @@ class HistorySyncService:
 
         try:
             code = self._format_code(symbol)
+            
+            # 检查是否支持该交易所
+            if code is None:
+                logger.debug(f"{symbol} 跳过复权因子: baostock 不支持北交所股票")
+                return None
 
             # 转换日期格式
             start_dt = datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d")
@@ -510,7 +684,7 @@ class HistorySyncService:
 
         # 如果开始日期大于结束日期，说明已经是最新
         if start_date > end_date:
-            logger.info(color_log('success', f"✓ {symbol} 数据已是最新，无需更新"))
+            logger.info(f"{symbol} 数据已是最新，无需更新")
             return {
                 'status': 'success',
                 'symbol': symbol,
@@ -724,6 +898,10 @@ class HistorySyncService:
             logger.info(color_log('warning', f"⚠️  同步完成: {success_count} 只成功, {len(failed_symbols)} 只失败"))
         else:
             logger.info(color_log('success', f"✓ 同步完成: {success_count} 只成功, {len(failed_symbols)} 只失败"))
+        
+        # 保存待处理列表（北交所等无法自动获取的股票）
+        if self.pending_symbols:
+            self.save_pending_list()
 
         return {
             'status': 'success',
@@ -731,7 +909,8 @@ class HistorySyncService:
             'success': success_count,
             'failed': len(failed_symbols),
             'new_records': total_new_records,
-            'failed_symbols': failed_symbols[:10] if failed_symbols else []
+            'failed_symbols': failed_symbols[:10] if failed_symbols else [],
+            'pending_count': len(self.pending_symbols)
         }
 
     def list_existing_files(self) -> List[Path]:
@@ -894,6 +1073,7 @@ def main():
     parser.add_argument('--sync-factors', action='store_true', help='只同步复权因子（不下载价格数据）')
     parser.add_argument('--workers', type=int, default=3, help='并发线程数（默认3，建议3-5）')
     parser.add_argument('--no-logout', action='store_true', help='不执行baostock登出（用于并行执行时不影响其他进程）')
+    parser.add_argument('--include-bj', action='store_true', help='包含北交所股票（默认跳过，因数据源不稳定）')
 
     args = parser.parse_args()
 
@@ -996,9 +1176,7 @@ def main():
             print("  没有找到任何股票数据文件")
         else:
             print(f"  全局最新日期: {dist['latest_overall']}")
-            print(f"  落后股票数: {len(dist['outdated_stocks'])} ({len(dist['outdated_stocks'])/dist['total_stocks']*100:.1f}%)")
 
-            print("\n  日期分布:")
             print(f"  {'日期':<15} {'股票数':>10} {'占比':>10}")
             print("  " + "-"*40)
 
@@ -1078,6 +1256,13 @@ def main():
             # 全量模式：获取全部股票代码
             symbols = service.stock_list['symbol'].tolist()
             print(f"将同步全部 {len(symbols)} 只股票")
+        
+        # 默认跳过北交所股票（除非指定 --include-bj）
+        if not args.include_bj:
+            bj_count = sum(1 for s in symbols if '.BJ' in s)
+            symbols = [s for s in symbols if '.BJ' not in s]
+            if bj_count > 0:
+                print(f"提示: 已跳过 {bj_count} 只北交所股票（使用 --include-bj 可包含）")
 
         # 如果指定了日期范围，使用指定日期（用于快速补数据）
         if args.start_date or args.end_date:

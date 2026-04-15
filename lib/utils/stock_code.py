@@ -5,7 +5,7 @@
 
 import re
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Tuple
 
 
 class StockCodeUtil:
@@ -28,6 +28,7 @@ class StockCodeUtil:
         '000': 'SZ', '001': 'SZ', '002': 'SZ', '003': 'SZ',  # 深市主板/中小板
         '300': 'SZ', '301': 'SZ',  # 创业板
         '430': 'BJ', '8': 'BJ', '82': 'BJ', '83': 'BJ', '87': 'BJ', '88': 'BJ',  # 北交所/新三板
+        '92': 'BJ',  # 北交所新股 (920000-920099)
     }
     
     @classmethod
@@ -98,6 +99,53 @@ class StockCodeUtil:
             if code.startswith(prefix):
                 return exchange
         return None
+    
+    @classmethod
+    def parse_prefixed_code(cls, code_str: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        解析带交易所前缀的代码
+        
+        支持格式: sh600000, sz000001, bj920000, SH600000, SZ000001
+        
+        Args:
+            code_str: 带前缀的代码，如 'sh600000'
+            
+        Returns:
+            Tuple[code, exchange]: (纯数字代码, 交易所)，解析失败返回 (None, None)
+            
+        Examples:
+            >>> StockCodeUtil.parse_prefixed_code('sh600000')
+            ('600000', 'SH')
+            >>> StockCodeUtil.parse_prefixed_code('sz300750')
+            ('300750', 'SZ')
+            >>> StockCodeUtil.parse_prefixed_code('bj920000')
+            ('920000', 'BJ')
+        """
+        if not code_str:
+            return None, None
+        
+        code_str = str(code_str).strip().lower()
+        
+        # 处理带前缀的格式
+        if code_str.startswith('sh'):
+            code = code_str[2:]
+            exchange = 'SH'
+        elif code_str.startswith('sz'):
+            code = code_str[2:]
+            exchange = 'SZ'
+        elif code_str.startswith('bj'):
+            code = code_str[2:]
+            exchange = 'BJ'
+        else:
+            # 没有前缀，尝试提取数字并判断交易所
+            code = cls.extract(code_str)
+            exchange = cls.get_exchange(code) if code else None
+        
+        # 验证提取的代码
+        if code and len(code) == 6 and code.isdigit():
+            return code, exchange
+        
+        return None, None
     
     @classmethod
     # 注意：缓存会在模块重载时自动清除
