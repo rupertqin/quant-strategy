@@ -152,7 +152,7 @@ def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = Fals
     rt_file = get_todays_realtime_file()
     if rt_file:
         df = load_realtime_data(rt_file)
-        
+
         # 从文件内容读取fetch_time
         try:
             with open(rt_file, 'r', encoding='utf-8') as f:
@@ -161,7 +161,57 @@ def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = Fals
             return df, format_time(fetch_time)
         except:
             pass
-        
+
         return df, ""
-    
+
     return pd.DataFrame(), ""
+
+
+def merge_realtime_to_history(hist_df: pd.DataFrame, realtime: pd.Series) -> pd.DataFrame:
+    """
+    将实时数据合并到历史K线（内存中）
+
+    Args:
+        hist_df: 历史日线数据
+        realtime: 实时行情Series
+
+    Returns:
+        合并后的DataFrame
+    """
+    from datetime import datetime
+
+    # 确保 trade_date 列是 datetime 类型
+    hist_df['trade_date'] = pd.to_datetime(hist_df['trade_date'])
+
+    today = datetime.now()
+    today_date = today.date()
+
+    # 获取最后一天日期
+    last_date = hist_df['trade_date'].iloc[-1]
+    if isinstance(last_date, pd.Timestamp):
+        last_date = last_date.date()
+
+    # 如果历史数据已有今天数据，更新它；否则追加新行
+    if not hist_df.empty and last_date == today_date:
+        idx = hist_df.index[-1]
+        hist_df.loc[idx, 'close'] = float(realtime['close'])
+        hist_df.loc[idx, 'high'] = max(float(hist_df.loc[idx, 'high']), float(realtime.get('high', realtime['close'])))
+        hist_df.loc[idx, 'low'] = min(float(hist_df.loc[idx, 'low']), float(realtime.get('low', realtime['close'])))
+        hist_df.loc[idx, 'volume'] = float(realtime['volume'])
+        hist_df.loc[idx, 'amount'] = float(realtime.get('amount', 0))
+        hist_df.loc[idx, 'change_pct'] = float(realtime['change_pct'])
+    else:
+        new_row = pd.DataFrame([{
+            'trade_date': today,
+            'open': float(realtime.get('open', realtime['close'])),
+            'high': float(realtime.get('high', realtime['close'])),
+            'low': float(realtime.get('low', realtime['close'])),
+            'close': float(realtime['close']),
+            'volume': float(realtime['volume']),
+            'amount': float(realtime.get('amount', 0)),
+            'change_pct': float(realtime['change_pct']),
+            'symbol': realtime.get('symbol', '')
+        }])
+        hist_df = pd.concat([hist_df, new_row], ignore_index=True)
+
+    return hist_df

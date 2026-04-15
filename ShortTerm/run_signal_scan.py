@@ -22,7 +22,6 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from ShortTerm.daily_signal.stock_signal_scanner import StockSignalScanner, filter_excluded_symbols
-from DataHub.services.realtime_service import RealtimeDataService, get_realtime_service
 import argparse
 import time
 from datetime import datetime
@@ -62,10 +61,10 @@ def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame,
     hist_df = scanner.load_stock_data(symbol, period='daily')
     if hist_df is None or hist_df.empty:
         return []
-    
-    # 使用 RealtimeDataService 的合并方法
-    rt_service = get_realtime_service()
-    merged_df = rt_service.merge_realtime_to_history(hist_df, realtime)
+
+    # 合并实时数据到历史K线
+    from Dashboard.utils.data_access import merge_realtime_to_history
+    merged_df = merge_realtime_to_history(hist_df, realtime)
     
     # 3. 使用完整的检测器进行信号检测（日线）
     signals = []
@@ -111,13 +110,11 @@ def main():
 
     multi_period = not args.no_multi_period
     period_str = "多周期(日/周/月)" if multi_period else "仅日线"
-    
-    # 初始化实时数据服务（由 DataHub 提供）
-    rt_service = get_realtime_service()
-    
-    # 简单逻辑：有当天实时数据就用，没有就用历史
-    has_today_data = rt_service.find_todays_latest_file() is not None
-    
+
+    # 检查是否有当天实时数据
+    from Dashboard.utils.data_access import get_todays_realtime_file
+    has_today_data = get_todays_realtime_file() is not None
+
     if has_today_data:
         mode_str = "当天数据模式（合并实时数据）"
     else:
@@ -144,16 +141,19 @@ def main():
                 print('='*60)
 
             try:
-                # 从统一数据访问层获取最新实时数据
-                print("\n📡 从 DataHub 获取实时数据...")
-                
+                # 读取已保存的实时数据（不获取，只读取）
+                print("\n📡 读取 DataHub 实时数据...")
+
                 from Dashboard.utils.data_access import get_latest_realtime_data
-                realtime_df, price_time_str = get_latest_realtime_data(force_fetch=True, full_format=True)
-                
+                realtime_df, price_time_str = get_latest_realtime_data(force_fetch=False, full_format=True)
+
                 if realtime_df is None or realtime_df.empty:
-                    raise FileNotFoundError("未能获取到实时数据")
-                
-                print(f"   ✓ 已获取最新实时数据 ({price_time_str}): {len(realtime_df)} 只股票")
+                    print("\n❌ 未找到当天实时数据文件")
+                    print("   请先运行: python DataHub/services/realtime_service.py")
+                    print("   或设置定时任务自动获取")
+                    return 1
+
+                print(f"   ✓ 已读取实时数据 ({price_time_str}): {len(realtime_df)} 只股票")
 
                 if args.symbol:
                     # 单只股票监控

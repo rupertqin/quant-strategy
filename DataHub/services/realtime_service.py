@@ -55,23 +55,62 @@ class RealtimeDataService:
         self.logger.info("获取实时行情数据...")
         
         # 获取全市场实时行情
-        df = ak.stock_zh_a_spot()
+        try:
+            df = ak.stock_zh_a_spot()
+        except Exception as e:
+            self.logger.error(f"新浪接口失败: {e}")
+            # 尝试备用接口（仅一次）
+            try:
+                df = ak.stock_zh_a_spot_em()
+                self.logger.info("使用东财备用接口成功")
+            except Exception as e2:
+                self.logger.error(f"备用接口也失败: {e2}")
+                raise RuntimeError(f"无法获取实时数据，请稍后手动重试")
         
-        # 转换代码格式: sh600000 -> 600000.SH
-        df['symbol'] = df['代码'].apply(lambda x:
-            x[2:] + '.SH' if x.startswith('sh') else
-            x[2:] + '.SZ' if x.startswith('sz') else
-            x[2:] + '.BJ' if x.startswith('bj') else x
-        )
+        # 判断接口类型并处理代码格式
+        # 新浪接口: 代码列是 '代码'，格式如 'sh600000'
+        # 东财接口: 代码列是 '代码'，格式如 '600000'
+        if '代码' in df.columns:
+            sample_code = str(df['代码'].iloc[0])
+            if sample_code.startswith(('sh', 'sz', 'bj')):
+                # 新浪接口格式
+                df['symbol'] = df['代码'].apply(lambda x:
+                    x[2:] + '.SH' if x.startswith('sh') else
+                    x[2:] + '.SZ' if x.startswith('sz') else
+                    x[2:] + '.BJ' if x.startswith('bj') else x
+                )
+            else:
+                # 东财接口格式，需要判断交易所
+                df['symbol'] = df['代码'].apply(lambda x:
+                    x + '.SH' if x.startswith(('6', '68', '5')) else
+                    x + '.SZ' if x.startswith(('0', '3', '1')) else
+                    x + '.BJ' if x.startswith(('4', '8', '82', '83', '87', '88')) else x
+                )
+        elif '股票代码' in df.columns:
+            # 东财接口另一种格式
+            df['symbol'] = df['股票代码'].apply(lambda x:
+                x + '.SH' if str(x).startswith(('6', '68', '5')) else
+                x + '.SZ' if str(x).startswith(('0', '3', '1')) else x
+            )
         
         # 筛选指定股票
         if symbols:
             df = df[df['symbol'].isin(symbols)]
         
-        # 重命名列
+        # 统一列名映射（兼容新浪和东财两种接口）
         column_map = {
+            # 新浪列名
             '最新价': 'close',
             '今开': 'open',
+            '最高价': 'high',
+            '最低价': 'low',
+            '成交量': 'volume',
+            '成交额': 'amount',
+            '涨跌幅': 'change_pct',
+            '名称': 'name',
+            # 东财列名
+            '最新价': 'close',
+            '开盘价': 'open',
             '最高价': 'high',
             '最低价': 'low',
             '成交量': 'volume',
