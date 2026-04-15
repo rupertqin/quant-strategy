@@ -14,7 +14,11 @@ REALTIME_DIR = BASE_DIR / "storage" / "raw" / "realtime"
 
 
 def get_todays_realtime_file() -> Optional[str]:
-    """获取当天最新的实时数据文件路径（盘后数据优先）"""
+    """获取当天最新的实时数据文件路径（只返回盘后数据 >=15:00）
+    
+    注意：盘中数据不会被返回，因为盘中数据可能不完整。
+    盘后数据应该通过 --today 命令同步到 storage/raw/prices/
+    """
     today = datetime.now().strftime('%Y%m%d')
     
     if not REALTIME_DIR.exists():
@@ -36,12 +40,13 @@ def get_todays_realtime_file() -> Optional[str]:
     if not today_files:
         return None
     
-    # 盘后数据(>=15点)优先，然后按时间最新
+    # 只返回盘后数据(>=15点)，没有就返回None
     post_market = [f for f in today_files if f[2] >= 15]
     if post_market:
         return str(sorted(post_market, key=lambda x: x[1], reverse=True)[0][0])
     
-    return str(sorted(today_files, key=lambda x: x[1], reverse=True)[0][0])
+    # 没有盘后数据，返回None（不返回盘中数据）
+    return None
 
 
 # 别名保持兼容

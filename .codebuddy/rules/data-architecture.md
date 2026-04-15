@@ -10,6 +10,82 @@ provider:
 
 ## 核心原则：前后端分离的数据流
 
+## 数据源优先级规则
+
+**核心原则：baostock > akshare > 东财接口**
+
+### 1. 接口优先级定义
+
+| 优先级 | 数据源 | 适用场景 | 说明 |
+|-------|--------|---------|------|
+| **1** | baostock | 历史数据、复权因子 | 稳定、支持前复权计算 |
+| **2** | akshare | 实时数据、备用方案 | 功能丰富、接口多样 |
+| **3** | 东财接口 | 最后备选 | 可能有频率限制 |
+
+### 2. 实现方式
+
+```python
+# 正确：按优先级尝试
+try:
+    # 1. 优先使用 baostock
+    df = self._fetch_from_baostock()
+except Exception as e1:
+    logger.warning(f"baostock 失败: {e1}")
+    try:
+        # 2. 尝试 akshare
+        df = ak.stock_zh_a_daily(...)
+    except Exception as e2:
+        logger.warning(f"akshare 失败: {e2}")
+        # 3. 最后尝试东财
+        df = ak.stock_zh_a_spot_em()
+```
+
+### 3. 禁止行为
+
+❌ **严禁以下操作**：
+```python
+# 禁止：优先使用东财接口
+df = ak.stock_zh_a_spot_em()  # 错误！东财应该是最后备选
+
+# 禁止：只使用单一数据源而不提供降级方案
+try:
+    df = ak.some_interface()  # 错误！没有备选方案
+except:
+    raise  # 直接抛出，没有降级
+```
+
+✅ **正确做法**：
+```python
+# 正确：按优先级尝试多个数据源
+def fetch_data_with_fallback():
+    errors = []
+    
+    # 优先级 1: baostock
+    try:
+        return fetch_from_baostock()
+    except Exception as e:
+        errors.append(f"baostock: {e}")
+    
+    # 优先级 2: akshare
+    try:
+        return fetch_from_akshare()
+    except Exception as e:
+        errors.append(f"akshare: {e}")
+    
+    # 优先级 3: 东财
+    try:
+        return fetch_from_em()
+    except Exception as e:
+        errors.append(f"em: {e}")
+    
+    # 全部失败
+    raise RuntimeError(f"所有数据源都失败: {errors}")
+```
+
+---
+
+## 核心原则：前后端分离的数据流
+
 ### 1. Dashboard 页面（前端展示层）
 - **只读操作**：Dashboard 页面只允许从 JSON/CSV 文件读取数据
 - **禁止实时获取**：严禁在 Dashboard 页面直接调用 akshare、baostock 等数据接口
