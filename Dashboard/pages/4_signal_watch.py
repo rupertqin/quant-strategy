@@ -14,6 +14,7 @@ from datetime import datetime
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.formatters import format_technicals, format_flat_mas, render_flat_ma_badge, format_ma_bonding, render_signal_card
+from utils.scoring import calculate_stock_score
 
 # 导入底层数据接口（默认前复权）
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -220,15 +221,6 @@ def format_technicals(tech: dict) -> str:
     return " | ".join(parts) if parts else "暂无数据"
 
 
-def get_score_class(score: int) -> str:
-    """根据评分获取样式类"""
-    if score >= 80:
-        return "score-high"
-    elif score >= 60:
-        return "score-medium"
-    return "score-low"
-
-
 def get_strength_class(strength: str) -> str:
     """根据强度获取样式类"""
     return f"strength-{strength}"
@@ -421,25 +413,9 @@ def main():
             stock_groups[symbol]['periods'].add(sig.get('period', 'daily'))
             stock_groups[symbol]['types'].add(sig.get('signal_type', 'left'))
 
-        # 计算每个股票的总分（使用后端计算的组合评分）
+        # 计算每个股票的总分（复用公共函数）
         for symbol, group in stock_groups.items():
-            signals = group['signals']
-            # 优先使用后端计算的组合评分 portfolio_score
-            portfolio_scores = [
-                s.get('technicals', {}).get('portfolio_score', 0)
-                for s in signals
-                if s.get('technicals', {}).get('portfolio_score')
-            ]
-            if portfolio_scores:
-                # 使用组合评分（所有信号共享同一个 portfolio_score）
-                group['total_score'] = round(max(portfolio_scores))
-            else:
-                # 回退到旧计算方式
-                base_score = max([s.get('score', 0) for s in signals])
-                extra_score = (len(signals) - 1) * 10
-                if len(group['periods']) > 1:
-                    extra_score += 15
-                group['total_score'] = min(base_score + extra_score, 100)
+            group['total_score'] = calculate_stock_score(group['signals'])
 
             # 添加信号数量、质量集中度和维度覆盖率信息用于展示
             signal_count = len(signals)

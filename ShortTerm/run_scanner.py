@@ -31,18 +31,24 @@ def run_daily_signal():
 
 
 def run_pool_watch():
-    """运行股票池监控"""
+    """运行股票池监控 - 使用信号扫描"""
     print("\n" + "="*60)
-    print("股票池短线监控 - 技术指标分析")
+    print("股票池监控 - 信号扫描模式")
     print("="*60)
     
-    from ShortTerm.pool_watch.monitor import PoolMonitor
+    # 直接调用信号扫描（股票池页面现在从信号数据读取）
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, "run_signal_scan.py"],
+        cwd=Path(__file__).parent,
+        capture_output=True,
+        text=True
+    )
+    print(result.stdout)
+    if result.returncode != 0:
+        print(result.stderr)
     
-    monitor = PoolMonitor()
-    report = monitor.scan_pool()
-    monitor.save_report(report)
-    
-    return report
+    return result.returncode == 0
 
 
 def run_all():
