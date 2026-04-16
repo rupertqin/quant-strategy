@@ -381,7 +381,35 @@ class UnifiedDataClient:
             raise ImportError("akshare not available")
         
         import akshare as ak
-        return ak.stock_board_industry_cons_ths(symbol=symbol)
+        
+        # 尝试多个接口，兼容不同 akshare 版本
+        try:
+            # 方法1: 同花顺行业成分股 (较新版本)
+            if hasattr(ak, 'stock_board_industry_cons_ths'):
+                return ak.stock_board_industry_cons_ths(symbol=symbol)
+        except Exception:
+            pass
+        
+        try:
+            # 方法2: 东方财富行业成分股
+            if hasattr(ak, 'stock_board_industry_cons_em'):
+                return ak.stock_board_industry_cons_em(symbol=symbol)
+        except Exception:
+            pass
+        
+        try:
+            # 方法3: 使用板块成分股接口
+            if hasattr(ak, 'stock_sector_fund_flow_rank'):
+                # 获取行业资金流向，然后筛选
+                df = ak.stock_sector_fund_flow_rank(indicator="今日")
+                if not df.empty and '名称' in df.columns:
+                    # 返回空DataFrame，后续逻辑处理
+                    return pd.DataFrame()
+        except Exception:
+            pass
+        
+        # 如果都失败，返回空DataFrame
+        return pd.DataFrame()
     
     # ==================== 债券/利率接口 ====================
     

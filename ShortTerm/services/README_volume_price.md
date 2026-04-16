@@ -95,7 +95,7 @@ detector.register_detector(VolumePricePattern.CUSTOM, my_detector)
 
 ### 基础使用
 ```python
-from ShortTerm.daily_signal.volume_price_signals import VolumePriceDetector
+from ShortTerm.services.volume_price_signals import VolumePriceDetector
 
 detector = VolumePriceDetector()
 signals = detector.detect_all(df)

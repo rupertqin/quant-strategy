@@ -35,6 +35,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from lib.utils.stock_code import StockCodeUtil
+from DataHub.config import RAW_PRICES_DIR, RAW_ADJUST_FACTORS_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,8 +58,8 @@ class StockListManager:
         self.base_dir = project_root
         self.storage_dir = self.base_dir / "storage"
         self.csv_path = self.storage_dir / "stock_basic_info.csv"
-        self.prices_dir = self.storage_dir / "raw" / "prices"
-        self.adjust_dir = self.storage_dir / "raw" / "adjust_factors"
+        self.prices_dir = RAW_PRICES_DIR
+        self.adjust_dir = RAW_ADJUST_FACTORS_DIR
         
         # 确保目录存在
         self.storage_dir.mkdir(parents=True, exist_ok=True)

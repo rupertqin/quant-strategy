@@ -211,7 +211,7 @@ class StockRepository(BaseRepository):
         """
         保存日线数据到Parquet文件
         
-        价格数据唯一存储位置：storage/raw/prices/{symbol}.parquet
+        价格数据唯一存储位置：storage/raw/stocks/prices/{symbol}.parquet
         
         Args:
             df: DataFrame with columns: symbol, trade_date, open, high, low, close, volume...

@@ -35,7 +35,7 @@ class ShortTermDataManager:
 
         # 输出路径
         output_config = self.config.get('output', {})
-        self.signals_file = output_config.get('signals_file', '../storage/outputs/shortterm/signals/daily_signals.json')
+        self.signals_file = output_config.get('signals_file', '../storage/outputs/shortterm/services/daily_signals.json')
         self.database_file = output_config.get('database_file', '../storage/outputs/shortterm/database/signals.db')
         if not os.path.isabs(self.signals_file):
             self.signals_file = os.path.join(self.base_dir, self.signals_file)

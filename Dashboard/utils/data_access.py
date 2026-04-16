@@ -17,7 +17,7 @@ def get_todays_realtime_file() -> Optional[str]:
     """获取当天最新的实时数据文件路径（只返回盘后数据 >=15:00）
     
     注意：盘中数据不会被返回，因为盘中数据可能不完整。
-    盘后数据应该通过 --today 命令同步到 storage/raw/prices/
+    盘后数据应该通过 --today 命令同步到 storage/raw/stocks/prices/
     """
     today = datetime.now().strftime('%Y%m%d')
     

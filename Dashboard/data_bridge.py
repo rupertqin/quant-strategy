@@ -41,7 +41,7 @@ class DataBridge:
 
     def get_shortterm_signals(self) -> dict:
         """读取短线信号 - 从 storage/outputs 读取"""
-        signals_file = os.path.join(self.storage_outputs, "shortterm", "signals", "daily_signals.json")
+        signals_file = os.path.join(self.storage_outputs, "shortterm", "services", "daily_signals.json")
         if os.path.exists(signals_file):
             with open(signals_file, 'r', encoding='utf-8') as f:
                 return json.load(f)

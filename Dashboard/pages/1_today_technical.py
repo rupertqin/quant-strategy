@@ -1,6 +1,6 @@
 """
-今日异动页面 - 读取 Scanner 生成的 JSON 数据
-对应 ShortTerm/daily_signal 模块
+今日技术面页面 - 读取 Scanner 生成的 JSON 数据
+对应 ShortTerm/services 模块
 """
 
 import streamlit as st
@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(BASE_DIR, "Dashboard"))
 from lib.utils import StockCodeUtil, get_stock_name
 
 # JSON 文件路径
-OUTPUT_DIR = os.path.join(BASE_DIR, "storage", "outputs", "shortterm", "daily_signal")
+OUTPUT_DIR = os.path.join(BASE_DIR, "storage", "outputs", "shortterm", "services")
 JSON_FILE = os.path.join(OUTPUT_DIR, "daily_signals.json")
 
 
@@ -39,7 +39,7 @@ def load_signals_data() -> dict:
 
 
 st.set_page_config(
-    page_title="今日异动 - Quant Dashboard",
+    page_title="今日技术面 - Quant Dashboard",
     page_icon="🔥",
     layout="wide"
 )
@@ -75,7 +75,7 @@ st.markdown("""
 data = load_signals_data()
 
 if not data:
-    st.error("❌ 无法加载数据文件，请确保已运行 `python ShortTerm/run_scanner.py daily`")
+    st.error("❌ 无法加载数据文件，请确保已运行 `python ShortTerm/run_today_technical.py`")
     st.stop()
 
 # 提取数据
@@ -101,7 +101,7 @@ index_history = data.get('index_history', {})
 # ============= 页面标题 =============
 market_close_time = data.get('market_close_time', '未知')
 data_status = data.get('data_status', '')
-st.title("🔥 今日异动")
+st.title("🔥 今日技术面")
 st.caption(f"涨停板扫描 | 板块热度分析 | 市场状态监控 | 数据时间: {market_close_time} [{data_status}] | 生成时间: {generated_at}")
 
 # ============= 市场状态卡片 =============
@@ -265,7 +265,7 @@ if index_history:
         if col_idx == 2:  # 每行2个图表
             chart_cols = st.columns(2)
 else:
-    st.info("暂无指数历史数据，请在后台脚本中生成（ShortTerm/run_scanner.py）")
+    st.info("暂无指数历史数据，请在后台脚本中生成（ShortTerm/run_today_technical.py）")
 
 st.divider()
 
@@ -502,7 +502,7 @@ else:
 
 # ============= 快捷操作 =============
 with st.sidebar:
-    st.header("🔥 今日异动操作")
+    st.header("🔥 今日技术面操作")
 
     if st.button("🔄 刷新数据", type="primary"):
         st.rerun()

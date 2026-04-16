@@ -12,7 +12,7 @@ cache:
 
 # 输出配置 (统一到 storage/outputs)
 output:
-  signals_file: "../storage/outputs/shortterm/signals/daily_signals.json"
+  signals_file: "../storage/outputs/shortterm/services/daily_signals.json"
   history_file: "../storage/outputs/shortterm/history/sector_heat_history.csv"
   database_file: "../storage/outputs/shortterm/database/signals.db"
   charts_dir: "../storage/outputs/shortterm/charts"

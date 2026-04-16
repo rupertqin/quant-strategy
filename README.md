@@ -3,7 +3,7 @@
 模块化量化交易系统，长短策略结合：
 
 - **长线** (LongTerm): 均值-方差优化，月度调仓
-- **短线** (ShortTerm): 双模块 - 今日异动 + 股票池监控
+- **短线** (ShortTerm): 双模块 - 今日技术面 + 股票池监控
 - **看板** (Dashboard): 可视化展示
 - **中台** (DataHub): 统一数据管理
 
@@ -19,7 +19,9 @@ quant-strategy/
 │   ├── scripts/           # 迁移/刷新脚本
 │   └── crontab.txt        # crontab 配置
 ├── storage/               # 数据存储
-│   ├── raw/prices/        # 价格数据 (Parquet)
+│   ├── raw/stocks/        # 股票数据
+│   │   ├── prices/            # 价格数据 (Parquet)
+│   │   └── adjust_factors/    # 复权因子
 │   ├── raw/zt_pool/       # 涨停池数据
 │   ├── processed/returns/ # 收益率数据
 │   ├── database/          # SQLite 元数据
@@ -28,7 +30,7 @@ quant-strategy/
 │   │   │   ├── weights/       # 权重配置
 │   │   │   └── reports/       # 绩效报告
 │   │   └── shortterm/     # 短线策略输出
-│   │       ├── daily_signal/  # 今日异动输出
+│   │       ├── services/  # 今日技术面输出
 │   │       │   ├── signals/daily_signals.json
 │   │       │   └── history/sector_heat_history.csv
 │   │       └── pool_watch/    # 股票池监控输出
@@ -37,14 +39,14 @@ quant-strategy/
 │   └── logs/              # 日志
 ├── LongTerm/              # 长线策略 (战略配置)
 ├── ShortTerm/             # 短线策略 (战术扫描)
-│   ├── daily_signal/      # 今日异动模块
+│   ├── services/          # 今日技术面服务模块
 │   │   ├── scanner.py         # 涨停扫描
 │   │   ├── market_regime.py   # 市场状态
 │   │   └── backtest_event.py  # 事件回测
 │   ├── pool_watch/        # 股票池监控模块
 │   │   ├── monitor.py         # 监控主模块
 │   │   └── analyzer.py        # 技术分析
-│   └── run_scanner.py     # 统一入口
+│   └── run_today_technical.py  # 今日技术面扫描入口
 └── Dashboard/             # 可视化看板
 ```
 
@@ -56,12 +58,12 @@ quant-strategy/
 | -------- | ------------------------------- | -------------------- |
 | DataHub  | 统一数据管理，akshare + baostock | akshare, baostock    |
 | 长线策略 | 均值-方差优化，计算最优资产配置 | scipy, numpy, pandas |
-| 短线策略 | 双模块：今日异动 + 股票池监控   | pandas, numpy        |
+| 短线策略 | 双模块：今日技术面 + 股票池监控   | pandas, numpy        |
 | 看板     | 整合展示，信号汇总              | streamlit, plotly    |
 
 ## ShortTerm 短线策略 (双模块)
 
-### 模块 1: Daily Signal (今日异动)
+### 模块 1: Daily Signal (今日技术面)
 
 **功能**: 全市场涨停板扫描、板块热度分析
 
@@ -74,7 +76,7 @@ quant-strategy/
 **运行**:
 ```bash
 cd ShortTerm
-python run_scanner.py daily
+python run_today_technical.py
 ```
 
 ### 模块 2: Pool Watch (股票池监控) ⭐ 新增
@@ -99,11 +101,11 @@ python run_scanner.py daily
 
 **运行**:
 ```bash
-cd ShortTerm
-python run_scanner.py pool
+# 今日技术面扫描（涨停、板块热度）
+python ShortTerm/run_today_technical.py
 
-# 运行全部短线策略
-python run_scanner.py all
+# 个股信号扫描（用于股票池和信号监控页面）
+python ShortTerm/run_signal_scan.py
 ```
 
 **输出文件**:
@@ -221,7 +223,7 @@ storage/
     │       ├── portfolio_report.html
     │       └── charts/*.png
     └── shortterm/
-        ├── daily_signal/                  # 今日异动输出
+        ├── services/                      # 今日技术面输出
         │   ├── signals/daily_signals.json
         │   └── history/sector_heat_history.csv
         └── pool_watch/                    # 股票池监控输出 ⭐
@@ -235,35 +237,33 @@ storage/
 
 **构建数据库（不定期执行）**：
 ```bash
-# 方式1: 通过 run_scanner.py
-python ShortTerm/run_scanner.py build-db
-
-# 方式2: 直接运行模块
-python -m DataHub.build_stock_db
+# 直接运行模块
+python -m DataHub.run_build_stock_db
 
 # 强制重新构建（忽略缓存）
-python -m DataHub.build_stock_db --force
+python -m DataHub.run_build_stock_db --force
 ```
 
 **查询数据库**：
 ```bash
 # 查看数据库信息
-python -m DataHub.build_stock_db --info
+python -m DataHub.run_build_stock_db --info
 
 # 搜索股票
-python -m DataHub.build_stock_db --search 茅台
-python -m DataHub.build_stock_db --search 600519
+python -m DataHub.run_build_stock_db --search 茅台
+python -m DataHub.run_build_stock_db --search 600519
 ```
 
 **在代码中使用**：
 ```python
-from DataHub.stock_names import get_stock_name, enrich_with_names
+from lib.utils import get_stock_name
 
 # 获取股票名称
 name = get_stock_name('600519.SH')  # 返回 '贵州茅台'
 
-# 为数据添加名称
-enrich_with_names(data)  # 自动添加 name 字段
+# 格式化显示（代码+名称）
+from lib.utils import format_stock
+display = format_stock('600519.SH')  # 返回 '600519.SH(贵州茅台)'
 ```
 
 **数据库文件**：`storage/stock_basic_info.csv`
@@ -347,14 +347,11 @@ python run_optimization.py
 ```bash
 cd ShortTerm
 
-# 今日异动扫描
-python run_scanner.py daily
+# 今日技术面扫描
+python ShortTerm/run_today_technical.py daily
 
-# 股票池监控
-python run_scanner.py pool
-
-# 运行全部
-python run_scanner.py all
+# 个股信号扫描
+python ShortTerm/run_signal_scan.py
 ```
 
 **启动看板**
@@ -384,8 +381,8 @@ python DataHub/scripts/migrate_data.py
 | storage/outputs/longterm/    | reports/portfolio_report.md   | 绩效报告 (Markdown) |
 | storage/outputs/longterm/    | reports/portfolio_report.html | 绩效报告 (HTML)     |
 | storage/outputs/longterm/    | reports/charts/*.png          | 图表                |
-| storage/outputs/shortterm/daily_signal/ | signals/daily_signals.json | 每日热点信号 |
-| storage/outputs/shortterm/daily_signal/ | history/sector_heat_history.csv | 热度历史 |
+| storage/outputs/shortterm/services/ | signals/daily_signals.json | 每日热点信号 |
+| storage/outputs/shortterm/services/ | history/sector_heat_history.csv | 热度历史 |
 | storage/outputs/shortterm/pool_watch/ ⭐ | pool_watch_YYYYMMDD.json | 股票池监控报告 |
 | storage/outputs/shortterm/pool_watch/ ⭐ | pool_ranking_YYYYMMDD.csv | 股票池排名 |
 | Dashboard                    | -                             | 实时看板            |
@@ -394,7 +391,7 @@ python DataHub/scripts/migrate_data.py
 
 ### v2.0 (2026-04-02)
 - **重构**: ShortTerm 拆分为双模块
-  - `daily_signal`: 原涨停扫描功能
+  - `services`: 原涨停扫描功能
   - `pool_watch`: 新增股票池短线监控
 - **新增**: PoolWatch 模块
   - 监控 LongTerm 股票池的 MA5/10/20/60

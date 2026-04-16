@@ -27,7 +27,7 @@ def load_adjust_factor(symbol: str, base_dir: Path = None) -> Optional[pd.DataFr
     if base_dir is None:
         base_dir = Path(__file__).parent.parent.parent / "storage"
     
-    factor_path = base_dir / "raw" / "adjust_factors" / f"{symbol}.parquet"
+    factor_path = base_dir / "raw" / "stocks" / "adjust_factors" / f"{symbol}.parquet"
     
     if not factor_path.exists():
         logger.debug(f"复权因子文件不存在: {factor_path}")
@@ -134,7 +134,7 @@ def get_latest_price_qfq(symbol: str, base_dir: Path = None) -> Optional[float]:
         base_dir = Path(__file__).parent.parent.parent / "storage"
     
     # 加载价格数据
-    price_path = base_dir / "raw" / "prices" / f"{symbol}.parquet"
+    price_path = base_dir / "raw" / "stocks" / "prices" / f"{symbol}.parquet"
     if not price_path.exists():
         return None
     
@@ -173,7 +173,7 @@ def get_price_at_date_qfq(
     if base_dir is None:
         base_dir = Path(__file__).parent.parent.parent / "storage"
     
-    price_path = base_dir / "raw" / "prices" / f"{symbol}.parquet"
+    price_path = base_dir / "raw" / "stocks" / "prices" / f"{symbol}.parquet"
     if not price_path.exists():
         return None
     

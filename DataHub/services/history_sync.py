@@ -2,7 +2,7 @@
 历史数据同步服务 - 下载全市场股票历史日线数据到 Parquet
 
 每只股票一个文件，包含全部历史数据
-存储位置: storage/raw/prices/{symbol}.parquet
+存储位置: storage/raw/stocks/prices/{symbol}.parquet
 
 用法:
     # ========== 收盘后快速同步当天数据（极速推荐）==========
@@ -92,7 +92,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-from DataHub.config import CRAWLER_REQUEST_DELAY, STORAGE_DIR
+from DataHub.config import CRAWLER_REQUEST_DELAY, STORAGE_DIR, RAW_PRICES_DIR, RAW_ADJUST_FACTORS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class HistorySyncService:
 
     def __init__(self):
         """初始化服务（不自动登录baostock，按需登录）"""
-        self.raw_prices_dir = STORAGE_DIR / "raw" / "prices"
+        self.raw_prices_dir = RAW_PRICES_DIR
         self.raw_prices_dir.mkdir(parents=True, exist_ok=True)
 
         # 加载股票列表
@@ -581,9 +581,8 @@ class HistorySyncService:
         Returns:
             同步结果
         """
-        adjust_dir = STORAGE_DIR / "raw" / "adjust_factors"
-        adjust_dir.mkdir(parents=True, exist_ok=True)
-        file_path = adjust_dir / f"{symbol}.parquet"
+        RAW_ADJUST_FACTORS_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = RAW_ADJUST_FACTORS_DIR / f"{symbol}.parquet"
 
         if end_date is None:
             end_date = datetime.now().strftime("%Y%m%d")
@@ -941,9 +940,8 @@ class HistorySyncService:
         all_symbols = set(grouped.groups.keys())
 
         # 添加已有文件中的股票（确保更新所有文件，即使某天没交易）
-        prices_dir = STORAGE_DIR / "raw" / "prices"
-        if prices_dir.exists():
-            for f in prices_dir.glob("*.parquet"):
+        if RAW_PRICES_DIR.exists():
+            for f in RAW_PRICES_DIR.glob("*.parquet"):
                 symbol = f.stem
                 all_symbols.add(symbol)
 
@@ -1175,8 +1173,7 @@ class HistorySyncService:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from threading import Lock
 
-        adjust_dir = STORAGE_DIR / "raw" / "adjust_factors"
-        adjust_dir.mkdir(parents=True, exist_ok=True)
+        RAW_ADJUST_FACTORS_DIR.mkdir(parents=True, exist_ok=True)
 
         updated = 0
         skipped = 0
@@ -1244,12 +1241,10 @@ class HistorySyncService:
         """
         import random
 
-        adjust_dir = STORAGE_DIR / "raw" / "adjust_factors"
-        adjust_dir.mkdir(parents=True, exist_ok=True)
+        RAW_ADJUST_FACTORS_DIR.mkdir(parents=True, exist_ok=True)
 
         # 获取所有有价格数据的股票
-        prices_dir = STORAGE_DIR / "raw" / "prices"
-        all_symbols = [f.stem for f in prices_dir.glob("*.parquet")]
+        all_symbols = [f.stem for f in RAW_PRICES_DIR.glob("*.parquet")]
 
         updated = 0
         skipped = 0
@@ -1258,7 +1253,7 @@ class HistorySyncService:
         # 遍历所有股票，检查是否需要更新复权因子
         for symbol in all_symbols:
             try:
-                file_path = adjust_dir / f"{symbol}.parquet"
+                file_path = RAW_ADJUST_FACTORS_DIR / f"{symbol}.parquet"
 
                 # 检查是否已有复权因子文件
                 if file_path.exists():

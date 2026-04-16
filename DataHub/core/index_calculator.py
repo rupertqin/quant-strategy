@@ -11,6 +11,8 @@ from pathlib import Path
 import logging
 from functools import lru_cache
 
+from DataHub.config import RAW_PRICES_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,7 +97,7 @@ class IndexCalculator:
         Args:
             data_path: 个股数据存储路径
         """
-        self.data_path = data_path or Path(__file__).parent.parent.parent / "storage" / "raw" / "prices"
+        self.data_path = data_path or RAW_PRICES_DIR
         self.stock_basic_path = Path(__file__).parent.parent.parent / "storage" / "stock_basic_info.csv"
         
     def filter_constituents(

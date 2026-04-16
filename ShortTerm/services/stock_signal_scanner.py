@@ -11,13 +11,15 @@
     python ShortTerm/run_signal_scan.py --symbol 600519.SH  # 扫描单只股票
     
     # 或者直接运行扫描器
-    python ShortTerm/daily_signal/stock_signal_scanner.py
+    python ShortTerm/services/stock_signal_scanner.py
 """
 
 import sys
 from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+from DataHub.config import RAW_PRICES_DIR
 
 import pandas as pd
 import numpy as np
@@ -942,7 +944,7 @@ class StockSignalScanner:
         self.right_detector = RightSignalDetector()
         self.output_dir = Path(project_root) / "storage" / "outputs" / "signals"
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.prices_dir = Path(project_root) / "storage" / "raw" / "prices"
+        self.prices_dir = RAW_PRICES_DIR
     
     def load_stock_data(self, symbol: str, period: str = "daily", adjust: str = "qfq") -> pd.DataFrame:
         """

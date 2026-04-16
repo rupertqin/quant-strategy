@@ -25,7 +25,9 @@ class StorageEngine:
             base_path = Path(__file__).parent.parent.parent / "storage"
 
         self.base_path = Path(base_path)
-        self.raw_prices_dir = self.base_path / "raw" / "prices"
+        self.raw_stocks_dir = self.base_path / "raw" / "stocks"
+        self.raw_prices_dir = self.raw_stocks_dir / "prices"
+        self.raw_adjust_factors_dir = self.raw_stocks_dir / "adjust_factors"
         self.raw_zt_pool_dir = self.base_path / "raw" / "zt_pool"
         self.processed_returns_dir = self.base_path / "processed" / "returns"
         self.database_dir = self.base_path / "database"
@@ -33,7 +35,9 @@ class StorageEngine:
 
         # Create directories
         for _dir in [
+            self.raw_stocks_dir,
             self.raw_prices_dir,
+            self.raw_adjust_factors_dir,
             self.raw_zt_pool_dir,
             self.processed_returns_dir,
             self.database_dir

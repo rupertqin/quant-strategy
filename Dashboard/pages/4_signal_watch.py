@@ -1,7 +1,7 @@
 """
 个股信号监控页面 - 展示左侧/右侧交易信号
 
-读取 ShortTerm/daily_signal/stock_signal_scanner.py 生成的信号数据
+读取 ShortTerm/services/stock_signal_scanner.py 生成的信号数据
 """
 
 import streamlit as st
@@ -328,7 +328,7 @@ def main():
     # 主内容区
     if data.get("status") != "success":
         st.warning(data.get("message", "暂无数据"))
-        st.info("请运行扫描器生成数据:\n```\npython ShortTerm/daily_signal/stock_signal_scanner.py\n```")
+        st.info("请运行扫描器生成数据:\n```\npython ShortTerm/services/stock_signal_scanner.py\n```")
         return
 
     # 统计数据

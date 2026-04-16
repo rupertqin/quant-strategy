@@ -1,4 +1,4 @@
-"""Daily Signal - 今日异动模块
+"""Today Technical - 今日技术面模块
 
 功能:
 - 涨停板扫描

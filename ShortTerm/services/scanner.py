@@ -497,7 +497,7 @@ class LimitUpScanner:
                 'sector': sector['sector'],
                 'action': action,
                 'strength': round(strength_score, 2),
-                'reason': f"涨停{sector['zt_count']}家，龙头{sector['lead_stock']}"
+                'reason': f"涨停{sector['zt_count']}家，龙头{sector.get('lead_stock_code', 'N/A')}"
             })
 
         # 6. 保存结果
@@ -656,7 +656,7 @@ class LimitUpScanner:
 
         # 确定输出目录 - 按日期分文件夹，支持分钟级报告
         # base_dir 是 ShortTerm/, 所以只需要 parent 到项目根目录
-        base_output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "daily_signal"
+        base_output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "services"
         
         # 按日期创建子文件夹
         date_folder = base_output_dir / date
@@ -781,9 +781,9 @@ class LimitUpScanner:
     
     def save_to_history(self, heat: pd.DataFrame):
         """保存板块热度历史数据"""
-        # 统一到 storage/outputs/shortterm/daily_signal
+        # 统一到 storage/outputs/shortterm/services
         # base_dir 是 ShortTerm/, 所以只需要 parent 到项目根目录
-        output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "daily_signal"
+        output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "services"
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # 最新历史文件

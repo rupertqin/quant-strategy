@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Optional
 import logging
 
+from DataHub.config import RAW_PRICES_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,9 +35,9 @@ def load_stock_prices(
         DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
     """
     if base_dir is None:
-        base_dir = Path(__file__).parent.parent.parent / "storage"
+        base_dir = RAW_PRICES_DIR
 
-    price_path = base_dir / "raw" / "prices" / f"{symbol}.parquet"
+    price_path = base_dir / f"{symbol}.parquet"
 
     if not price_path.exists():
         logger.warning(f"价格数据不存在: {price_path}")
@@ -116,9 +118,9 @@ def load_stock_latest_date(
         最新日期字符串 'YYYY-MM-DD'，失败返回 None
     """
     if base_dir is None:
-        base_dir = Path(__file__).parent.parent.parent / "storage"
+        base_dir = RAW_PRICES_DIR
 
-    price_path = base_dir / "raw" / "prices" / f"{symbol}.parquet"
+    price_path = base_dir / f"{symbol}.parquet"
 
     if not price_path.exists():
         return None

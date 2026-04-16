@@ -21,7 +21,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from ShortTerm.daily_signal.stock_signal_scanner import StockSignalScanner, filter_excluded_symbols
+from ShortTerm.services.stock_signal_scanner import StockSignalScanner, filter_excluded_symbols
 import argparse
 import time
 from datetime import datetime
@@ -47,7 +47,7 @@ def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame,
         StockSignal 对象列表
     """
     from lib.utils import get_stock_name
-    from ShortTerm.daily_signal.stock_signal_scanner import LeftSignalDetector, RightSignalDetector
+    from ShortTerm.services.stock_signal_scanner import LeftSignalDetector, RightSignalDetector
     
     # 1. 获取该股票的实时数据
     row = realtime_df[realtime_df['symbol'] == symbol]

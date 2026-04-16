@@ -20,7 +20,7 @@ try:
 except ImportError:
     pytest = None
 
-from ShortTerm.daily_signal.volume_price_signals import (
+from ShortTerm.services.volume_price_signals import (
     VolumePriceDetector,
     VolumePricePattern,
     VolumePriceAdapter

@@ -48,7 +48,7 @@ streamlit run app.py
 |------|------|----------|
 | 资产权重 | `../storage/outputs/longterm/weights/output_weights.csv` | 手动 |
 | 绩效指标 | `../storage/outputs/longterm/reports/portfolio_report.html` | 手动 |
-| 短线信号 | `../storage/outputs/shortterm/signals/daily_signals.json` | 每日 |
+| 短线信号 | `../storage/outputs/shortterm/services/daily_signals.json` | 每日 |
 | 市场状态 | `../ShortTerm/market_regime.py` | 实时 |
 
 ## 模块说明

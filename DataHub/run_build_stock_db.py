@@ -6,8 +6,8 @@ A股股票基本信息数据库构建工具
 执行频率：不定期（如季度、半年或需要更新时），不包含在日常任务中
 
 使用方式:
-    python -m DataHub.build_stock_db           # 直接运行
-    python ShortTerm/run_scanner.py build-db   # 通过scanner运行
+    python -m DataHub.run_build_stock_db       # 直接运行
+    python DataHub/run_build_stock_db.py       # 直接运行脚本
 """
 
 import os

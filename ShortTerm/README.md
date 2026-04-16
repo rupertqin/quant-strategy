@@ -14,7 +14,7 @@
 
 ```bash
 cd ShortTerm
-python run_scanner.py
+python run_today_technical.py
 ```
 
 ## 配置 (config.yaml)
@@ -33,7 +33,7 @@ cache:
 
 # 输出配置
 output:
-  signals_file: "../storage/outputs/shortterm/signals/daily_signals.json"
+  signals_file: "../storage/outputs/shortterm/services/daily_signals.json"
   history_file: "../storage/outputs/shortterm/history/sector_heat_history.csv"
   database_file: "../storage/outputs/shortterm/database/signals.db"
 
@@ -48,7 +48,7 @@ analysis:
 
 | 文件 | 说明 |
 |------|------|
-| `run_scanner.py` | 主入口 |
+| `run_today_technical.py` | 今日技术面扫描入口 |
 | `scanner.py` | 涨停板扫描器 |
 | `market_regime.py` | 市场状态判断 |
 | `data_manager.py` | 缓存管理 |

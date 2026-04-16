@@ -96,9 +96,9 @@ def load_longterm_data():
 
 
 def load_daily_signals():
-    """加载今日异动信号"""
+    """加载今日技术面信号"""
     base = get_base_dir()
-    signals_file = os.path.join(base, "storage", "outputs", "shortterm", "daily_signal", "signals", "daily_signals.json")
+    signals_file = os.path.join(base, "storage", "outputs", "shortterm", "services", "signals", "daily_signals.json")
 
     if os.path.exists(signals_file):
         with open(signals_file, 'r', encoding='utf-8') as f:
@@ -126,7 +126,7 @@ def get_market_regime():
     """获取市场状态 - 从JSON文件读取"""
     try:
         base = get_base_dir()
-        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "daily_signal", "daily_signals.json")
+        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "services", "daily_signals.json")
         if os.path.exists(signals_file):
             with open(signals_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -175,12 +175,12 @@ def run_longterm_optimization():
 
 
 def run_daily_scanner():
-    """运行今日异动扫描"""
+    """运行今日技术面扫描"""
     base = get_base_dir()
     shortterm_dir = os.path.join(base, "ShortTerm")
     try:
         result = subprocess.run(
-            [sys.executable, "run_scanner.py", "daily"],
+            [sys.executable, "run_today_technical.py"],
             cwd=shortterm_dir,
             capture_output=True,
             text=True,
@@ -197,13 +197,13 @@ def run_daily_scanner():
         return {'success': False, 'stderr': str(e)}
 
 
-def run_pool_watch():
-    """运行股票池监控"""
+def run_signal_scan():
+    """运行个股信号扫描"""
     base = get_base_dir()
     shortterm_dir = os.path.join(base, "ShortTerm")
     try:
         result = subprocess.run(
-            [sys.executable, "run_scanner.py", "pool"],
+            [sys.executable, "run_signal_scan.py"],
             cwd=shortterm_dir,
             capture_output=True,
             text=True,
@@ -297,15 +297,15 @@ col_nav1, col_nav2, col_nav3 = st.columns(3)
 
 with col_nav1:
     st.markdown("""
-    ### 🔥 今日异动
+    ### 🔥 今日技术面
     全市场涨停板扫描、板块热度分析
     
     - 涨停家数统计
     - 热点板块排名
     - 操作信号生成
     """)
-    if st.button("进入今日异动 ➡️", key="nav_daily"):
-        st.switch_page("pages/1_daily_signal.py")
+    if st.button("进入今日技术面 ➡️", key="nav_daily"):
+        st.switch_page("pages/1_today_technical.py")
 
 with col_nav2:
     st.markdown("""
@@ -374,7 +374,7 @@ with col_left:
 with col_right:
     st.header("⚡ 短线摘要 (战术)")
     
-    # 今日异动摘要
+    # 今日技术面摘要
     signals = load_daily_signals()
     if signals:
         st.subheader("🔥 今日涨停")
@@ -387,7 +387,7 @@ with col_right:
                 st.markdown(f"<span class='hot-sector'>{sector['sector']} ({sector['zt_count']})</span>", 
                           unsafe_allow_html=True)
     else:
-        st.info("今日异动未运行")
+        st.info("今日技术面未运行")
     
     st.divider()
     
@@ -421,7 +421,7 @@ with col1:
     multiplier = 0.7  # 默认
     try:
         base = get_base_dir()
-        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "daily_signal", "daily_signals.json")
+        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "services", "daily_signals.json")
         if os.path.exists(signals_file):
             with open(signals_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -451,7 +451,7 @@ with col2:
     # 从JSON读取热点板块
     try:
         base = get_base_dir()
-        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "daily_signal", "daily_signals.json")
+        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "services", "daily_signals.json")
         if os.path.exists(signals_file):
             with open(signals_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -497,20 +497,20 @@ with st.sidebar:
                 with st.expander("查看输出"):
                     st.text(result.get('stdout', '') or result.get('stderr', ''))
 
-    if st.button("🔥 运行今日异动"):
-        with st.spinner("正在扫描涨停板..."):
+    if st.button("🔥 运行今日技术面"):
+        with st.spinner("正在扫描今日技术面..."):
             result = run_daily_scanner()
             if result['success']:
-                st.success("今日异动扫描完成!")
+                st.success("今日技术面扫描完成!")
                 st.rerun()
             else:
                 st.error(f"运行失败: {result.get('stderr', '未知错误')}")
     
-    if st.button("📊 运行股票池监控"):
-        with st.spinner("正在分析股票池..."):
-            result = run_pool_watch()
+    if st.button("📊 运行信号扫描"):
+        with st.spinner("正在扫描个股信号..."):
+            result = run_signal_scan()
             if result['success']:
-                st.success("股票池监控完成!")
+                st.success("信号扫描完成!")
                 st.rerun()
             else:
                 st.error(f"运行失败: {result.get('stderr', '未知错误')}")
@@ -525,7 +525,7 @@ with st.sidebar:
     st.write("📚 使用说明")
     st.caption("""
     **导航页面:**
-    - 🔥 今日异动: 涨停板扫描
+    - 🔥 今日技术面: 涨停板扫描
     - 📊 股票池监控: 技术指标分析
     
     **策略说明:**
