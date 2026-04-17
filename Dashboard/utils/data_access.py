@@ -14,16 +14,15 @@ REALTIME_DIR = BASE_DIR / "storage" / "raw" / "realtime"
 
 
 def get_todays_realtime_file() -> Optional[str]:
-    """获取当天最新的实时数据文件路径（只返回盘后数据 >=15:00）
+    """获取当天最新的实时数据文件路径
     
-    注意：盘中数据不会被返回，因为盘中数据可能不完整。
-    盘后数据应该通过 --today 命令同步到 storage/raw/stocks/prices/
+    返回最新数据文件（包括盘中和盘后）
     """
     today = datetime.now().strftime('%Y%m%d')
-    
+
     if not REALTIME_DIR.exists():
         return None
-    
+
     # 获取今天的所有文件
     today_files = []
     for f in REALTIME_DIR.glob(f"realtime_{today}_*.json"):
@@ -36,17 +35,12 @@ def get_todays_realtime_file() -> Optional[str]:
                 today_files.append((f, fetch_time, hour))
         except:
             continue
-    
+
     if not today_files:
         return None
-    
-    # 只返回盘后数据(>=15点)，没有就返回None
-    post_market = [f for f in today_files if f[2] >= 15]
-    if post_market:
-        return str(sorted(post_market, key=lambda x: x[1], reverse=True)[0][0])
-    
-    # 没有盘后数据，返回None（不返回盘中数据）
-    return None
+
+    # 返回最新的数据文件（按时间排序）
+    return str(sorted(today_files, key=lambda x: x[1], reverse=True)[0][0])
 
 
 # 别名保持兼容
@@ -54,33 +48,36 @@ find_todays_realtime_file = get_todays_realtime_file
 
 
 def load_realtime_data(filepath: str = None) -> pd.DataFrame:
-    """加载实时数据为DataFrame"""
+    """加载实时数据为DataFrame
+
+    实时数据文件由 realtime_service.py 生成，列名已经是英文
+    """
     if filepath is None:
         filepath = get_todays_realtime_file()
-    
+
     if not filepath or not Path(filepath).exists():
         return pd.DataFrame()
-    
+
     with open(filepath, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    
+
     # 实时数据文件结构: {"fetch_time": "...", "data": [...]}
     stocks = data.get('data', [])
     df = pd.DataFrame(stocks)
-    
-    # 列名映射（实时数据用中文，转为英文）
-    column_map = {
-        '最高': 'high',
-        '最低': 'low',
-        '昨收': 'prev_close',
-        '涨跌额': 'change',
-        '买入': 'bid',
-        '卖出': 'ask',
-        '时间戳': 'timestamp',
-        '代码': 'code'
-    }
-    df = df.rename(columns=column_map)
-    
+
+    # 确保symbol格式统一（添加后缀 .SH/.SZ）
+    if 'symbol' in df.columns:
+        def format_symbol(code):
+            if '.' in str(code):
+                return str(code)
+            code_str = str(code)
+            if code_str.startswith('6'):
+                return f"{code_str}.SH"
+            elif code_str.startswith('0') or code_str.startswith('3'):
+                return f"{code_str}.SZ"
+            return code_str
+        df['symbol'] = df['symbol'].apply(format_symbol)
+
     return df
 
 

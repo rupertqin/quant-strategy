@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.formatters import render_signal_card
+from utils.scoring import calculate_stock_score, get_score_label
 
 # 导入底层数据接口（默认前复权）
 sys.path.insert(0, str(BASE_DIR))
@@ -311,46 +312,67 @@ def resample_to_monthly(df: pd.DataFrame) -> pd.DataFrame:
 def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: str = None) -> pd.DataFrame:
     """
     将实时数据合并到历史DataFrame中
-    
+
+    合并策略：
+    - 盘中（< 15:00）：用实时数据更新/添加今天的K线
+    - 盘后（>= 15:00）：如果历史数据已有今天数据，优先用历史数据（更完整）；否则用实时数据补充
+
     Args:
         df: 历史数据DataFrame
         realtime_data: 实时数据字典，包含open/high/low/close/volume/change_pct等
         fetch_time_str: 实时数据获取时间字符串，格式 HH:MM
-        
+
     Returns:
         合并后的DataFrame
     """
     if df.empty or not realtime_data:
         return df
-    
+
     today = datetime.now().date()
-    
+    current_hour = datetime.now().hour
+    is_post_market = current_hour >= 15  # 盘后（15:00后）
+
     # 确保trade_date是datetime类型
     df['trade_date'] = pd.to_datetime(df['trade_date'])
-    
+
     # 获取最后一天日期
     last_date = df['trade_date'].iloc[-1].date()
-    
+    has_today_data = last_date == today
+
+    logger.info(f"历史数据最后一天: {last_date}, 今天: {today}, 是否有今天数据: {has_today_data}")
+    logger.info(f"当前时间: {current_hour}:00, 是否盘后: {is_post_market}")
+
     # 检查实时数据是否是今天的
-    realtime_date = pd.to_datetime(realtime_data.get('trade_date', today)).date()
-    
+    realtime_date_raw = realtime_data.get('trade_date', today)
+    try:
+        realtime_date = pd.to_datetime(realtime_date_raw).date() if realtime_date_raw else today
+    except:
+        realtime_date = today
+
     if realtime_date != today:
-        return df  # 不是今天的数据，不合并
-    
+        logger.warning(f"实时数据日期 {realtime_date} 不是今天 {today}，跳过合并")
+        return df
+
+    # 盘后且历史数据已有今天数据：跳过（历史日线数据更完整准确）
+    if is_post_market and has_today_data:
+        logger.info("盘后且历史数据已有今天数据，优先使用历史数据，跳过实时数据合并")
+        return df
+
     # 提取实时数据值
     close = float(realtime_data.get('close', 0))
     if close == 0:
-        return df  # 无效数据
-    
+        logger.warning("实时数据 close 为 0，跳过合并")
+        return df
+
     open_price = float(realtime_data.get('open', close))
     high = float(realtime_data.get('high', close))
     low = float(realtime_data.get('low', close))
     volume = float(realtime_data.get('volume', 0))
     amount = float(realtime_data.get('amount', 0))
     change_pct = float(realtime_data.get('change_pct', 0))
-    
-    if last_date == today:
-        # 更新今天的数据（用实时数据覆盖，因为实时数据更准确）
+
+    if has_today_data:
+        # 更新今天的数据（盘中用实时数据覆盖）
         idx = df.index[-1]
         df.loc[idx, 'close'] = close
         df.loc[idx, 'open'] = open_price
@@ -364,8 +386,9 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
         # 记录实时数据时间
         if fetch_time_str:
             df.loc[idx, 'realtime_time'] = fetch_time_str
+        logger.info(f"更新今天数据: close={close}, volume={volume}")
     else:
-        # 添加新行（今天的盘中数据）
+        # 添加新行（今天数据缺失，用实时数据补充）
         new_row = pd.DataFrame([{
             'trade_date': pd.Timestamp(today),
             'open': open_price,
@@ -378,7 +401,8 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
             'realtime_time': fetch_time_str if fetch_time_str else None
         }])
         df = pd.concat([df, new_row], ignore_index=True)
-    
+        logger.info(f"添加今天数据: close={close}, volume={volume}")
+
     return df
 
 
@@ -414,16 +438,22 @@ def _load_stock_data_impl(symbol: str, force_adjust: str = 'qfq') -> pd.DataFram
         if not realtime_df.empty:
             try:
                 logger.info(f"加载实时数据: {len(realtime_df)} 条记录 (时间: {fetch_time_str})")
-                
+                logger.info(f"实时数据列: {list(realtime_df.columns)}")
+                logger.info(f"前3条symbol: {realtime_df['symbol'].head(3).tolist()}")
+
                 # 查找该股票的实时数据
                 stock_realtime = realtime_df[realtime_df['symbol'] == symbol]
                 logger.info(f"股票 {symbol} 实时数据: {len(stock_realtime)} 条")
                 if not stock_realtime.empty:
                     realtime_row = stock_realtime.iloc[0].to_dict()
+                    logger.info(f"实时数据内容: {realtime_row}")
                     df = merge_realtime_to_df(df, realtime_row, fetch_time_str)
-                    logger.info(f"{symbol} 已合并实时数据")
+                    logger.info(f"{symbol} 已合并实时数据，最新close: {df.iloc[-1]['close']}")
                 else:
                     logger.warning(f"{symbol} 在实时数据中未找到")
+                    # 显示所有可用的symbol帮助调试
+                    available = realtime_df['symbol'].tolist()[:10]
+                    logger.warning(f"可用symbol示例: {available}")
             except Exception as e:
                 logger.error(f"合并实时数据失败 {symbol}: {e}")
                 import traceback
@@ -1098,6 +1128,16 @@ def main():
     else:
         date_display = latest_date
 
+    # ============= 信号数据加载 =============
+    stock_signals = load_stock_signals(symbol)
+
+    # 计算组合评分（用于信号折叠区域显示）
+    portfolio_score = 0
+    score_label = "无信号"
+    if stock_signals:
+        portfolio_score = calculate_stock_score(stock_signals, change_pct)
+        score_label = get_score_label(portfolio_score)
+
     # ============= 头部信息区 =============
     st.markdown(f"""
     <div class="main-header">
@@ -1140,13 +1180,36 @@ def main():
     """, unsafe_allow_html=True)
 
     # ============= 信号展示区域 (折叠式，包含技术指标) =============
-    stock_signals = load_stock_signals(symbol)
-
     if stock_signals:
         signal_count = len(stock_signals)
-        # 使用 st.expander 创建折叠区域，默认收起
-        with st.expander(f"📡 当前信号 ({signal_count}个)", expanded=False):
-            # 显示该股票的所有信号（使用模块化卡片）
+        
+        # 创建自定义折叠区域，评分在标题右侧
+        st.markdown(f"""
+        <style>
+        .signal-header-container {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f0f2f6;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }}
+        .signal-header-left {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .signal-toggle {{
+            font-size: 12px;
+            color: #666;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+
+        # 显示该股票的所有信号（使用模块化卡片）
+        with st.expander(f"📡 当前信号 ({signal_count}个) 　　{portfolio_score}分 · {score_label}", expanded=False):
             for idx, sig in enumerate(stock_signals):
                 st.markdown(render_signal_card(sig, idx), unsafe_allow_html=True)
 
