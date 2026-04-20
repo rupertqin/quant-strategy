@@ -1058,6 +1058,7 @@ def main():
             symbol = selected.split(' - ')[0]
             name = selected.split(' - ')[1]
             if st.session_state.get('selected_stock') != symbol:
+                st.query_params['symbol'] = symbol
                 st.session_state['selected_stock'] = symbol
                 st.session_state['selected_name'] = name
                 st.rerun()
@@ -1075,6 +1076,7 @@ def main():
 
         for symbol, name in common_stocks:
             if st.button(f"{symbol} {name}", key=f"common_{symbol}", use_container_width=True):
+                st.query_params['symbol'] = symbol
                 st.session_state['selected_stock'] = symbol
                 st.session_state['selected_name'] = name
                 st.rerun()

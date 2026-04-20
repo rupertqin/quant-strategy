@@ -551,9 +551,9 @@ def main():
                 # 一行显示：左侧是按钮（带百分比和颜色），右侧是日期
                 line_col, date_col = st.columns([3, 1])
                 with line_col:
-                    # 使用HTML自定义按钮（背景色根据涨跌变化）
+                    # 使用HTML自定义按钮（背景色根据涨跌变化），跳转到图表页面
                     btn_html = f"""
-                    <a href="/?nav={symbol}" target="_self" style="
+                    <a href="/stock_chart?symbol={symbol}" target="_self" style="
                         background: {btn_bg};
                         color: white;
                         padding: 10px 20px;
@@ -572,13 +572,6 @@ def main():
                     </a>
                     """
                     st.markdown(btn_html, unsafe_allow_html=True)
-                    
-                    # 处理点击
-                    if st.query_params.get('nav') == symbol:
-                        st.session_state['selected_stock'] = symbol
-                        st.session_state['selected_name'] = stock_name
-                        st.query_params.clear()
-                        st.switch_page("pages/stock_chart.py")
 
                 with date_col:
                     # 价格时间右对齐（优先显示盘中时间）
