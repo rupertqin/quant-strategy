@@ -278,3 +278,38 @@ def format_stock(code: str, include_name: bool = True) -> str:
 def normalize_code(code: str) -> Optional[str]:
     """标准化代码的便捷函数"""
     return StockCodeUtil.normalize(code)
+
+
+def detect_asset_type(symbol: str) -> str:
+    """
+    根据代码自动检测资产类型
+    
+    ETF 特征：
+    - 上海：51xxxx, 56xxxx, 58xxxx
+    - 深圳：15xxxx, 16xxxx
+    
+    Args:
+        symbol: 股票/ETF代码，支持带后缀格式如 '510300.SH'
+        
+    Returns:
+        'stock' 或 'etf'
+        
+    Examples:
+        >>> detect_asset_type('600519.SH')
+        'stock'
+        >>> detect_asset_type('510300.SH')
+        'etf'
+        >>> detect_asset_type('159915.SZ')
+        'etf'
+    """
+    # 去除后缀
+    code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
+    
+    # ETF 代码规则
+    if len(code) == 6:
+        if code.startswith(('51', '56', '58')):  # 上海ETF
+            return 'etf'
+        if code.startswith(('15', '16')):  # 深圳ETF
+            return 'etf'
+    
+    return 'stock'

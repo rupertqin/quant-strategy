@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-个股信号扫描启动脚本 - 专注信号加工
+个股/ETF信号扫描启动脚本 - 专注信号加工
 
 数据获取由 DataHub 负责，本脚本只处理信号扫描逻辑
 
@@ -9,24 +9,131 @@
   - 无当天数据 → 使用纯历史数据
 
 用法:
+    # 扫描全部（股票+ETF）
     python ShortTerm/run_signal_scan.py                    # 扫描全部信号
-    python ShortTerm/run_signal_scan.py --symbol 600519.SH # 扫描单只股票
     python ShortTerm/run_signal_scan.py --watch 60         # 持续监控模式
+    
+    # 扫描指定标的（自动识别股票/ETF）
+    python ShortTerm/run_signal_scan.py --symbol 600519.SH # 扫描单只股票
+    python ShortTerm/run_signal_scan.py --symbol 510300.SH # 扫描单只ETF
 """
 
 import sys
 from pathlib import Path
+from typing import Optional, Tuple, List, Dict, Callable
+from dataclasses import dataclass
+from abc import ABC, abstractmethod
 
 # 添加项目路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from ShortTerm.services.stock_signal_scanner import StockSignalScanner, filter_excluded_symbols
+from DataHub.core.data_reader import is_etf
+from lib.utils import detect_asset_type
 import argparse
 import time
 from datetime import datetime
 import pandas as pd
 import json
+
+
+@dataclass
+class AssetConfig:
+    """资产类型配置"""
+    name: str                    # 显示名称（股票/ETF）
+    name_en: str                 # 英文名（stock/etf）
+    filename_prefix: str         # 文件名前缀
+    has_realtime_data: bool = True  # 是否支持实时数据
+
+
+# 资产类型配置映射
+ASSET_CONFIGS = {
+    'stock': AssetConfig(name='股票', name_en='stock', filename_prefix='stock'),
+    'etf': AssetConfig(name='ETF', name_en='etf', filename_prefix='etf'),
+}
+
+
+class RealtimeDataLoader(ABC):
+    """实时数据加载器基类"""
+    
+    @abstractmethod
+    def load(self) -> Tuple[Optional[pd.DataFrame], str]:
+        """加载实时数据，返回 (DataFrame, 时间字符串)"""
+        pass
+    
+    @abstractmethod
+    def check_exists(self) -> bool:
+        """检查当天实时数据是否存在"""
+        pass
+
+
+class StockRealtimeLoader(RealtimeDataLoader):
+    """股票实时数据加载器"""
+    
+    def load(self) -> Tuple[Optional[pd.DataFrame], str]:
+        from Dashboard.utils.data_access import get_latest_realtime_data
+        return get_latest_realtime_data(force_fetch=False, full_format=True)
+    
+    def check_exists(self) -> bool:
+        from Dashboard.utils.data_access import get_todays_realtime_file
+        return get_todays_realtime_file() is not None
+
+
+class EtfRealtimeLoader(RealtimeDataLoader):
+    """ETF实时数据加载器"""
+    
+    def __init__(self, project_root: Path):
+        self.project_root = project_root
+        self.realtime_dir = project_root / "storage" / "raw" / "realtime"
+        self.today_str = datetime.now().strftime('%Y%m%d')
+    
+    def load(self) -> Tuple[Optional[pd.DataFrame], str]:
+        from DataHub.services.realtime_service import RealtimeDataService
+        
+        rt_service = RealtimeDataService()
+        etf_files = sorted(self.realtime_dir.glob(f"etf_realtime_{self.today_str}_*.json"))
+        
+        if not etf_files:
+            return None, ""
+        
+        latest_file = etf_files[-1]
+        df = rt_service.load_realtime_data(str(latest_file))
+        
+        # 从文件名提取完整时间: YYYYMMDD_HHMMSS -> YYYY-MM-DD HH:MM
+        fname = latest_file.name
+        # 解析文件名: etf_realtime_20260420_131801.json
+        import re
+        match = re.search(r'etf_realtime_(\d{8})_(\d{6})\.json', fname)
+        if match:
+            date_part = f"{match.group(1)[:4]}-{match.group(1)[4:6]}-{match.group(1)[6:8]}"
+            time_part = f"{match.group(2)[:2]}:{match.group(2)[2:4]}"
+            time_str = f"{date_part} {time_part}"
+        else:
+            time_str = ""
+        
+        return df, time_str
+    
+    def check_exists(self) -> bool:
+        return len(list(self.realtime_dir.glob(f"etf_realtime_{self.today_str}_*.json"))) > 0
+
+
+# 实时数据加载器工厂
+REALTIME_LOADERS: Dict[str, Callable[[Path], RealtimeDataLoader]] = {
+    'stock': lambda root: StockRealtimeLoader(),
+    'etf': lambda root: EtfRealtimeLoader(root),
+}
+
+
+def get_asset_config(asset_type: str) -> AssetConfig:
+    """获取资产类型配置"""
+    return ASSET_CONFIGS.get(asset_type, ASSET_CONFIGS['stock'])
+
+
+def get_realtime_loader(asset_type: str, project_root: Path) -> Optional[RealtimeDataLoader]:
+    """获取实时数据加载器"""
+    loader_factory = REALTIME_LOADERS.get(asset_type)
+    return loader_factory(project_root) if loader_factory else None
 
 
 def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame, 
@@ -88,217 +195,274 @@ def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame,
     return signals
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='个股信号扫描 - 支持多周期（日线/周线/月线），自动使用最新数据',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  python ShortTerm/run_signal_scan.py                    # 扫描全部信号
-  python ShortTerm/run_signal_scan.py --symbol 600519.SH # 扫描单只股票
-  python ShortTerm/run_signal_scan.py --watch 60         # 持续监控模式
-        """
-    )
-    parser.add_argument('--symbol', type=str, help='扫描指定股票')
-    parser.add_argument('--limit', type=int, help='限制扫描数量（测试用）')
-    parser.add_argument('--no-multi-period', action='store_true',
-                        help='禁用多周期分析，仅使用日线')
-    parser.add_argument('--watch', type=int, default=0,
-                        help='持续监控模式，每隔N秒刷新一次（如 --watch 60）')
+def extract_symbols_from_realtime(realtime_df: pd.DataFrame, asset_type: str, 
+                                   limit: Optional[int] = None) -> List[str]:
+    """从实时数据中提取代码列表"""
+    if asset_type == 'etf':
+        symbols = realtime_df['symbol'].tolist()
+    else:
+        symbols = filter_excluded_symbols(realtime_df)
+    
+    if limit:
+        symbols = symbols[:limit]
+    
+    return symbols
 
-    args = parser.parse_args()
 
+def build_scan_result(signals: list, symbols: List[str], price_time_str: str, 
+                      multi_period: bool) -> Dict:
+    """构建扫描结果字典"""
+    from collections import Counter
+    
+    by_signal = Counter([s.signal_name for s in signals])
+    left_count = sum(1 for s in signals if s.signal_type == 'left')
+    right_count = sum(1 for s in signals if s.signal_type == 'right')
+    by_period = Counter([s.period for s in signals])
+    
+    return {
+        'status': 'success',
+        'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'price_fetch_time': price_time_str,
+        'total_stocks': len(symbols),
+        'total_signals': len(signals),
+        'multi_period': multi_period,
+        'intraday_mode': True,
+        'signals': [s.to_dict() for s in signals],
+        'stats': {
+            'left': left_count,
+            'right': right_count,
+            'by_signal': dict(by_signal),
+            'by_period': dict(by_period)
+        }
+    }
+
+
+def save_scan_result(result: Dict, asset_type: str, project_root: Path) -> Path:
+    """保存扫描结果到文件"""
+    config = get_asset_config(asset_type)
+    output_dir = project_root / "storage" / "outputs" / "signals"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    date_str = datetime.now().strftime('%Y%m%d')
+    
+    # 带日期的文件名
+    filename = f"{config.filename_prefix}_signals_intraday_{date_str}.json"
+    filepath = output_dir / filename
+    
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    
+    # latest 文件名
+    latest_filename = f"{config.filename_prefix}_signals_latest.json"
+    latest_path = output_dir / latest_filename
+    
+    with open(latest_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    
+    return latest_path
+
+
+def format_symbol(symbol: str) -> str:
+    """格式化代码，确保有后缀"""
+    if not symbol.endswith(('.SH', '.SZ', '.BJ')):
+        from lib.utils import StockCodeUtil
+        return StockCodeUtil.with_suffix(symbol) or symbol
+    return symbol
+
+
+def print_intraday_summary(signals: list, asset_config: AssetConfig, result: Dict):
+    """打印盘中扫描结果摘要"""
+    if not signals:
+        print(f"\n✓ 暂无{asset_config.name}盘中信号")
+        return
+    
+    print(f"\n🚨 发现 {len(signals)} 个盘中信号:")
+    
+    # 按标的分组显示
+    by_symbol = {}
+    for sig in signals:
+        sym = sig.symbol
+        if sym not in by_symbol:
+            by_symbol[sym] = []
+        by_symbol[sym].append(sig)
+    
+    for symbol, sigs in list(by_symbol.items())[:10]:
+        name = sigs[0].name
+        print(f"\n   {symbol} {name}:")
+        for sig in sigs:
+            period_tag = {"daily": "日", "weekly": "周", "monthly": "月"}.get(sig.period, "日")
+            print(f"     [{period_tag}线][{sig.signal_type.upper()}] {sig.signal_name}")
+    
+    if len(by_symbol) > 10:
+        print(f"\n   ... 还有 {len(by_symbol)-10} 只{asset_config.name}有信号")
+    
+    left_count = result['stats']['left']
+    right_count = result['stats']['right']
+    print(f"\n📊 信号分布: 左侧 {left_count} 个, 右侧 {right_count} 个")
+    
+    if result['stats']['by_signal']:
+        print(f"\n📈 按信号类型分布 (Top 10):")
+        for sig_name, count in sorted(
+            result['stats']['by_signal'].items(),
+            key=lambda x: -x[1]
+        )[:10]:
+            print(f"    {sig_name}: {count}")
+    
+    print(f"\n💾 数据已保存: {asset_config.filename_prefix}_signals_latest.json")
+
+
+def print_scan_summary(result: Dict, asset_config: AssetConfig):
+    """打印扫描完成后的摘要"""
+    print("\n" + "=" * 60)
+    print("✅ 扫描完成!")
+    print("=" * 60)
+    print(f"\n📊 统计信息:")
+    print(f"  扫描{asset_config.name}数: {result['total_stocks']}")
+    print(f"  发现信号数: {result['total_signals']}")
+    print(f"  左侧信号: {result['stats']['left']}")
+    print(f"  右侧信号: {result['stats']['right']}")
+
+    if result.get('multi_period'):
+        by_period = result['stats'].get('by_period', {})
+        print(f"\n📅 周期分布:")
+        print(f"    日线: {by_period.get('daily', 0)}")
+        print(f"    周线: {by_period.get('weekly', 0)}")
+        print(f"    月线: {by_period.get('monthly', 0)}")
+
+    if result['stats']['by_signal']:
+        print(f"\n📈 按信号类型分布 (Top 15):")
+        for sig_name, count in sorted(
+            result['stats']['by_signal'].items(),
+            key=lambda x: -x[1]
+        )[:15]:
+            print(f"    {sig_name}: {count}")
+
+    print(f"\n💾 数据已保存: {asset_config.filename_prefix}_signals_latest.json")
+    print(f"🌐 请在 Dashboard 中查看: streamlit run Dashboard/app.py")
+
+
+def scan_single_symbol_intraday(scanner, symbol: str, realtime_df: pd.DataFrame, 
+                                 multi_period: bool, asset_config: AssetConfig) -> list:
+    """扫描单只标的的盘中信号"""
+    signals = scan_intraday_signals(scanner, symbol, realtime_df, multi_period)
+    
+    if signals:
+        print(f"\n🚨 {symbol} 盘中信号:")
+        for sig in signals:
+            period_tag = {"daily": "日", "weekly": "周", "monthly": "月"}.get(sig.period, "日")
+            print(f"\n   [{period_tag}线][{sig.signal_type.upper()}] {sig.signal_name}")
+            print(f"      强度: {sig.strength} | 评分: {sig.score}")
+            print(f"      价格: {sig.close_price} | {sig.description}")
+    else:
+        print(f"\n✓ {symbol} 暂无盘中信号")
+    
+    return signals
+
+
+def run_intraday_scan(args, asset_config: AssetConfig, single_mode: bool = True) -> int:
+    """运行盘中扫描模式
+    
+    Args:
+        args: 命令行参数
+        asset_config: 资产类型配置
+        single_mode: 是否为单只标的模式（影响循环逻辑）
+    """
+    if single_mode:
+        print("=" * 60)
+        print(f"📊 盘中{asset_config.name}信号监控 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("=" * 60)
+        print(f"\n💡 模式: 当天数据模式（合并实时数据）- 实时行情由 DataHub 提供")
+
+    scanner = StockSignalScanner(asset_type=asset_config.name_en)
+    loader = get_realtime_loader(asset_config.name_en, project_root)
+    
+    if not loader:
+        print(f"❌ 不支持的资产类型: {asset_config.name_en}")
+        return 1
+
+    iteration = 0
+    while True:
+        iteration += 1
+
+        if single_mode and (iteration > 1 or args.watch > 0):
+            print(f"\n{'='*60}")
+            print(f"🔄 刷新时间: {datetime.now().strftime('%H:%M:%S')}")
+            print('='*60)
+
+        try:
+            if single_mode:
+                print("\n📡 读取 DataHub 实时数据...")
+            
+            realtime_df, price_time_str = loader.load()
+            
+            if realtime_df is None or realtime_df.empty:
+                print(f"\n❌ 未找到当天{asset_config.name}实时数据文件")
+                print(f"   请先运行: python DataHub/services/realtime_service.py --type {asset_config.name_en}")
+                print("   或设置定时任务自动获取")
+                return 1
+
+            if single_mode:
+                print(f"   ✓ 已读取实时数据 ({price_time_str}): {len(realtime_df)} 只{asset_config.name}")
+
+            multi_period = not args.no_multi_period
+            
+            if args.symbol:
+                # 单只标的
+                symbol = format_symbol(args.symbol)
+                scan_single_symbol_intraday(scanner, symbol, realtime_df, multi_period, asset_config)
+            else:
+                # 全市场扫描
+                symbols = extract_symbols_from_realtime(realtime_df, asset_config.name_en, args.limit)
+                
+                if args.limit:
+                    print(f"   扫描前 {args.limit} 只{asset_config.name}...")
+                else:
+                    suffix = "（已排除北交所）" if asset_config.name_en == 'stock' else ""
+                    print(f"   扫描全市场 {len(symbols)} 只{asset_config.name}{suffix}...")
+                
+                all_signals = []
+                for symbol in symbols:
+                    signals = scan_intraday_signals(scanner, symbol, realtime_df, multi_period)
+                    if signals:
+                        all_signals.extend(signals)
+                
+                # 构建并保存结果
+                result = build_scan_result(all_signals, symbols, price_time_str, multi_period)
+                save_scan_result(result, asset_config.name_en, project_root)
+                
+                # 打印摘要
+                print_intraday_summary(all_signals, asset_config, result)
+
+        except FileNotFoundError as e:
+            print(f"\n❌ {e}")
+            print("\n📋 获取数据失败，请检查网络连接或 DataHub 配置")
+        except Exception as e:
+            print(f"\n❌ 扫描失败: {e}")
+            import traceback
+            traceback.print_exc()
+
+        if args.watch > 0:
+            print(f"\n  ⏱️  {args.watch}秒后刷新...")
+            time.sleep(args.watch)
+        else:
+            break
+
+    return 0
+
+
+def run_historical_scan(args, asset_config: AssetConfig):
+    """运行历史数据扫描模式（非实时）"""
     multi_period = not args.no_multi_period
     period_str = "多周期(日/周/月)" if multi_period else "仅日线"
-
-    # 检查是否有当天实时数据
-    from Dashboard.utils.data_access import get_todays_realtime_file
-    has_today_data = get_todays_realtime_file() is not None
-
-    if has_today_data:
-        mode_str = "当天数据模式（合并实时数据）"
-    else:
-        mode_str = "历史数据模式"
-
-    # ========== 使用当天实时数据扫描 ==========
-    if has_today_data:
-        print("=" * 60)
-        print(f"📊 盘中信号监控 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 60)
-        print(f"\n💡 模式: {mode_str} - 实时行情由 DataHub 提供")
-
-        scanner = StockSignalScanner()
-
-        # 持续监控模式
-        iteration = 0
-        while True:
-            iteration += 1
-
-            # 非首次循环显示刷新信息
-            if iteration > 1 or args.watch > 0:
-                print(f"\n{'='*60}")
-                print(f"🔄 刷新时间: {datetime.now().strftime('%H:%M:%S')}")
-                print('='*60)
-
-            try:
-                # 读取已保存的实时数据（不获取，只读取）
-                print("\n📡 读取 DataHub 实时数据...")
-
-                from Dashboard.utils.data_access import get_latest_realtime_data
-                realtime_df, price_time_str = get_latest_realtime_data(force_fetch=False, full_format=True)
-
-                if realtime_df is None or realtime_df.empty:
-                    print("\n❌ 未找到当天实时数据文件")
-                    print("   请先运行: python DataHub/services/realtime_service.py")
-                    print("   或设置定时任务自动获取")
-                    return 1
-
-                print(f"   ✓ 已读取实时数据 ({price_time_str}): {len(realtime_df)} 只股票")
-
-                if args.symbol:
-                    # 单只股票监控
-                    symbol = args.symbol
-                    if not symbol.endswith(('.SH', '.SZ', '.BJ')):
-                        from lib.utils import StockCodeUtil
-                        symbol = StockCodeUtil.with_suffix(symbol) or symbol
-                    
-                    # 扫描该股票的盘中信号
-                    signals = scan_intraday_signals(scanner, symbol, realtime_df, multi_period)
-                    
-                    if signals:
-                        print(f"\n🚨 {symbol} 盘中信号:")
-                        for sig in signals:
-                            period_tag = {"daily": "日", "weekly": "周", "monthly": "月"}.get(sig.period, "日")
-                            print(f"\n   [{period_tag}线][{sig.signal_type.upper()}] {sig.signal_name}")
-                            print(f"      强度: {sig.strength} | 评分: {sig.score}")
-                            print(f"      价格: {sig.close_price} | {sig.description}")
-                    else:
-                        print(f"\n✓ {symbol} 暂无盘中信号")
-                        
-                else:
-                    # 全市场扫描（默认全部，可通过 --limit 限制）
-                    # 使用统一的过滤函数排除北交所等交易所
-                    all_symbols = filter_excluded_symbols(realtime_df)
-                    
-                    if args.limit:
-                        symbols = all_symbols[:args.limit]
-                        print(f"   扫描前 {args.limit} 只股票...")
-                    else:
-                        symbols = all_symbols
-                        print(f"   扫描全市场 {len(symbols)} 只股票（已排除北交所）...")
-                    
-                    all_signals = []
-                    for symbol in symbols:
-                        signals = scan_intraday_signals(scanner, symbol, realtime_df, multi_period)
-                        if signals:
-                            all_signals.extend(signals)
-                    
-                    # 构建结果并保存（接入主流程）
-                    from collections import Counter
-                    
-                    by_signal = Counter([s.signal_name for s in all_signals])
-                    left_count = sum(1 for s in all_signals if s.signal_type == 'left')
-                    right_count = sum(1 for s in all_signals if s.signal_type == 'right')
-                    by_period = Counter([s.period for s in all_signals])
-                    
-                    # price_fetch_time 已从 get_latest_realtime_data 获取
-                    
-                    result = {
-                        'status': 'success',
-                        'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        'price_fetch_time': price_time_str,  # 扫描时使用的实时数据时间
-                        'total_stocks': len(symbols),
-                        'total_signals': len(all_signals),
-                        'multi_period': multi_period,
-                        'intraday_mode': True,
-                        'signals': [s.to_dict() for s in all_signals],
-                        'stats': {
-                            'left': left_count,
-                            'right': right_count,
-                            'by_signal': dict(by_signal),
-                            'by_period': dict(by_period)
-                        }
-                    }
-                    
-                    # 保存结果到文件
-                    output_dir = Path(project_root) / "storage" / "outputs" / "signals"
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    date_str = datetime.now().strftime('%Y%m%d')
-                    filename = f"stock_signals_intraday_{date_str}.json"
-                    filepath = output_dir / filename
-                    
-                    with open(filepath, 'w', encoding='utf-8') as f:
-                        json.dump(result, f, ensure_ascii=False, indent=2)
-                    
-                    # 同时保存为 latest
-                    latest_path = output_dir / "stock_signals_latest.json"
-                    with open(latest_path, 'w', encoding='utf-8') as f:
-                        json.dump(result, f, ensure_ascii=False, indent=2)
-                    
-                    # 按信号类型统计显示
-                    if all_signals:
-                        print(f"\n🚨 发现 {len(all_signals)} 个盘中信号:")
-                        
-                        # 按股票分组显示
-                        by_symbol = {}
-                        for sig in all_signals:
-                            sym = sig.symbol
-                            if sym not in by_symbol:
-                                by_symbol[sym] = []
-                            by_symbol[sym].append(sig)
-                        
-                        for symbol, sigs in list(by_symbol.items())[:10]:
-                            name = sigs[0].name
-                            print(f"\n   {symbol} {name}:")
-                            for sig in sigs:
-                                period_tag = {"daily": "日", "weekly": "周", "monthly": "月"}.get(sig.period, "日")
-                                print(f"     [{period_tag}线][{sig.signal_type.upper()}] {sig.signal_name}")
-                        
-                        if len(by_symbol) > 10:
-                            print(f"\n   ... 还有 {len(by_symbol)-10} 只股票有信号")
-                        
-                        print(f"\n📊 信号分布: 左侧 {left_count} 个, 右侧 {right_count} 个")
-                        
-                        if result['stats']['by_signal']:
-                            print(f"\n📈 按信号类型分布 (Top 10):")
-                            for sig_name, count in sorted(
-                                result['stats']['by_signal'].items(),
-                                key=lambda x: -x[1]
-                            )[:10]:
-                                print(f"    {sig_name}: {count}")
-                        
-                        print(f"\n💾 数据已保存: stock_signals_latest.json")
-                        print(f"🌐 请在 Dashboard 中查看: streamlit run Dashboard/app.py")
-                    else:
-                        scanned_count = args.limit if args.limit else len(symbols)
-                        print(f"\n✓ 扫描 {scanned_count} 只股票，暂无盘中信号")
-
-            except FileNotFoundError as e:
-                print(f"\n❌ {e}")
-                print("\n📋 获取数据失败，请检查网络连接或 DataHub 配置")
-            except Exception as e:
-                print(f"\n❌ 扫描失败: {e}")
-                import traceback
-                traceback.print_exc()
-
-            # 是否持续监控
-            if args.watch > 0:
-                print(f"\n  ⏱️  {args.watch}秒后刷新...")
-                time.sleep(args.watch)
-            else:
-                break
-
-        return
-
+    
     print("=" * 60)
-    print(f"🔍 开始扫描个股信号 - 周期: {period_str} - 模式: {mode_str}")
+    print(f"🔍 开始扫描{asset_config.name}信号 - 周期: {period_str} - 模式: 历史数据模式")
     print("=" * 60)
 
-    scanner = StockSignalScanner()
+    scanner = StockSignalScanner(asset_type=asset_config.name_en)
 
     if args.symbol:
-        # 扫描单只股票（同时扫描左右侧）
+        # 扫描单只标的
         from lib.utils import get_stock_name
         name = get_stock_name(args.symbol)
         signals = scanner.scan_stock(args.symbol, name, 'all', multi_period)
@@ -315,39 +479,326 @@ def main():
         else:
             print("暂无信号")
     else:
-        # 扫描所有股票（同时扫描左右侧）
+        # 扫描所有标的
         result = scanner.scan_all('all', args.limit, multi_period)
-
+        
         if result.get('status') == 'success':
-            print("\n" + "=" * 60)
-            print("✅ 扫描完成!")
-            print("=" * 60)
-            print(f"\n📊 统计信息:")
-            print(f"  扫描股票数: {result['total_stocks']}")
-            print(f"  发现信号数: {result['total_signals']}")
-            print(f"  左侧信号: {result['stats']['left']}")
-            print(f"  右侧信号: {result['stats']['right']}")
-
-            if result.get('multi_period'):
-                by_period = result['stats'].get('by_period', {})
-                print(f"\n📅 周期分布:")
-                print(f"    日线: {by_period.get('daily', 0)}")
-                print(f"    周线: {by_period.get('weekly', 0)}")
-                print(f"    月线: {by_period.get('monthly', 0)}")
-
-            if result['stats']['by_signal']:
-                print(f"\n📈 按信号类型分布 (Top 15):")
-                for sig_name, count in sorted(
-                    result['stats']['by_signal'].items(),
-                    key=lambda x: -x[1]
-                )[:15]:
-                    print(f"    {sig_name}: {count}")
-
-            print(f"\n💾 数据已保存: stock_signals_latest.json")
-            print(f"🌐 请在 Dashboard 中查看: streamlit run Dashboard/app.py")
-            print(f"\n📋 提示: 所有信号保存在一个文件中，通过 signal_type 字段区分左侧/右侧")
+            print_scan_summary(result, asset_config)
         else:
             print(f"\n❌ 扫描失败: {result.get('message', '未知错误')}")
+
+
+def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None, 
+                                limit: Optional[int] = None, multi_period: bool = True) -> Dict:
+    """
+    扫描单一资产类型的历史信号
+    
+    Args:
+        asset_type: 资产类型 'stock' 或 'etf'
+        symbol: 指定代码（单只模式），None为全市场
+        limit: 扫描数量限制
+        multi_period: 是否多周期分析
+        
+    Returns:
+        扫描结果字典
+    """
+    config = get_asset_config(asset_type)
+    scanner = StockSignalScanner(asset_type=asset_type)
+    
+    if symbol:
+        # 单只模式
+        from lib.utils import get_stock_name
+        name = get_stock_name(symbol)
+        signals = scanner.scan_stock(symbol, name, 'all', multi_period)
+        return {
+            'status': 'success',
+            'total_stocks': 1,
+            'total_signals': len(signals),
+            'signals': [s.to_dict() for s in signals],
+            'stats': {
+                'left': sum(1 for s in signals if s.signal_type == 'left'),
+                'right': sum(1 for s in signals if s.signal_type == 'right'),
+                'by_signal': {},
+                'by_period': {}
+            }
+        }
+    else:
+        # 全市场模式
+        return scanner.scan_all('all', limit, multi_period)
+
+
+def run_combined_scan(args):
+    """运行组合扫描（股票+ETF）"""
+    multi_period = not args.no_multi_period
+    period_str = "多周期(日/周/月)" if multi_period else "仅日线"
+    
+    print("=" * 60)
+    print(f"🔍 开始扫描全部信号（股票+ETF）- 周期: {period_str}")
+    print("=" * 60)
+    
+    results = {}
+    for asset_type in ['stock', 'etf']:
+        config = get_asset_config(asset_type)
+        print(f"\n📊 扫描{config.name}...")
+        results[asset_type] = scan_asset_type_historical(asset_type, args.symbol, args.limit, multi_period)
+    
+    # 打印结果
+    print("\n" + "=" * 60)
+    print("✅ 全部扫描完成!")
+    print("=" * 60)
+    
+    total_signals = 0
+    for asset_type, result in results.items():
+        config = get_asset_config(asset_type)
+        if result.get('status') == 'success':
+            print(f"\n📈 {config.name}信号:")
+            print(f"  扫描数量: {result['total_stocks']}")
+            print(f"  发现信号: {result['total_signals']}")
+            print(f"  左侧: {result['stats']['left']} | 右侧: {result['stats']['right']}")
+            total_signals += result['total_signals']
+    
+    print(f"\n📊 总计: {total_signals} 个信号")
+    print(f"💾 股票: stock_signals_latest.json")
+    print(f"💾 ETF: etf_signals_latest.json")
+
+
+def scan_asset_type_intraday(realtime_df: pd.DataFrame, asset_type: str, 
+                              multi_period: bool, limit: Optional[int] = None) -> Tuple[List, List[str]]:
+    """
+    扫描单一资产类型的盘中信号
+    
+    Args:
+        realtime_df: 实时数据DataFrame
+        asset_type: 资产类型 'stock' 或 'etf'
+        multi_period: 是否多周期分析
+        limit: 扫描数量限制
+        
+    Returns:
+        (signals, symbols): (信号列表, 扫描的代码列表)
+    """
+    config = get_asset_config(asset_type)
+    scanner = StockSignalScanner(asset_type=asset_type)
+    symbols = extract_symbols_from_realtime(realtime_df, asset_type, limit)
+    
+    if limit:
+        print(f"   扫描前 {limit} 只{config.name}...")
+    else:
+        suffix = "（已排除北交所）" if asset_type == 'stock' else ""
+        print(f"   扫描全市场 {len(symbols)} 只{config.name}{suffix}...")
+    
+    signals = []
+    for symbol in symbols:
+        sigs = scan_intraday_signals(scanner, symbol, realtime_df, multi_period)
+        if sigs:
+            signals.extend(sigs)
+    
+    return signals, symbols
+
+
+def run_all_intraday_scan(args):
+    """运行全市场盘中扫描（股票+ETF合并）"""
+    print("=" * 60)
+    print(f"📊 全市场信号监控 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    print(f"\n💡 模式: 当天数据模式（合并实时数据）- 实时行情由 DataHub 提供")
+    
+    multi_period = not args.no_multi_period
+    
+    # 分别加载股票和ETF实时数据
+    stock_loader = get_realtime_loader('stock', project_root)
+    etf_loader = get_realtime_loader('etf', project_root)
+    
+    stock_df, stock_time = stock_loader.load() if stock_loader else (None, "")
+    etf_df, etf_time = etf_loader.load() if etf_loader else (None, "")
+    
+    if (stock_df is None or stock_df.empty) and (etf_df is None or etf_df.empty):
+        print("\n❌ 未找到当天实时数据文件")
+        print("   请先运行: python DataHub/services/realtime_service.py")
+        return 1
+    
+    if stock_df is not None:
+        print(f"   ✓ 股票实时数据 ({stock_time}): {len(stock_df)} 只")
+    if etf_df is not None:
+        print(f"   ✓ ETF实时数据 ({etf_time}): {len(etf_df)} 只")
+    
+    # 扫描各资产类型
+    all_signals = []
+    all_symbols = []
+    
+    for asset_type, df in [('stock', stock_df), ('etf', etf_df)]:
+        if df is not None and not df.empty:
+            print(f"\n📊 扫描{get_asset_config(asset_type).name}...")
+            signals, symbols = scan_asset_type_intraday(df, asset_type, multi_period, args.limit)
+            all_signals.extend(signals)
+            all_symbols.extend(symbols)
+    
+    # 构建时间字符串
+    price_time_str = ""
+    if stock_time:
+        price_time_str += f"股票{stock_time}"
+    if etf_time:
+        price_time_str += f" ETF{etf_time}" if price_time_str else f"ETF{etf_time}"
+    
+    # 保存结果
+    result = build_scan_result(all_signals, all_symbols, price_time_str, multi_period)
+    save_all_intraday_results(result, all_signals, stock_df, etf_df, stock_time, etf_time, multi_period, args.limit)
+    
+    # 打印摘要
+    print_all_intraday_summary(all_signals, stock_time, etf_time)
+    
+    return 0
+
+
+def save_all_intraday_results(result: Dict, all_signals: List, 
+                               stock_df: Optional[pd.DataFrame], etf_df: Optional[pd.DataFrame],
+                               stock_time: str, etf_time: str, multi_period: bool, limit: Optional[int]):
+    """保存全市场盘中扫描结果"""
+    output_dir = project_root / "storage" / "outputs" / "signals"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    date_str = datetime.now().strftime('%Y%m%d')
+    
+    # 保存合并文件
+    filepath = output_dir / f"all_signals_intraday_{date_str}.json"
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    
+    latest_path = output_dir / "all_signals_latest.json"
+    with open(latest_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    
+    # 分别保存股票和ETF结果
+    stock_signals = [s for s in all_signals if detect_asset_type(s.symbol) == 'stock']
+    etf_signals = [s for s in all_signals if detect_asset_type(s.symbol) == 'etf']
+    
+    if stock_signals and stock_df is not None:
+        stock_symbols = extract_symbols_from_realtime(stock_df, 'stock', limit)
+        stock_result = build_scan_result(stock_signals, stock_symbols, stock_time, multi_period)
+        save_scan_result(stock_result, 'stock', project_root)
+    
+    if etf_signals and etf_df is not None:
+        etf_symbols = extract_symbols_from_realtime(etf_df, 'etf', limit)
+        etf_result = build_scan_result(etf_signals, etf_symbols, etf_time, multi_period)
+        save_scan_result(etf_result, 'etf', project_root)
+
+
+def print_all_intraday_summary(all_signals: List, stock_time: str, etf_time: str):
+    """打印全市场盘中扫描摘要"""
+    print("\n" + "=" * 60)
+    print("✅ 扫描完成!")
+    print("=" * 60)
+    
+    if not all_signals:
+        print("\n✓ 暂无盘中信号")
+        return
+    
+    stock_signals = [s for s in all_signals if detect_asset_type(s.symbol) == 'stock']
+    etf_signals = [s for s in all_signals if detect_asset_type(s.symbol) == 'etf']
+    
+    print(f"\n🚨 发现 {len(all_signals)} 个盘中信号:")
+    print(f"   股票: {len(stock_signals)} 个")
+    print(f"   ETF: {len(etf_signals)} 个")
+    
+    by_symbol = {}
+    for sig in all_signals:
+        sym = sig.symbol
+        if sym not in by_symbol:
+            by_symbol[sym] = []
+        by_symbol[sym].append(sig)
+    
+    for symbol, sigs in list(by_symbol.items())[:10]:
+        name = sigs[0].name
+        asset_type = "ETF" if detect_asset_type(symbol) == 'etf' else "股票"
+        print(f"\n   [{asset_type}] {symbol} {name}:")
+        for sig in sigs[:3]:
+            period_tag = {"daily": "日", "weekly": "周", "monthly": "月"}.get(sig.period, "日")
+            print(f"     [{period_tag}线][{sig.signal_type.upper()}] {sig.signal_name}")
+        if len(sigs) > 3:
+            print(f"     ... 还有 {len(sigs)-3} 个信号")
+    
+    if len(by_symbol) > 10:
+        print(f"\n   ... 还有 {len(by_symbol)-10} 只标的有信号")
+    
+    print(f"\n💾 数据已保存:")
+    print(f"   all_signals_latest.json (合并)")
+    print(f"   stock_signals_latest.json (股票)")
+    print(f"   etf_signals_latest.json (ETF)")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='个股/ETF信号扫描 - 支持多周期（日线/周线/月线），自动使用最新数据',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 扫描全部（股票+ETF）
+  python ShortTerm/run_signal_scan.py                    # 扫描全部信号
+  python ShortTerm/run_signal_scan.py --watch 60         # 持续监控模式
+  
+  # 扫描指定标的（自动识别股票/ETF）
+  python ShortTerm/run_signal_scan.py --symbol 600519.SH # 扫描单只股票
+  python ShortTerm/run_signal_scan.py --symbol 510300.SH # 扫描单只ETF
+        """
+    )
+    parser.add_argument('--symbol', type=str, help='扫描指定股票/ETF（自动识别类型）')
+    parser.add_argument('--limit', type=int, help='限制扫描数量（测试用）')
+    parser.add_argument('--no-multi-period', action='store_true',
+                        help='禁用多周期分析，仅使用日线')
+    parser.add_argument('--watch', type=int, default=0,
+                        help='持续监控模式，每隔N秒刷新一次（如 --watch 60）')
+
+    args = parser.parse_args()
+    
+    print("=" * 60)
+    print(f"📊 信号扫描 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+
+    # 单只标扫描模式
+    if args.symbol:
+        # 自动检测资产类型
+        asset_type = detect_asset_type(args.symbol)
+        asset_config = get_asset_config(asset_type)
+        
+        print(f"\n📌 检测到: {asset_config.name} ({args.symbol})")
+        
+        # 检查是否有实时数据
+        loader = get_realtime_loader(asset_type, project_root)
+        has_today_data = loader.check_exists() if loader else False
+        
+        if has_today_data:
+            return run_intraday_scan(args, asset_config)
+        else:
+            run_historical_scan(args, asset_config)
+            return
+
+    # 全市场扫描模式（默认）
+    # 检查是否有实时数据
+    stock_loader = get_realtime_loader('stock', project_root)
+    etf_loader = get_realtime_loader('etf', project_root)
+    
+    has_stock_data = stock_loader.check_exists() if stock_loader else False
+    has_etf_data = etf_loader.check_exists() if etf_loader else False
+    
+    if has_stock_data or has_etf_data:
+        # 有实时数据：盘中扫描模式
+        iteration = 0
+        while True:
+            iteration += 1
+            if iteration > 1:
+                print(f"\n{'='*60}")
+                print(f"🔄 刷新时间: {datetime.now().strftime('%H:%M:%S')}")
+                print('='*60)
+            
+            run_all_intraday_scan(args)
+            
+            if args.watch > 0:
+                print(f"\n  ⏱️  {args.watch}秒后刷新...")
+                time.sleep(args.watch)
+            else:
+                break
+    else:
+        # 无实时数据：历史扫描模式
+        print("\n💡 模式: 历史数据模式（无实时数据）")
+        run_combined_scan(args)
 
 
 if __name__ == "__main__":

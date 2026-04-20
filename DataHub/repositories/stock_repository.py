@@ -8,11 +8,11 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 from .base_repository import BaseRepository
-from DataHub.config import RAW_PRICES_DIR
+from DataHub.config import RAW_PRICE_DIR
 
 
 # 价格数据存储路径（Parquet格式，符合规则10.1和11.1）
-PRICES_DIR = RAW_PRICES_DIR
+PRICE_DIR = RAW_PRICE_DIR
 
 
 class StockRepository(BaseRepository):
@@ -211,7 +211,7 @@ class StockRepository(BaseRepository):
         """
         保存日线数据到Parquet文件
         
-        价格数据唯一存储位置：storage/raw/stocks/prices/{symbol}.parquet
+        价格数据唯一存储位置：storage/raw/stocks/price/{symbol}.parquet
         
         Args:
             df: DataFrame with columns: symbol, trade_date, open, high, low, close, volume...

@@ -26,8 +26,8 @@ class StorageEngine:
 
         self.base_path = Path(base_path)
         self.raw_stocks_dir = self.base_path / "raw" / "stocks"
-        self.raw_prices_dir = self.raw_stocks_dir / "prices"
-        self.raw_adjust_factors_dir = self.raw_stocks_dir / "adjust_factors"
+        self.raw_price_dir = self.raw_stocks_dir / "price"
+        self.raw_adjust_factor_dir = self.raw_stocks_dir / "adjust_factor"
         self.raw_zt_pool_dir = self.base_path / "raw" / "zt_pool"
         self.processed_returns_dir = self.base_path / "processed" / "returns"
         self.database_dir = self.base_path / "database"
@@ -36,8 +36,8 @@ class StorageEngine:
         # Create directories
         for _dir in [
             self.raw_stocks_dir,
-            self.raw_prices_dir,
-            self.raw_adjust_factors_dir,
+            self.raw_price_dir,
+            self.raw_adjust_factor_dir,
             self.raw_zt_pool_dir,
             self.processed_returns_dir,
             self.database_dir
@@ -107,7 +107,7 @@ class StorageEngine:
             return False
 
         try:
-            file_path = self.raw_prices_dir / "prices.parquet"
+            file_path = self.raw_price_dir / "price.parquet"
             df.to_parquet(file_path, engine="pyarrow", compression="snappy")
 
             # Update version
@@ -122,7 +122,7 @@ class StorageEngine:
 
     def load_prices(self) -> pd.DataFrame:
         """Load price data from Parquet"""
-        file_path = self.raw_prices_dir / "prices.parquet"
+        file_path = self.raw_price_dir / "price.parquet"
         if not file_path.exists():
             logger.warning(f"Price file not found: {file_path}")
             return pd.DataFrame()
@@ -306,7 +306,7 @@ class StorageEngine:
     def get_data_status(self) -> Dict[str, Any]:
         """Get overall data status"""
         status = {
-            "prices": self._get_file_status(self.raw_prices_dir / "prices.parquet"),
+            "price": self._get_file_status(self.raw_price_dir / "price.parquet"),
             "returns": self._get_file_status(self.processed_returns_dir / "returns.parquet"),
             "zt_pool_dates": len(self.list_zt_pool_dates()),
             "versions": {},

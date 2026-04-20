@@ -19,7 +19,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from DataHub.config import RAW_PRICES_DIR
+from DataHub.config import RAW_PRICE_DIR
 
 import pandas as pd
 import numpy as np
@@ -348,20 +348,30 @@ class LeftSignalDetector:
         for pattern in left_patterns:
             vp_signal = self.vp_detector.detect(df, pattern)
             if vp_signal:
+                # 获取日期并格式化为 YYYY-MM-DD
+                if 'trade_date' in latest:
+                    date_val = latest['trade_date']
+                    if hasattr(date_val, 'strftime'):
+                        trigger_date = date_val.strftime('%Y-%m-%d')
+                    else:
+                        trigger_date = str(date_val)[:10]
+                else:
+                    trigger_date = str(latest.name) if hasattr(latest, 'name') else ""
+                
                 stock_signal = self.vp_adapter.to_stock_signal(
                     vp_signal, symbol, name, period,
                     close_price=latest['close'],
                     change_pct=latest.get('change_pct', 0) * 100,
                     technicals={
-                        "date": str(latest.name) if hasattr(latest, 'name') else "",
+                        "date": trigger_date,
                         "ma20": latest.get('ma20'),
                         "volume_ratio": vp_signal.volume_ratio,
                     }
                 )
                 signals.append(StockSignal(**stock_signal))
-        
+
         return signals
-    
+
     def _detect_macd_divergence(self, df: pd.DataFrame, lookback=20) -> Optional[str]:
         """检测MACD底背离"""
         if len(df) < lookback + 10:
@@ -697,20 +707,30 @@ class RightSignalDetector:
         for pattern in right_patterns:
             vp_signal = self.vp_detector.detect(df, pattern)
             if vp_signal:
+                # 获取日期并格式化为 YYYY-MM-DD
+                if 'trade_date' in latest:
+                    date_val = latest['trade_date']
+                    if hasattr(date_val, 'strftime'):
+                        trigger_date = date_val.strftime('%Y-%m-%d')
+                    else:
+                        trigger_date = str(date_val)[:10]
+                else:
+                    trigger_date = str(latest.name) if hasattr(latest, 'name') else ""
+                
                 stock_signal = self.vp_adapter.to_stock_signal(
                     vp_signal, symbol, name, period,
                     close_price=latest['close'],
                     change_pct=latest.get('change_pct', 0) * 100,
                     technicals={
-                        "date": str(latest.name) if hasattr(latest, 'name') else "",
+                        "date": trigger_date,
                         "ma20": latest.get('ma20'),
                         "volume_ratio": vp_signal.volume_ratio,
                     }
                 )
                 signals.append(StockSignal(**stock_signal))
-        
+
         return signals
-    
+
     def _detect_ma_cross(self, df: pd.DataFrame, latest, prev) -> Optional[str]:
         """检测MA5上穿MA10"""
         if pd.isna(latest['ma5']) or pd.isna(latest['ma10']) or pd.isna(prev['ma5']) or pd.isna(prev['ma10']):
@@ -937,14 +957,21 @@ class RightSignalDetector:
 
 
 class StockSignalScanner:
-    """个股信号扫描器主类 - 支持多周期（日线/周线/月线）"""
+    """个股/ETF信号扫描器主类 - 支持多周期（日线/周线/月线）"""
     
-    def __init__(self):
+    def __init__(self, asset_type: str = "stock"):
+        """
+        初始化扫描器
+        
+        Args:
+            asset_type: "stock"(股票) 或 "etf"(ETF)
+        """
+        self.asset_type = asset_type
         self.left_detector = LeftSignalDetector()
         self.right_detector = RightSignalDetector()
         self.output_dir = Path(project_root) / "storage" / "outputs" / "signals"
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.prices_dir = RAW_PRICES_DIR
+        self.price_dir = RAW_PRICE_DIR
     
     def load_stock_data(self, symbol: str, period: str = "daily", adjust: str = "qfq") -> pd.DataFrame:
         """
@@ -1374,27 +1401,40 @@ class StockSignalScanner:
     
     def scan_all(self, signal_type: str = "all", limit: int = None,
                  multi_period: bool = True) -> Dict:
-        """扫描全市场股票"""
-        # 获取股票列表
-        stock_list = self._get_stock_list()
-        if stock_list.empty:
-            return {"status": "error", "message": "没有股票列表"}
+        """
+        扫描全市场股票或ETF
+        
+        Args:
+            signal_type: 信号类型 all/left/right
+            limit: 限制扫描数量
+            multi_period: 是否多周期分析
+        """
+        # 根据资产类型获取列表
+        if self.asset_type == "etf":
+            asset_list = self._get_etf_list()
+            asset_name = "ETF"
+        else:
+            asset_list = self._get_stock_list()
+            asset_name = "股票"
+        
+        if asset_list.empty:
+            return {"status": "error", "message": f"没有{asset_name}列表"}
 
         if limit:
-            stock_list = stock_list.head(limit)
+            asset_list = asset_list.head(limit)
 
         period_str = "多周期" if multi_period else "日线"
-        logger.info(f"开始扫描 {len(stock_list)} 只股票，信号类型: {signal_type}, 周期: {period_str}")
+        logger.info(f"开始扫描 {len(asset_list)} 只{asset_name}，信号类型: {signal_type}, 周期: {period_str}")
 
         all_signals = []
         stats = {"left": 0, "right": 0, "by_period": {"daily": 0, "weekly": 0, "monthly": 0}, "by_signal": {}}
 
-        for idx, row in stock_list.iterrows():
+        for idx, row in asset_list.iterrows():
             symbol = row['symbol']
             name = row.get('name', '')
 
             if (idx + 1) % 100 == 0:
-                logger.info(f"进度: {idx + 1}/{len(stock_list)}")
+                logger.info(f"进度: {idx + 1}/{len(asset_list)}")
 
             signals = self.scan_stock(symbol, name, signal_type, multi_period)
 
@@ -1444,19 +1484,30 @@ class StockSignalScanner:
             return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
         return pd.DataFrame()
     
+    def _get_etf_list(self) -> pd.DataFrame:
+        """获取ETF列表"""
+        etf_csv = Path(project_root) / "storage" / "etf_basic_info.csv"
+        if etf_csv.exists():
+            df = pd.read_csv(etf_csv)
+            return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
+        return pd.DataFrame()
+    
     def _save_result(self, result: Dict, signal_type: str):
         """保存扫描结果 - 统一保存为 all，通过 signal_type 字段区分左右侧"""
         date_str = datetime.now().strftime('%Y%m%d')
         
+        # 根据资产类型确定文件名前缀
+        prefix = "etf_signals" if self.asset_type == "etf" else "stock_signals"
+        
         # 始终使用 all 作为文件名，信号本身有 signal_type 字段区分
-        filename = f"stock_signals_{date_str}.json"
+        filename = f"{prefix}_{date_str}.json"
         filepath = self.output_dir / filename
         
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         
         # 同时保存最新结果（供Dashboard使用）
-        latest_path = self.output_dir / "stock_signals_latest.json"
+        latest_path = self.output_dir / f"{prefix}_latest.json"
         with open(latest_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         
@@ -1475,7 +1526,7 @@ def main():
 
     args = parser.parse_args()
 
-    scanner = StockSignalScanner()
+    scanner = StockSignalScanner(asset_type="stock")
     multi_period = not args.no_multi_period
 
     if args.symbol:

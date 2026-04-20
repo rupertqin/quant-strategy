@@ -1,7 +1,7 @@
 """
 数据读取接口 - 底层封装
 
-提供统一的股票数据读取接口，默认返回前复权数据
+提供统一的股票/ETF数据读取接口，默认返回前复权数据
 """
 
 import pandas as pd
@@ -9,9 +9,38 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from DataHub.config import RAW_PRICES_DIR
+from DataHub.config import RAW_PRICE_DIR, RAW_ETF_PRICE_DIR
 
 logger = logging.getLogger(__name__)
+
+
+def is_etf(symbol: str) -> bool:
+    """
+    判断代码是否为ETF
+    
+    ETF代码规则:
+    - 沪市ETF: 以 51, 52, 56, 58, 59 开头，后缀 .SH
+    - 深市ETF: 以 15, 16 开头，后缀 .SZ
+    """
+    code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
+    
+    # 沪市ETF
+    if symbol.endswith('.SH'):
+        return code.startswith(('51', '52', '56', '58', '59'))
+    
+    # 深市ETF
+    if symbol.endswith('.SZ'):
+        return code.startswith(('15', '16'))
+    
+    return False
+
+
+def get_symbol_data_path(symbol: str) -> Path:
+    """获取代码对应的数据文件路径（自动判断股票或ETF）"""
+    if is_etf(symbol):
+        return RAW_ETF_PRICE_DIR / f"{symbol}.parquet"
+    else:
+        return RAW_PRICE_DIR / f"{symbol}.parquet"
 
 
 def load_stock_prices(
@@ -22,22 +51,22 @@ def load_stock_prices(
     base_dir: Path = None
 ) -> pd.DataFrame:
     """
-    加载股票历史价格数据（默认前复权）
+    加载股票/ETF历史价格数据（默认前复权）
+
+    自动识别股票或ETF，从对应目录加载数据
 
     Args:
-        symbol: 股票代码，如 '600519.SH'
+        symbol: 股票代码，如 '600519.SH' 或 '510300.SH'
         start_date: 开始日期 'YYYY-MM-DD'，None表示从最早开始
         end_date: 结束日期 'YYYY-MM-DD'，None表示到最新
         adjust: 复权方式 - "qfq"(前复权)/None(不复权)，默认前复权
-        base_dir: 存储根目录，默认使用项目 storage 目录
+        base_dir: 存储根目录（已废弃，保留参数兼容性）
 
     Returns:
         DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
     """
-    if base_dir is None:
-        base_dir = RAW_PRICES_DIR
-
-    price_path = base_dir / f"{symbol}.parquet"
+    # 自动判断股票/ETF并获取路径
+    price_path = get_symbol_data_path(symbol)
 
     if not price_path.exists():
         logger.warning(f"价格数据不存在: {price_path}")
@@ -112,15 +141,13 @@ def load_stock_latest_date(
     base_dir: Path = None
 ) -> Optional[str]:
     """
-    获取股票最新数据日期
+    获取股票/ETF最新数据日期
 
     Returns:
         最新日期字符串 'YYYY-MM-DD'，失败返回 None
     """
-    if base_dir is None:
-        base_dir = RAW_PRICES_DIR
-
-    price_path = base_dir / f"{symbol}.parquet"
+    # 自动判断股票/ETF并获取路径
+    price_path = get_symbol_data_path(symbol)
 
     if not price_path.exists():
         return None

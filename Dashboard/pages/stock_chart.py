@@ -894,6 +894,68 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
                 }},
             }});
 
+            // ========== 初始化tooltip显示最新数据 ==========
+            function updateTooltipWithLatest() {{
+                if (candles.length === 0) return;
+                
+                // 获取最新数据
+                const latest = candles[candles.length - 1];
+                
+                // 更新日期
+                var date = new Date(latest.time * 1000);
+                var dateStr = date.getFullYear() + '-' + 
+                             String(date.getMonth() + 1).padStart(2, '0') + '-' + 
+                             String(date.getDate()).padStart(2, '0');
+                if (latest.realtimeTime) {{
+                    dateStr += ' ' + latest.realtimeTime;
+                }}
+                document.getElementById('tt-date').textContent = dateStr;
+                
+                // 更新K线数据
+                document.getElementById('tt-open').textContent = latest.open ? latest.open.toFixed(2) : '--';
+                document.getElementById('tt-high').textContent = latest.high ? latest.high.toFixed(2) : '--';
+                document.getElementById('tt-low').textContent = latest.low ? latest.low.toFixed(2) : '--';
+                document.getElementById('tt-close').textContent = latest.close ? latest.close.toFixed(2) : '--';
+                
+                // 更新均线（从series数据中获取最后一个有效值）
+                const ma5Data = {ma5_json};
+                const ma10Data = {ma10_json};
+                const ma20Data = {ma20_json};
+                const ma60Data = {ma60_json};
+                const macdDifData = {macd_dif_json};
+                const macdDeaData = {macd_dea_json};
+                const kdjKData = {kdj_k_json};
+                const kdjDData = {kdj_d_json};
+                const kdjJData = {kdj_j_json};
+                
+                const lastMa5 = ma5Data.filter(d => d.value !== null && d.value !== undefined).pop();
+                const lastMa10 = ma10Data.filter(d => d.value !== null && d.value !== undefined).pop();
+                const lastMa20 = ma20Data.filter(d => d.value !== null && d.value !== undefined).pop();
+                const lastMa60 = ma60Data.filter(d => d.value !== null && d.value !== undefined).pop();
+                
+                document.getElementById('tt-ma5').textContent = lastMa5 ? lastMa5.value.toFixed(2) : '--';
+                document.getElementById('tt-ma10').textContent = lastMa10 ? lastMa10.value.toFixed(2) : '--';
+                document.getElementById('tt-ma20').textContent = lastMa20 ? lastMa20.value.toFixed(2) : '--';
+                document.getElementById('tt-ma60').textContent = lastMa60 ? lastMa60.value.toFixed(2) : '--';
+                
+                // 更新MACD
+                const lastDif = macdDifData.filter(d => d.value !== null && d.value !== undefined).pop();
+                const lastDea = macdDeaData.filter(d => d.value !== null && d.value !== undefined).pop();
+                document.getElementById('tt-dif').textContent = lastDif ? lastDif.value.toFixed(3) : '--';
+                document.getElementById('tt-dea').textContent = lastDea ? lastDea.value.toFixed(3) : '--';
+                
+                // 更新KDJ
+                const lastK = kdjKData.filter(d => d.value !== null && d.value !== undefined).pop();
+                const lastD = kdjDData.filter(d => d.value !== null && d.value !== undefined).pop();
+                const lastJ = kdjJData.filter(d => d.value !== null && d.value !== undefined).pop();
+                document.getElementById('tt-k').textContent = lastK ? lastK.value.toFixed(2) : '--';
+                document.getElementById('tt-d').textContent = lastD ? lastD.value.toFixed(2) : '--';
+                document.getElementById('tt-j').textContent = lastJ ? lastJ.value.toFixed(2) : '--';
+            }}
+            
+            // 页面加载时显示最新数据
+            updateTooltipWithLatest();
+
             // 订阅crosshair移动事件，更新tooltip数据
             chart.subscribeCrosshairMove(function(param) {{
                 if (!param.time || !param.seriesData) return;

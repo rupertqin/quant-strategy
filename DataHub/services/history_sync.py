@@ -2,7 +2,7 @@
 历史数据同步服务 - 下载全市场股票历史日线数据到 Parquet
 
 每只股票一个文件，包含全部历史数据
-存储位置: storage/raw/stocks/prices/{symbol}.parquet
+存储位置: storage/raw/stocks/price/{symbol}.parquet
 
 用法:
     # ========== 收盘后快速同步当天数据（极速推荐）==========
@@ -92,7 +92,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-from DataHub.config import CRAWLER_REQUEST_DELAY, STORAGE_DIR, RAW_PRICES_DIR, RAW_ADJUST_FACTORS_DIR
+from DataHub.config import CRAWLER_REQUEST_DELAY, STORAGE_DIR, RAW_PRICE_DIR, RAW_ADJUST_FACTOR_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +146,8 @@ class HistorySyncService:
 
     def __init__(self):
         """初始化服务（不自动登录baostock，按需登录）"""
-        self.raw_prices_dir = RAW_PRICES_DIR
-        self.raw_prices_dir.mkdir(parents=True, exist_ok=True)
+        self.raw_price_dir = RAW_PRICE_DIR
+        self.raw_price_dir.mkdir(parents=True, exist_ok=True)
 
         # 加载股票列表
         self.stock_list = self._load_stock_list()
@@ -231,7 +231,7 @@ class HistorySyncService:
 
     def get_stock_file_path(self, symbol: str) -> Path:
         """获取股票数据文件路径"""
-        return self.raw_prices_dir / f"{symbol}.parquet"
+        return self.raw_price_dir / f"{symbol}.parquet"
 
     def load_existing_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """加载股票已存在的历史数据"""
@@ -581,8 +581,8 @@ class HistorySyncService:
         Returns:
             同步结果
         """
-        RAW_ADJUST_FACTORS_DIR.mkdir(parents=True, exist_ok=True)
-        file_path = RAW_ADJUST_FACTORS_DIR / f"{symbol}.parquet"
+        RAW_ADJUST_FACTOR_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = RAW_ADJUST_FACTOR_DIR / f"{symbol}.parquet"
 
         if end_date is None:
             end_date = datetime.now().strftime("%Y%m%d")
@@ -940,8 +940,8 @@ class HistorySyncService:
         all_symbols = set(grouped.groups.keys())
 
         # 添加已有文件中的股票（确保更新所有文件，即使某天没交易）
-        if RAW_PRICES_DIR.exists():
-            for f in RAW_PRICES_DIR.glob("*.parquet"):
+        if RAW_PRICE_DIR.exists():
+            for f in RAW_PRICE_DIR.glob("*.parquet"):
                 symbol = f.stem
                 all_symbols.add(symbol)
 
@@ -1173,7 +1173,7 @@ class HistorySyncService:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from threading import Lock
 
-        RAW_ADJUST_FACTORS_DIR.mkdir(parents=True, exist_ok=True)
+        RAW_ADJUST_FACTOR_DIR.mkdir(parents=True, exist_ok=True)
 
         updated = 0
         skipped = 0
@@ -1241,10 +1241,10 @@ class HistorySyncService:
         """
         import random
 
-        RAW_ADJUST_FACTORS_DIR.mkdir(parents=True, exist_ok=True)
+        RAW_ADJUST_FACTOR_DIR.mkdir(parents=True, exist_ok=True)
 
         # 获取所有有价格数据的股票
-        all_symbols = [f.stem for f in RAW_PRICES_DIR.glob("*.parquet")]
+        all_symbols = [f.stem for f in RAW_PRICE_DIR.glob("*.parquet")]
 
         updated = 0
         skipped = 0
@@ -1253,7 +1253,7 @@ class HistorySyncService:
         # 遍历所有股票，检查是否需要更新复权因子
         for symbol in all_symbols:
             try:
-                file_path = RAW_ADJUST_FACTORS_DIR / f"{symbol}.parquet"
+                file_path = RAW_ADJUST_FACTOR_DIR / f"{symbol}.parquet"
 
                 # 检查是否已有复权因子文件
                 if file_path.exists():
@@ -1380,7 +1380,7 @@ class HistorySyncService:
         # 如果跳过已有文件，快速扫描已存在的股票
         if skip_existing:
             existing_symbols = set()
-            for f in self.raw_prices_dir.glob("*.parquet"):
+            for f in self.raw_price_dir.glob("*.parquet"):
                 existing_symbols.add(f.stem)
 
             original_count = len(symbols)
@@ -1453,7 +1453,7 @@ class HistorySyncService:
 
     def list_existing_files(self) -> List[Path]:
         """列出所有已存在的Parquet文件"""
-        files = sorted(self.raw_prices_dir.glob("*.parquet"))
+        files = sorted(self.raw_price_dir.glob("*.parquet"))
         return files
 
     def get_sync_summary(self) -> dict:
@@ -1646,7 +1646,7 @@ def main():
         print("="*60)
 
         # 获取已有价格数据的股票列表
-        symbols = [f.stem for f in service.raw_prices_dir.glob('*.parquet')]
+        symbols = [f.stem for f in service.raw_price_dir.glob('*.parquet')]
         print(f"发现 {len(symbols)} 只股票需要同步复权因子")
         print(f"并发数: {args.workers}，每只请求间隔: 0.5-2秒")
 

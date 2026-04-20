@@ -154,15 +154,22 @@ st.markdown("""
 
 
 # ============= 数据加载 =============
-def _load_signals_impl() -> dict:
-    """加载信号数据实现 - 从 stock_signals_latest.json 读取"""
-    filepath = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
+def _load_signals_impl(asset_type: str = "stock") -> dict:
+    """
+    加载信号数据实现
+    
+    Args:
+        asset_type: "stock"(股票) 或 "etf"(ETF)
+    """
+    # 根据资产类型选择文件名
+    prefix = "etf_signals" if asset_type == "etf" else "stock_signals"
+    filepath = BASE_DIR / "storage" / "outputs" / "signals" / f"{prefix}_latest.json"
 
     if not filepath.exists():
         # 尝试查找日期版本
         signals_dir = BASE_DIR / "storage" / "outputs" / "signals"
         if signals_dir.exists():
-            files = sorted(signals_dir.glob("stock_signals_*.json"))
+            files = sorted(signals_dir.glob(f"{prefix}_*.json"))
             # 排除 *_latest.json，找日期版本
             date_files = [f for f in files if not f.name.endswith("_latest.json")]
             if date_files:
@@ -172,17 +179,23 @@ def _load_signals_impl() -> dict:
         with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
 
-    return {"status": "error", "message": "暂无信号数据，请先运行扫描器"}
+    asset_name = "ETF" if asset_type == "etf" else "股票"
+    return {"status": "error", "message": f"暂无{asset_name}信号数据，请先运行扫描器"}
 
 
 @st.cache_data(ttl=60)
-def _load_signals_cached() -> dict:
+def _load_signals_cached(asset_type: str = "stock") -> dict:
     """带缓存的信号加载（生产环境使用）"""
-    return _load_signals_impl()
+    return _load_signals_impl(asset_type)
 
 
-def load_signals() -> dict:
-    """加载信号数据（开发环境无缓存，生产环境有缓存）"""
+def load_signals(asset_type: str = "stock") -> dict:
+    """
+    加载信号数据（开发环境无缓存，生产环境有缓存）
+    
+    Args:
+        asset_type: "stock"(股票) 或 "etf"(ETF)
+    """
     try:
         mode = st.secrets.get("environment", {}).get("mode", "prod")
         is_dev = mode == "dev"
@@ -190,9 +203,9 @@ def load_signals() -> dict:
         is_dev = False
 
     if is_dev:
-        return _load_signals_impl()
+        return _load_signals_impl(asset_type)
     else:
-        return _load_signals_cached()
+        return _load_signals_cached(asset_type)
 
 
 def format_technicals(tech: dict) -> str:
@@ -228,11 +241,34 @@ def get_strength_class(strength: str) -> str:
 
 # ============= 页面主函数 =============
 def main():
+    # 侧边栏 - 资产类型选择（放在最上方）
+    with st.sidebar:
+        st.header("📊 资产类型")
+        
+        asset_type = st.radio(
+            "选择监控对象",
+            ["股票", "ETF"],
+            index=0,
+            help="切换股票或ETF信号监控"
+        )
+        asset_type_map = {"股票": "stock", "ETF": "etf"}
+        selected_asset = asset_type_map[asset_type]
+        
+        st.divider()
+    
+    # 根据资产类型显示不同标题
+    if selected_asset == "etf":
+        title_text = "📡 ETF信号监控"
+        subtitle_text = "基于技术面分析生成ETF左侧（抄底）和右侧（追涨）交易信号"
+    else:
+        title_text = "📡 个股信号监控"
+        subtitle_text = "基于技术面分析生成左侧（抄底）和右侧（追涨）交易信号"
+    
     # 头部
-    st.markdown("""
+    st.markdown(f"""
     <div class="signal-header">
-        <h1>📡 个股信号监控</h1>
-        <p>基于技术面分析生成左侧（抄底）和右侧（追涨）交易信号</p>
+        <h1>{title_text}</h1>
+        <p>{subtitle_text}</p>
         <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
             <span style="background: rgba(255,255,255,0.2); padding: 3px 10px; border-radius: 12px;">
                 📊 价格数据已前复权处理
@@ -246,7 +282,7 @@ def main():
         st.header("🔍 筛选条件")
 
         # 数据说明
-        st.info("📊 当前显示的价格均为**前复权**数据", icon="📈")
+        st.info(f"📊 当前显示**{asset_type}**价格均为**前复权**数据", icon="📈")
 
         signal_type = st.radio(
             "信号类型",
@@ -257,8 +293,8 @@ def main():
         signal_type_map = {"全部": "all", "左侧信号": "left", "右侧信号": "right"}
         selected_type = signal_type_map[signal_type]
 
-        # 加载数据（统一文件，通过 signal_type 筛选）
-        data = load_signals()
+        # 加载数据（根据资产类型选择不同文件）
+        data = load_signals(selected_asset)
 
         if data.get("status") == "success":
             all_signals = data.get("signals", [])
@@ -328,7 +364,10 @@ def main():
     # 主内容区
     if data.get("status") != "success":
         st.warning(data.get("message", "暂无数据"))
-        st.info("请运行扫描器生成数据:\n```\npython ShortTerm/services/stock_signal_scanner.py\n```")
+        if selected_asset == "etf":
+            st.info("请运行扫描器生成ETF数据:\n```\npython ShortTerm/run_signal_scan.py --type etf\n```")
+        else:
+            st.info("请运行扫描器生成股票数据:\n```\npython ShortTerm/run_signal_scan.py --type stock\n```")
         return
 
     # 统计数据
@@ -445,7 +484,8 @@ def main():
     grouped_stocks = list(stock_groups.values())
 
     # 显示信号列表
-    st.subheader(f"信号列表 (共 {len(grouped_stocks)} 只股票, {len(filtered_signals)} 个信号)")
+    asset_name = "ETF" if selected_asset == "etf" else "股票"
+    st.subheader(f"信号列表 (共 {len(grouped_stocks)} 只{asset_name}, {len(filtered_signals)} 个信号)")
 
     if not filtered_signals:
         st.info("没有符合条件的信号")
@@ -673,7 +713,7 @@ def main():
 
     # 分页信息
     if total_pages > 1:
-        st.caption(f"显示第 {start_idx+1}-{end_idx} 只股票，共 {len(grouped_stocks)} 只，总信号数 {len(filtered_signals)} 个")
+        st.caption(f"显示第 {start_idx+1}-{end_idx} 只{asset_name}，共 {len(grouped_stocks)} 只，总信号数 {len(filtered_signals)} 个")
 
     # 底部说明
     st.markdown("---")
