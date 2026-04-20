@@ -399,18 +399,33 @@ class LimitUpScanner:
             logger.warning(f"从本地数据计算涨跌家数失败: {e}")
             return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
 
-    def _get_limit_threshold(self, symbol: str) -> dict:
+    def _get_limit_threshold(self, symbol: str, stock_name: str = None) -> dict:
         """
-        根据股票代码获取涨跌幅限制阈值
+        根据股票代码和名称获取涨跌幅限制阈值
+        
+        支持多种代码格式:
+        - '300001.SZ', '688001.SH' (带后缀)
+        - 'sz300001', 'sh688001', 'bj920001' (新浪格式带前缀)
+        - '300001', '688001' (纯数字)
         
         Args:
-            symbol: 股票代码 (如 '300001.SZ', '688001.SH', '000001.SZ')
+            symbol: 股票代码
+            stock_name: 股票名称，用于判断ST股
             
         Returns:
-            {'up': 涨停阈值, 'down': 跌停阈值}
+            {'up': 涨停阈值, 'down': 跌停阈值, 'type': 板块类型}
         """
-        # 提取纯数字代码
-        code = symbol.split('.')[0] if '.' in symbol else symbol
+        # 处理新浪格式代码 (sz300001, sh688001, bj920001)
+        if symbol.lower().startswith(('sz', 'sh', 'bj')):
+            code = symbol[2:]  # 去掉前缀
+        else:
+            # 提取纯数字代码 (去掉.SZ/.SH后缀)
+            code = symbol.split('.')[0] if '.' in symbol else symbol
+        
+        # 判断是否为ST股（通过名称）
+        is_st = stock_name and ('ST' in stock_name or '*ST' in stock_name)
+        if is_st:
+            return {'up': 4.95, 'down': -4.95, 'type': 'ST'}
         
         # 创业板 (300/301开头): 20%涨跌幅
         if code.startswith('300') or code.startswith('301'):
@@ -420,9 +435,10 @@ class LimitUpScanner:
         if code.startswith('688') or code.startswith('689'):
             return {'up': 19.8, 'down': -19.8, 'type': '科创板'}
         
-        # 北交所 (8/43/83/87/88开头): 30%涨跌幅
+        # 北交所 (8/43/83/87/88/92开头): 30%涨跌幅
         if (code.startswith('8') or code.startswith('43') or 
-            code.startswith('83') or code.startswith('87') or code.startswith('88')):
+            code.startswith('83') or code.startswith('87') or 
+            code.startswith('88') or code.startswith('92')):
             return {'up': 29.7, 'down': -29.7, 'type': '北交所'}
         
         # 主板/中小板 (00/60/68开头): 10%涨跌幅
@@ -444,12 +460,15 @@ class LimitUpScanner:
             date_str = get_trading_date()
         
         zt_count = dt_count = 0
-        zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0}
-        dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0}
+        zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+        dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+        processed_count = 0
         
         try:
             price_files = list(RAW_PRICE_DIR.glob("*.parquet"))
             target_date = pd.to_datetime(date_str).date()
+            
+            print(f"    扫描 {len(price_files)} 只股票数据，日期: {target_date}")
             
             for file_path in price_files:
                 try:
@@ -470,9 +489,14 @@ class LimitUpScanner:
                     if pd.isna(change_pct):
                         continue
                     
-                    # 根据股票代码获取对应的涨跌幅阈值
-                    threshold = self._get_limit_threshold(symbol)
+                    # 获取股票名称（用于判断ST股）
+                    stock_name = day_data.iloc[0].get('name', '') if 'name' in day_data.columns else None
+                    
+                    # 根据股票代码和名称获取对应的涨跌幅阈值
+                    threshold = self._get_limit_threshold(symbol, stock_name)
                     stock_type = threshold['type']
+                    
+                    processed_count += 1
                     
                     # 使用对应板块的阈值判断
                     if change_pct >= threshold['up']:
@@ -485,14 +509,119 @@ class LimitUpScanner:
                     continue
             
             # 打印分类统计
-            if zt_count > 0 or dt_count > 0:
-                print(f"    涨停分类: 主板{zt_breakdown['主板']}/创业板{zt_breakdown['创业板']}/科创板{zt_breakdown['科创板']}/北交所{zt_breakdown['北交所']}")
-                print(f"    跌停分类: 主板{dt_breakdown['主板']}/创业板{dt_breakdown['创业板']}/科创板{dt_breakdown['科创板']}/北交所{dt_breakdown['北交所']}")
+            print(f"    处理股票数: {processed_count}")
+            print(f"    涨停分类: 主板{zt_breakdown['主板']}/创业板{zt_breakdown['创业板']}/科创板{zt_breakdown['科创板']}/北交所{zt_breakdown['北交所']}/ST{zt_breakdown['ST']}")
+            print(f"    跌停分类: 主板{dt_breakdown['主板']}/创业板{dt_breakdown['创业板']}/科创板{dt_breakdown['科创板']}/北交所{dt_breakdown['北交所']}/ST{dt_breakdown['ST']}")
             
             return zt_count, dt_count
         except Exception as e:
             logger.warning(f"从本地数据计算涨跌停失败: {e}")
             return 0, 0
+
+    def _calculate_zt_dt_from_realtime(self) -> tuple:
+        """
+        使用实时行情数据计算涨跌停数量（用于验证对比）
+        
+        Returns:
+            (zt_count, dt_count, source)
+        """
+        try:
+            import akshare as ak
+            
+            # 方法1: 东方财富实时行情
+            try:
+                df = ak.stock_zh_a_spot_em()
+                if not df.empty and '涨跌幅' in df.columns and '代码' in df.columns:
+                    # 需要获取名称列来判断ST股
+                    name_col = '名称' if '名称' in df.columns else None
+                    
+                    zt_count = 0
+                    dt_count = 0
+                    zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+                    dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+                    
+                    for _, row in df.iterrows():
+                        code = str(row['代码'])
+                        change = float(row['涨跌幅'])
+                        name = str(row[name_col]) if name_col else None
+                        
+                        threshold = self._get_limit_threshold(code, name)
+                        stock_type = threshold['type']
+                        
+                        if change >= threshold['up']:
+                            zt_count += 1
+                            zt_breakdown[stock_type] = zt_breakdown.get(stock_type, 0) + 1
+                        elif change <= threshold['down']:
+                            dt_count += 1
+                            dt_breakdown[stock_type] = dt_breakdown.get(stock_type, 0) + 1
+                    
+                    stats = {
+                        'zt_breakdown': zt_breakdown,
+                        'dt_breakdown': dt_breakdown,
+                        'total': len(df)
+                    }
+                    return zt_count, dt_count, "东方财富实时", stats
+            except Exception as e:
+                logger.debug(f"东方财富实时行情失败: {e}")
+            
+            # 方法2: 新浪实时行情
+            try:
+                df = ak.stock_zh_a_spot()
+                if not df.empty:
+                    code_col = '代码' if '代码' in df.columns else 'symbol'
+                    name_col = '名称' if '名称' in df.columns else 'name' if 'name' in df.columns else None
+                    change_col = '涨跌幅' if '涨跌幅' in df.columns else 'change'
+                    
+                    zt_count = 0
+                    dt_count = 0
+                    zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+                    dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+                    
+                    for _, row in df.iterrows():
+                        code = str(row[code_col])
+                        change = float(row[change_col])
+                        name = str(row[name_col]) if name_col else None
+                        
+                        threshold = self._get_limit_threshold(code, name)
+                        stock_type = threshold['type']
+                        
+                        if change >= threshold['up']:
+                            zt_count += 1
+                            zt_breakdown[stock_type] = zt_breakdown.get(stock_type, 0) + 1
+                        elif change <= threshold['down']:
+                            dt_count += 1
+                            dt_breakdown[stock_type] = dt_breakdown.get(stock_type, 0) + 1
+                    
+                    stats = {
+                        'zt_breakdown': zt_breakdown,
+                        'dt_breakdown': dt_breakdown,
+                        'total': len(df)
+                    }
+                    return zt_count, dt_count, "新浪实时", stats
+            except Exception as e:
+                logger.debug(f"新浪实时行情失败: {e}")
+            
+            # 方法3: 使用涨停股池接口
+            from datetime import datetime
+            today = datetime.now().strftime('%Y%m%d')
+            
+            try:
+                df_zt = ak.stock_zt_pool_em(date=today)
+                zt_count = len(df_zt) if not df_zt.empty else 0
+            except:
+                zt_count = 0
+            
+            try:
+                df_dt = ak.stock_zt_pool_dtgc_em(date=today)
+                dt_count = len(df_dt) if not df_dt.empty else 0
+            except:
+                dt_count = 0
+            
+            return zt_count, dt_count, "股池接口", {}
+            
+        except Exception as e:
+            logger.debug(f"实时数据获取失败: {e}")
+            return 0, 0, "失败", {}
 
     def _calculate_index_performance_from_local(self) -> dict:
         """
@@ -617,7 +746,19 @@ class LimitUpScanner:
         df_zt = self.get_today_zt_pool(date)
         
         # 1.4 涨停跌停统计 - 从本地股价数据计算
+        print("\n  📈 涨跌停统计（本地数据）:")
         zt_count, dt_count = self._calculate_zt_dt_from_local(date)
+        
+        # 实时数据对比（用于验证）
+        print("\n  📊 涨跌停统计（实时数据对比）:")
+        rt_zt, rt_dt, rt_source, rt_stats = self._calculate_zt_dt_from_realtime()
+        print(f"    实时数据({rt_source}): 涨停{rt_zt}/跌停{rt_dt}")
+        if rt_stats:
+            print(f"    实时涨停分类: 主板{rt_stats['zt_breakdown']['主板']}/创业板{rt_stats['zt_breakdown']['创业板']}/科创板{rt_stats['zt_breakdown']['科创板']}/北交所{rt_stats['zt_breakdown']['北交所']}/ST{rt_stats['zt_breakdown']['ST']}")
+            print(f"    实时跌停分类: 主板{rt_stats['dt_breakdown']['主板']}/创业板{rt_stats['dt_breakdown']['创业板']}/科创板{rt_stats['dt_breakdown']['科创板']}/北交所{rt_stats['dt_breakdown']['北交所']}/ST{rt_stats['dt_breakdown']['ST']}")
+        print(f"    本地数据: 涨停{zt_count}/跌停{dt_count}")
+        if zt_count != rt_zt or dt_count != rt_dt:
+            print(f"    ⚠️  差异: 涨停{zt_count-rt_zt:+,d}/跌停{dt_count-rt_dt:+,d}")
         
         # 热点板块统计仍基于股池数据
         if not df_zt.empty and '所属行业' in df_zt.columns:

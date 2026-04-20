@@ -1181,8 +1181,9 @@ class HistorySyncService:
             end_date = datetime.now().strftime("%Y%m%d")
             
         # 限制结束日期为实际可用的最新数据日期（baostock 等数据源不接受未来日期）
-        # 使用 2025-12-31 作为默认最大日期，实际运行时可根据数据源更新
-        max_available_date = "20251231"
+        # 动态计算：当前年份+1年的12月31日（确保新年份数据可以同步）
+        current_year = datetime.now().year
+        max_available_date = f"{current_year + 1}1231"
         if end_date > max_available_date:
             logger.debug(f"限制结束日期从 {end_date} 到 {max_available_date}（数据源最大日期）")
             end_date = max_available_date
@@ -2360,10 +2361,14 @@ def main():
                 max_workers=args.workers,
                 asset_type=asset_type
             )
-            print("\n同步结果:")
-            print(f"  成功: {result['success']}/{result['total_symbols']}")
-            print(f"  失败: {result['failed']}")
-            print(f"  新增记录: {result.get('new_records', 0):,}")
+        print("\n同步结果:")
+        print(f"  成功: {result['success']}/{result['total_symbols']}")
+        print(f"  失败: {result['failed']}")
+        print(f"  新增记录: {result.get('new_records', 0):,}")
+        if result.get('failed_symbols'):
+            print(f"\n  失败代码:")
+            for symbol in result['failed_symbols']:
+                print(f"    - {symbol}")
         else:
             # 具体代码列表
             from lib.utils import StockCodeUtil
@@ -2492,8 +2497,10 @@ def main():
         print(f"  成功: {result['success']}")
         print(f"  失败: {result['failed']}")
         print(f"  新增记录: {result['new_records']:,}")
-        if result['failed_symbols']:
-            print(f"  失败: {', '.join(result['failed_symbols'])}")
+        if result.get('failed_symbols'):
+            print(f"\n  失败代码:")
+            for symbol in result['failed_symbols']:
+                print(f"    - {symbol}")
 
         print("\n" + "="*60)
         if asset_type == "etf":

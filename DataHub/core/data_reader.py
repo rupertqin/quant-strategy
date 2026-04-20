@@ -276,3 +276,38 @@ def get_index_name_mapper() -> dict:
             logger.warning(f"读取指数名称映射失败: {e}")
 
     return mapper
+
+
+def load_stock_latest_price(symbol: str) -> Optional[float]:
+    """
+    获取股票最新收盘价
+
+    Args:
+        symbol: 股票代码，如 '600519.SH'
+
+    Returns:
+        最新收盘价，如果数据不存在返回 None
+    """
+    df = load_stock_prices(symbol)
+    if df.empty:
+        return None
+    return df['close'].iloc[-1]
+
+
+def load_stock_latest_date(symbol: str) -> Optional[str]:
+    """
+    获取股票最新数据日期
+
+    Args:
+        symbol: 股票代码，如 '600519.SH'
+
+    Returns:
+        最新日期字符串 'YYYY-MM-DD'，如果数据不存在返回 None
+    """
+    df = load_stock_prices(symbol)
+    if df.empty:
+        return None
+    latest_date = df['trade_date'].iloc[-1]
+    if isinstance(latest_date, pd.Timestamp):
+        return latest_date.strftime('%Y-%m-%d')
+    return str(latest_date).split()[0]
