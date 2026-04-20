@@ -89,6 +89,13 @@ tech_indicators = data.get('technical_indicators', {})
 market_breadth = tech_indicators.get('market_breadth', {})
 index_performance = tech_indicators.get('index_performance', {})
 
+# 提取宏观指标
+macro_indicators = data.get('macro_indicators', {})
+currency = macro_indicators.get('currency', {})
+dxy = macro_indicators.get('dxy', {})
+oil = macro_indicators.get('oil', {})
+gold = macro_indicators.get('gold', {})
+
 # 提取涨跌停数据（优先从 technical_indicators 获取）
 zt_sentiment = tech_indicators.get('zt_sentiment', {})
 dt_sentiment = tech_indicators.get('dt_sentiment', {})
@@ -142,6 +149,59 @@ with col4:
 
 with col5:
     st.metric("涨停总数", total_zt, market_type)
+
+# ============= 宏观指标卡片 =============
+st.markdown("### 🌍 宏观指标")
+macro_col1, macro_col2, macro_col3, macro_col4 = st.columns(4)
+
+with macro_col1:
+    # 人民币兑美元
+    cny_current = currency.get('current', 0)
+    cny_change = currency.get('change_pct', 0)
+    if cny_current > 0:
+        cny_delta = f"{cny_change:+.2f}%"
+        cny_color = "inverse" if cny_change > 0 else "normal"  # 人民币升值(数值下降)是利好
+    else:
+        cny_delta = "暂无数据"
+        cny_color = "off"
+    st.metric("💱 离岸人民币", f"{cny_current:.4f}" if cny_current > 0 else "--", cny_delta, delta_color=cny_color)
+
+with macro_col2:
+    # 美元指数
+    dxy_current = dxy.get('current', 0)
+    dxy_change = dxy.get('change_pct', 0)
+    if dxy_current > 0:
+        dxy_delta = f"{dxy_change:+.2f}%"
+        dxy_color = "normal" if dxy_change < 0 else "inverse"  # 美元指数下跌是利好A股
+    else:
+        dxy_delta = "暂无数据"
+        dxy_color = "off"
+    st.metric("📊 美元指数", f"{dxy_current:.2f}" if dxy_current > 0 else "--", dxy_delta, delta_color=dxy_color)
+
+with macro_col3:
+    # 原油价格
+    oil_current = oil.get('current', 0)
+    oil_change = oil.get('change_pct', 0)
+    oil_type = oil.get('type', 'WTI原油')
+    if oil_current > 0:
+        oil_delta = f"{oil_change:+.2f}%"
+        oil_color = "inverse" if oil_change > 3 else "normal" if oil_change < -3 else "off"
+    else:
+        oil_delta = "暂无数据"
+        oil_color = "off"
+    st.metric(f"🛢️ {oil_type}", f"${oil_current:.2f}" if oil_current > 0 else "--", oil_delta, delta_color=oil_color)
+
+with macro_col4:
+    # 黄金价格
+    gold_current = gold.get('current', 0)
+    gold_change = gold.get('change_pct', 0)
+    if gold_current > 0:
+        gold_delta = f"{gold_change:+.2f}%"
+        gold_color = "normal" if gold_change > 0 else "inverse"
+    else:
+        gold_delta = "暂无数据"
+        gold_color = "off"
+    st.metric("🥇 黄金价格", f"${gold_current:.2f}" if gold_current > 0 else "--", gold_delta, delta_color=gold_color)
 
 # ============= 技术面指标展示 =============
 st.markdown("### 📊 技术面分析")

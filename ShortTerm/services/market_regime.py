@@ -115,6 +115,7 @@ class MarketRegime:
                 resp = requests.get(
                     self._EASTMONEY_API['base_url'],
                     params=params,
+                    headers=self._EASTMONEY_HEADERS,
                     timeout=10
                 )
 
@@ -165,11 +166,24 @@ class MarketRegime:
         return {}
 
     def get_usd_cny_rate(self) -> dict:
-        """获取美元人民币汇率 - 东方财富离岸人民币"""
-        data = self._get_eastmoney_data(self._MACRO_SECIDS['usdcnh'])
+        """获取美元人民币汇率 - 优先 Yahoo Finance"""
+        # 优先使用 Yahoo Finance (CNY=X 是 USD/CNY 汇率)
+        yahoo_data = self._get_yahoo_data('CNY=X', period='5d')
+        if yahoo_data and yahoo_data['current'] > 0:
+            logger.info(f"汇率(Yahoo): {yahoo_data['current']:.4f}, 涨跌: {yahoo_data['change_pct']:.2f}%")
+            return {
+                'current': round(yahoo_data['current'], 4),
+                'prev_close': round(yahoo_data['prev_close'], 4),
+                'change_pct': round(yahoo_data['change_pct'], 2),
+                'change_5d': round(yahoo_data['change_pct'], 2),
+                'source': 'Yahoo Finance',
+                'date': None
+            }
 
+        # 备用1: 东方财富离岸人民币
+        data = self._get_eastmoney_data(self._MACRO_SECIDS['usdcnh'])
         if data and data['current'] > 0:
-            logger.info(f"汇率获取成功: {data['current']:.4f}, 涨跌: {data['change_pct']:.2f}%")
+            logger.info(f"汇率(东财): {data['current']:.4f}, 涨跌: {data['change_pct']:.2f}%")
             return {
                 'current': round(data['current'], 4),
                 'prev_close': round(data['prev_close'], 4) if data['prev_close'] > 0 else None,
@@ -179,7 +193,7 @@ class MarketRegime:
                 'date': None
             }
 
-        # 备用: akshare
+        # 备用2: akshare
         try:
             import akshare as ak
             df = ak.fx_spot_quote()
@@ -202,6 +216,7 @@ class MarketRegime:
                             'current': round(float(current), 4),
                             'buy': round(float(buy), 4) if buy > 0 else None,
                             'sell': round(float(sell), 4) if sell > 0 else None,
+                            'change_pct': 0,  # akshare无法获取涨跌幅
                             'change_5d': 0,
                             'source': 'akshare',
                             'date': None
@@ -210,7 +225,7 @@ class MarketRegime:
             logger.debug(f"akshare汇率接口失败: {e}")
 
         logger.warning("获取汇率失败，使用默认值")
-        return {'current': 6.9, 'change_5d': 0, 'source': '默认', 'date': None}
+        return {'current': 6.9, 'change_pct': 0, 'change_5d': 0, 'source': '默认', 'date': None}
 
     def get_north_money_flow(self) -> dict:
         """获取北向资金流向"""
@@ -256,12 +271,27 @@ class MarketRegime:
         return {'recent_3d_avg': 0, 'today': 0}
 
     def get_gold_price(self) -> dict:
-        """获取黄金价格 - 东方财富COMEX黄金"""
-        data = self._get_eastmoney_data(self._MACRO_SECIDS['gold'])
+        """获取黄金价格 - 优先 Yahoo Finance COMEX黄金"""
+        # 优先使用 Yahoo Finance (GC=F 是 COMEX黄金期货)
+        yahoo_data = self._get_yahoo_data('GC=F', period='5d')
+        if yahoo_data and yahoo_data['current'] > 0:
+            change = yahoo_data['current'] - yahoo_data['prev_close']
+            logger.info(f"黄金价格(Yahoo): ${yahoo_data['current']:.2f}, 涨跌: {yahoo_data['change_pct']:.2f}%")
+            return {
+                'current': round(yahoo_data['current'], 2),
+                'change': round(change, 2),
+                'change_pct': round(yahoo_data['change_pct'], 2),
+                'change_5d': round(yahoo_data['change_pct'], 2),
+                'source': 'Yahoo Finance',
+                'unit': 'USD/盎司',
+                'note': ''
+            }
 
+        # 备用1: 东方财富COMEX黄金
+        data = self._get_eastmoney_data(self._MACRO_SECIDS['gold'])
         if data and data['current'] > 0:
             change = data['current'] - data['prev_close'] if data['prev_close'] > 0 else 0
-            logger.info(f"黄金价格获取成功: ${data['current']:.2f}, 涨跌: {data['change_pct']:.2f}%")
+            logger.info(f"黄金价格(东财): ${data['current']:.2f}, 涨跌: {data['change_pct']:.2f}%")
             return {
                 'current': round(data['current'], 2),
                 'change': round(change, 2),
@@ -272,7 +302,7 @@ class MarketRegime:
                 'note': ''
             }
 
-        # 备用: 新浪期货
+        # 备用2: 新浪期货
         try:
             import akshare as ak
             df = ak.futures_zh_spot(symbol="AU0")
@@ -283,7 +313,7 @@ class MarketRegime:
                 if current > 0 and last_settle > 0:
                     change = current - last_settle
                     change_pct = (change / last_settle) * 100
-                    logger.info(f"黄金价格获取成功(新浪): {current}, 涨跌:{change_pct:.2f}%")
+                    logger.info(f"黄金价格(新浪): {current}, 涨跌:{change_pct:.2f}%")
                     return {
                         'current': round(current, 2),
                         'change': round(change, 2),
@@ -299,12 +329,63 @@ class MarketRegime:
         logger.warning("获取黄金价格失败，使用默认值")
         return {'current': 2000, 'change': 0, 'change_pct': 0, 'change_5d': 0, 'unit': 'USD/盎司', 'source': '默认', 'note': '数据暂不可用'}
 
-    def get_dxy_index(self) -> dict:
-        """获取美元指数 - 东方财富"""
-        data = self._get_eastmoney_data(self._MACRO_SECIDS['dxy'])
+    def _get_yahoo_data(self, symbol: str, period: str = '5d') -> dict:
+        """
+        从 Yahoo Finance 获取数据
 
+        Args:
+            symbol: Yahoo Finance 代码，如 'DX-Y.NYB', 'CL=F', 'GC=F', 'CNY=X'
+            period: 数据周期
+
+        Returns:
+            {'current': float, 'prev_close': float, 'change_pct': float}
+        """
+        import time
+
+        # 添加延时避免触发限流
+        time.sleep(1)
+
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period=period)
+
+            if not hist.empty and len(hist) >= 2:
+                current = float(hist['Close'].iloc[-1])
+                prev = float(hist['Close'].iloc[-2])
+                change_pct = (current - prev) / prev * 100 if prev > 0 else 0
+
+                logger.info(f"Yahoo Finance 获取 {symbol} 成功: {current}")
+                return {
+                    'current': current,
+                    'prev_close': prev,
+                    'change_pct': change_pct,
+                    'source': 'Yahoo Finance'
+                }
+        except Exception as e:
+            logger.debug(f"Yahoo Finance 获取 {symbol} 失败: {e}")
+
+        return {}
+
+    def get_dxy_index(self) -> dict:
+        """获取美元指数 - 优先 Yahoo Finance"""
+        # 优先使用 Yahoo Finance
+        yahoo_data = self._get_yahoo_data('DX-Y.NYB', period='5d')
+        if yahoo_data and yahoo_data['current'] > 0:
+            logger.info(f"美元指数(Yahoo): {yahoo_data['current']:.2f}, 涨跌: {yahoo_data['change_pct']:.2f}%")
+            return {
+                'current': round(yahoo_data['current'], 2),
+                'prev_close': round(yahoo_data['prev_close'], 2),
+                'change_pct': round(yahoo_data['change_pct'], 2),
+                'change_5d': round(yahoo_data['change_pct'], 2),
+                'source': 'Yahoo Finance',
+                'note': ''
+            }
+
+        # 备用1: 东方财富
+        data = self._get_eastmoney_data(self._MACRO_SECIDS['dxy'])
         if data and data['current'] > 0:
-            logger.info(f"美元指数获取成功: {data['current']:.2f}, 涨跌: {data['change_pct']:.2f}%")
+            logger.info(f"美元指数(东财): {data['current']:.2f}, 涨跌: {data['change_pct']:.2f}%")
             return {
                 'current': round(data['current'], 2),
                 'prev_close': round(data['prev_close'], 2) if data['prev_close'] > 0 else None,
@@ -314,7 +395,7 @@ class MarketRegime:
                 'note': ''
             }
 
-        # 备用: 新浪财经外汇
+        # 备用2: 新浪财经外汇
         try:
             import akshare as ak
             df = ak.fx_sina_quote()
@@ -339,12 +420,28 @@ class MarketRegime:
         return {'current': 103.5, 'change_pct': 0, 'change_5d': 0, 'source': '默认', 'note': '数据暂不可用'}
 
     def get_oil_price(self) -> dict:
-        """获取原油价格 - 东方财富NYMEX原油"""
-        data = self._get_eastmoney_data(self._MACRO_SECIDS['oil'])
+        """获取原油价格 - 优先 Yahoo Finance WTI原油"""
+        # 优先使用 Yahoo Finance (CL=F 是 WTI原油期货)
+        yahoo_data = self._get_yahoo_data('CL=F', period='5d')
+        if yahoo_data and yahoo_data['current'] > 0:
+            change = yahoo_data['current'] - yahoo_data['prev_close']
+            logger.info(f"原油价格(Yahoo): ${yahoo_data['current']:.2f}, 涨跌: {yahoo_data['change_pct']:.2f}%")
+            return {
+                'current': round(yahoo_data['current'], 2),
+                'change': round(change, 2),
+                'change_pct': round(yahoo_data['change_pct'], 2),
+                'change_5d': round(yahoo_data['change_pct'], 2),
+                'source': 'Yahoo Finance',
+                'type': 'WTI原油',
+                'unit': 'USD/桶',
+                'note': ''
+            }
 
+        # 备用1: 东方财富NYMEX原油
+        data = self._get_eastmoney_data(self._MACRO_SECIDS['oil'])
         if data and data['current'] > 0:
             change = data['current'] - data['prev_close'] if data['prev_close'] > 0 else 0
-            logger.info(f"原油价格获取成功: ${data['current']:.2f}, 涨跌: {data['change_pct']:.2f}%")
+            logger.info(f"原油价格(东财): ${data['current']:.2f}, 涨跌: {data['change_pct']:.2f}%")
             return {
                 'current': round(data['current'], 2),
                 'change': round(change, 2),
@@ -356,7 +453,7 @@ class MarketRegime:
                 'note': ''
             }
 
-        # 备用: 新浪期货 - 上海原油
+        # 备用2: 新浪期货 - 上海原油
         try:
             import akshare as ak
             df = ak.futures_zh_spot(symbol="SC0")
@@ -367,7 +464,7 @@ class MarketRegime:
                 if current > 0 and last_settle > 0:
                     change = current - last_settle
                     change_pct = (change / last_settle) * 100
-                    logger.info(f"原油价格获取成功(上海原油): {current}, 涨跌:{change_pct:.2f}%")
+                    logger.info(f"原油价格(上海原油): {current}, 涨跌:{change_pct:.2f}%")
                     return {
                         'current': round(current, 2),
                         'change': round(change, 2),

@@ -2369,51 +2369,55 @@ def main():
             print(f"\n  失败代码:")
             for symbol in result['failed_symbols']:
                 print(f"    - {symbol}")
+    else:
+        # 具体代码列表
+        from lib.utils import StockCodeUtil
+        from lib.utils.stock_code import detect_asset_type
+        symbol_list = [StockCodeUtil.with_suffix(s) or s for s in symbol_list]
+        
+        # 自动识别资产类型
+        detected_type = detect_asset_type(symbol_list[0], 'stock')
+        
+        if len(symbol_list) == 1:
+            # 单只
+            if args.override:
+                file_path = service.get_stock_file_path(symbol_list[0], detected_type)
+                if file_path.exists():
+                    file_path.unlink()
+                    print(f"已删除旧文件: {file_path}")
+            result = service.sync_stock(
+                symbol_list[0],
+                start_date=args.start_date,
+                end_date=args.end_date,
+                incremental=not args.override,
+                asset_type=detected_type
+            )
+            print("\n同步结果:")
+            print(f"  状态: {result['status']}")
+            print(f"  代码: {result['symbol']}")
+            print(f"  新数据: {result.get('new_records', 0)} 条")
+            print(f"  总数据: {result.get('total_records', 0)} 条")
+            if result.get('date_range'):
+                print(f"  日期范围: {result['date_range']}")
         else:
-            # 具体代码列表
-            from lib.utils import StockCodeUtil
-            from lib.utils.stock_code import detect_asset_type
-            symbol_list = [StockCodeUtil.with_suffix(s) or s for s in symbol_list]
-            
-            # 自动识别资产类型
-            detected_type = detect_asset_type(symbol_list[0], 'stock')
-            
-            if len(symbol_list) == 1:
-                # 单只
-                if args.override:
-                    file_path = service.get_stock_file_path(symbol_list[0], detected_type)
-                    if file_path.exists():
-                        file_path.unlink()
-                        print(f"已删除旧文件: {file_path}")
-                result = service.sync_stock(
-                    symbol_list[0],
-                    start_date=args.start_date,
-                    end_date=args.end_date,
-                    incremental=not args.override,
-                    asset_type=detected_type
-                )
-                print("\n同步结果:")
-                print(f"  状态: {result['status']}")
-                print(f"  代码: {result['symbol']}")
-                print(f"  新数据: {result.get('new_records', 0)} 条")
-                print(f"  总数据: {result.get('total_records', 0)} 条")
-                if result.get('date_range'):
-                    print(f"  日期范围: {result['date_range']}")
-            else:
-                # 多只
-                print(f"\n同步 {len(symbol_list)} 只: {', '.join(symbol_list[:5])}{'...' if len(symbol_list) > 5 else ''}")
-                result = service.sync_all(
-                    symbols=symbol_list,
-                    incremental=not args.override,
-                    max_workers=args.workers,
-                    start_date=args.start_date,
-                    end_date=args.end_date,
-                    asset_type=detected_type
-                )
-                print("\n同步结果:")
-                print(f"  成功: {result['success']}/{result['total_symbols']}")
-                print(f"  失败: {result['failed']}")
-                print(f"  新增记录: {result.get('new_records', 0):,}")
+            # 多只
+            print(f"\n同步 {len(symbol_list)} 只: {', '.join(symbol_list[:5])}{'...' if len(symbol_list) > 5 else ''}")
+            result = service.sync_all(
+                symbols=symbol_list,
+                incremental=not args.override,
+                max_workers=args.workers,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                asset_type=detected_type
+            )
+            print("\n同步结果:")
+            print(f"  成功: {result['success']}/{result['total_symbols']}")
+            print(f"  失败: {result['failed']}")
+            print(f"  新增记录: {result.get('new_records', 0):,}")
+            if result.get('failed_symbols'):
+                print(f"\n  失败代码:")
+                for symbol in result['failed_symbols']:
+                    print(f"    - {symbol}")
 
     elif args.daily:
         # 每日增量更新 - 自动同步所有股票到最新日期
@@ -2567,6 +2571,10 @@ def main():
         print(f"  成功: {result['success']}")
         print(f"  失败: {result['failed']}")
         print(f"  新记录: {result['new_records']:,}")
+        if result.get('failed_symbols'):
+            print(f"\n  失败代码:")
+            for symbol in result['failed_symbols']:
+                print(f"    - {symbol}")
         print("="*60)
 
     else:
@@ -2598,6 +2606,10 @@ def main():
         print(f"  成功: {result['success']}")
         print(f"  失败: {result['failed']}")
         print(f"  新记录: {result['new_records']:,}")
+        if result.get('failed_symbols'):
+            print(f"\n  失败代码:")
+            for symbol in result['failed_symbols']:
+                print(f"    - {symbol}")
         print("="*60)
 
     # 退出时登出baostock（只在已登录时，且未指定 --no-logout）

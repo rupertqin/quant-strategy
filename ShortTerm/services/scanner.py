@@ -910,26 +910,26 @@ class LimitUpScanner:
         
         # ========== 3. 宏观指标采集 ==========
         print("\n🌍 采集宏观指标...")
-        
+
         # 3.1 汇率
         currency = self.market_regime.get_usd_cny_rate()
-        print(f"  汇率 USD/CNY: {currency.get('current', 7.2)}")
-        
+        print(f"  汇率 USD/CNY: {currency.get('current', 7.2)} (来源: {currency.get('source', '默认')})")
+
         # 3.2 北向资金
         north_money = self.market_regime.get_north_money_flow()
         print(f"  北向资金: 净买入{north_money.get('today', 0):.1f}亿")
-        
+
         # 3.3 黄金价格
         gold = self.market_regime.get_gold_price()
-        print(f"  黄金价格: {gold.get('current', 0):.2f} ({gold.get('change_pct', 0):+.2f}%)")
-        
+        print(f"  黄金价格: {gold.get('current', 0):.2f} {gold.get('unit', '')} ({gold.get('change_pct', 0):+.2f}%) (来源: {gold.get('source', '默认')})")
+
         # 3.4 美元指数
         dxy = self.market_regime.get_dxy_index()
-        print(f"  美元指数: {dxy.get('current', 103.5):.2f} ({dxy.get('change_pct', 0):+.2f}%)")
-        
+        print(f"  美元指数: {dxy.get('current', 103.5):.2f} ({dxy.get('change_pct', 0):+.2f}%) (来源: {dxy.get('source', '默认')})")
+
         # 3.5 原油价格
         oil = self.market_regime.get_oil_price()
-        print(f"  原油价格: {oil.get('current', 0):.2f} ({oil.get('change_pct', 0):+.2f}%)")
+        print(f"  原油价格: {oil.get('current', 0):.2f} {oil.get('unit', '')} ({oil.get('change_pct', 0):+.2f}%) (来源: {oil.get('source', '默认')})")
 
         # 4. 获取指数历史数据（用于图表展示）- 从本地数据文件读取
         print("\n📈 从本地数据获取指数历史...")
@@ -1021,6 +1021,7 @@ class LimitUpScanner:
             'macro_indicators': {
                 'currency': {
                     'current': float(currency.get('current', 7.2)),
+                    'change_pct': float(currency.get('change_pct', 0)),
                     'change_5d': float(currency.get('change_5d', 0))
                 },
                 'north_money': {
