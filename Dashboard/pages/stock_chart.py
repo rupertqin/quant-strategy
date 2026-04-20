@@ -1,7 +1,7 @@
 """
-股票K线图页面 - 专业级图表展示
+资产K线图页面 - 专业级图表展示
 
-使用 Lightweight Charts 实现专业K线图表，包含：
+使用 Lightweight Charts 实现专业K线图表，支持股票/ETF/指数：
 - K线蜡烛图
 - 多周期均线 (MA5/10/20/60/120)
 - 成交量副图
@@ -49,7 +49,7 @@ logger.info(f"[初始化测试] 实时数据: {_test_time if not _test_df.empty 
 
 # ============= 配置 =============
 st.set_page_config(
-    page_title="Stock Chart",
+    page_title="Asset Chart",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -515,19 +515,28 @@ def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
 
 @st.cache_data
 def get_stock_list() -> pd.DataFrame:
-    """获取股票列表（代码+名称）"""
+    """获取股票列表（代码+名称），包含股票、ETF、指数"""
     stock_csv = BASE_DIR / "storage" / "stock_basic_info.csv"
     etf_csv = BASE_DIR / "storage" / "etf_basic_info.csv"
+    index_csv = BASE_DIR / "storage" / "official_indices.csv"
 
     stocks = []
 
+    # 加载股票
     if stock_csv.exists():
         df = pd.read_csv(stock_csv)
         stocks.extend(df[['symbol', 'name']].to_dict('records'))
 
+    # 加载ETF
     if etf_csv.exists():
         df = pd.read_csv(etf_csv)
         stocks.extend(df[['symbol', 'name']].to_dict('records'))
+
+    # 加载指数
+    if index_csv.exists():
+        df = pd.read_csv(index_csv)
+        if 'symbol' in df.columns and 'name' in df.columns:
+            stocks.extend(df[['symbol', 'name']].to_dict('records'))
 
     return pd.DataFrame(stocks)
 
@@ -1089,12 +1098,12 @@ def main():
         st.session_state['selected_name'] = '贵州茅台'
 
     if stock_list.empty:
-        st.error("股票列表为空，请先同步股票基础数据")
+        st.error("资产列表为空，请先同步基础数据")
         return
 
     # ============= 侧边栏搜索 =============
     with st.sidebar:
-        st.header("🔍 股票搜索")
+        st.header("🔍 资产搜索")
 
         # 检测运行环境（从 secrets.toml 读取，不存在则默认 prod）
         try:
@@ -1138,19 +1147,19 @@ def main():
 
         st.divider()
 
-        # ========== 股票搜索 ==========
-        st.subheader("🔎 搜索股票")
+        # ========== 资产搜索 ==========
+        st.subheader("🔎 搜索资产")
 
-        # 准备选项列表
+        # 准备选项列表（股票/ETF/指数）
         all_options = [f"{row['symbol']} - {row['name']}" for _, row in stock_list.iterrows()]
 
         # 使用 selectbox 搜索（Streamlit 内置搜索功能）
         selected = st.selectbox(
-            "选择股票",
+            "选择资产",
             options=all_options,
             key="stock_selector",
             index=None,
-            placeholder="输入代码或名称搜索...",
+            placeholder="输入代码或名称搜索股票/ETF/指数...",
             label_visibility="collapsed"
         )
 
@@ -1164,18 +1173,22 @@ def main():
                 st.session_state['selected_name'] = name
                 st.rerun()
 
-        # 常用股票快捷选择
+        # 常用资产快捷选择
         st.divider()
-        st.subheader("⭐ 常用股票")
+        st.subheader("⭐ 常用资产")
 
-        common_stocks = [
+        common_assets = [
             ('600519.SH', '贵州茅台'),
             ('300750.SZ', '宁德时代'),
             ('000858.SZ', '五粮液'),
             ('002594.SZ', '比亚迪'),
+            ('000001.SH', '上证指数'),
+            ('399001.SZ', '深证成指'),
+            ('000300.SH', '沪深300'),
+            ('399006.SZ', '创业板指'),
         ]
 
-        for symbol, name in common_stocks:
+        for symbol, name in common_assets:
             if st.button(f"{symbol} {name}", key=f"common_{symbol}", use_container_width=True):
                 st.query_params['symbol'] = symbol
                 st.session_state['selected_stock'] = symbol
@@ -1198,7 +1211,13 @@ def main():
 
     if df.empty:
         st.error(f"未找到 {symbol} 的数据，请先同步历史数据")
-        st.info("运行: python DataHub/services/history_sync.py --symbol " + symbol)
+        # 自动识别资产类型并给出同步建议
+        from lib.utils.stock_code import detect_asset_type
+        asset_type = detect_asset_type(symbol)
+        if asset_type == "index":
+            st.info("运行: python DataHub/services/history_sync.py --symbol index")
+        else:
+            st.info("运行: python DataHub/services/history_sync.py --symbol " + symbol)
         return
 
     # 最新数据

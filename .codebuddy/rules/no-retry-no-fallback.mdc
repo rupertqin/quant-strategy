@@ -1,0 +1,57 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-20T19:36:34.181Z
+provider: 
+---
+
+# 禁止重试机制和失败回退规则
+
+## 原则
+爬虫/数据获取代码**严禁**实现以下机制：
+
+### 1. 禁止自动重试机制
+- 严禁在网络请求失败时自动重试
+- 严禁使用指数退避、循环重试等逻辑
+- 失败一次即应跳过，避免对数据源造成压力
+
+### 2. 禁止失败回退机制
+- 严禁在主要数据源失败时自动切换到备选数据源
+- 每个数据源应该独立调用，失败即返回 None
+- 由调用方决定是否需要尝试其他数据源
+
+## 正确示例
+```python
+def fetch_data(symbol):
+    """获取数据 - 无重试、无回退"""
+    try:
+        return primary_source.fetch(symbol)
+    except Exception as e:
+        logger.error(f"获取失败: {e}")
+        return None
+```
+
+## 禁止示例
+```python
+def fetch_data(symbol):
+    """错误的实现 - 有重试和回退"""
+    # 禁止：重试机制
+    for attempt in range(3):
+        try:
+            return primary_source.fetch(symbol)
+        except:
+            time.sleep(2 ** attempt)  # 禁止！
+    
+    # 禁止：自动回退到备选
+    try:
+        return backup_source.fetch(symbol)  # 禁止！
+    except:
+        return None
+```
+
+## 理由
+- 避免对数据源造成过大压力
+- 保持代码简单可预测
+- 问题应该暴露出来，而不是被掩盖
+- 由调用方显式控制流程

@@ -99,8 +99,8 @@ dt_count = dt_sentiment.get('dt_count', data.get('dt_count', 0))
 index_history = data.get('index_history', {})
 
 # ============= 页面标题 =============
-market_close_time = data.get('market_close_time', '未知')
-data_status = data.get('data_status', '')
+market_close_time = data.get('market_close_time', date)
+data_status = data.get('data_status', '实时计算')
 st.title("🔥 今日技术面")
 st.caption(f"涨停板扫描 | 板块热度分析 | 市场状态监控 | 数据时间: {market_close_time} [{data_status}] | 生成时间: {generated_at}")
 

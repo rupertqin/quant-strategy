@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from DataHub.config import RAW_PRICE_DIR, RAW_ETF_PRICE_DIR
+from DataHub.config import RAW_PRICE_DIR, RAW_ETF_PRICE_DIR, RAW_INDEX_PRICE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +35,59 @@ def is_etf(symbol: str) -> bool:
     return False
 
 
+def is_index(symbol: str) -> bool:
+    """
+    判断代码是否为指数
+    
+    指数代码规则:
+    - 上海指数: 000001(上证指数), 000300(沪深300) 等，以000开头
+    - 深圳指数: 399001(深证成指), 399006(创业板指) 等，以399开头
+    
+    从 official_indices.csv 读取指数代码列表
+    """
+    code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
+    
+    if not code.isdigit():
+        return False
+    
+    return code in _get_index_codes()
+
+
+# 缓存指数代码集合
+_index_codes_cache = None
+
+
+def _get_index_codes():
+    """从 official_indices.csv 读取所有指数代码"""
+    global _index_codes_cache
+    
+    if _index_codes_cache is not None:
+        return _index_codes_cache
+    
+    _index_codes_cache = set()
+    csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+    
+    if csv_path.exists():
+        try:
+            import csv
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    code = row.get('code', '').strip()
+                    if code:
+                        _index_codes_cache.add(code)
+        except Exception:
+            pass
+    
+    return _index_codes_cache
+
+
 def get_symbol_data_path(symbol: str) -> Path:
-    """获取代码对应的数据文件路径（自动判断股票或ETF）"""
+    """获取代码对应的数据文件路径（自动判断股票/ETF/指数）"""
     if is_etf(symbol):
         return RAW_ETF_PRICE_DIR / f"{symbol}.parquet"
+    elif is_index(symbol):
+        return RAW_INDEX_PRICE_DIR / f"{symbol}.parquet"
     else:
         return RAW_PRICE_DIR / f"{symbol}.parquet"
 
@@ -83,142 +132,147 @@ def load_stock_prices(
         if end_date:
             df = df[df['trade_date'] <= pd.to_datetime(end_date)]
 
-        # 前复权转换（默认）
+        # 复权处理
         if adjust == "qfq":
-            from Dashboard.utils.adjustment import convert_to_qfq
-            df = convert_to_qfq(df, symbol=symbol)
-            if df is None or df.empty:
-                logger.warning(f"前复权转换失败: {symbol}")
-                return pd.DataFrame()
-
-        # 过滤无效数据
-        df = df[df['volume'] > 0]
-        df = df[df['close'] > 0]
-
-        # 按日期排序
-        df = df.sort_values('trade_date').reset_index(drop=True)
+            df = _apply_qfq_adjustment(df, symbol)
 
         return df
 
     except Exception as e:
-        logger.error(f"加载股票数据失败 {symbol}: {e}")
+        logger.error(f"加载价格数据失败 {symbol}: {e}")
         return pd.DataFrame()
 
 
 def load_stock_prices_raw(
     symbol: str,
     start_date: str = None,
-    end_date: str = None,
-    base_dir: Path = None
+    end_date: str = None
 ) -> pd.DataFrame:
     """
-    加载股票历史价格数据（不复权）
+    加载股票/ETF原始价格数据（不复权）
 
-    用于需要原始价格的场景（如真实成交计算）
-    """
-    return load_stock_prices(symbol, start_date, end_date, adjust=None, base_dir=base_dir)
-
-
-def load_stock_latest_price(
-    symbol: str,
-    adjust: str = "qfq",
-    base_dir: Path = None
-) -> Optional[float]:
-    """
-    获取股票最新收盘价（默认前复权）
+    Args:
+        symbol: 股票代码，如 '600519.SH'
+        start_date: 开始日期 'YYYY-MM-DD'，None表示从最早开始
+        end_date: 结束日期 'YYYY-MM-DD'，None表示到最新
 
     Returns:
-        最新收盘价，失败返回 None
+        DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
     """
-    df = load_stock_prices(symbol, adjust=adjust, base_dir=base_dir)
-    if not df.empty and 'close' in df.columns:
-        return float(df['close'].iloc[-1])
-    return None
+    return load_stock_prices(symbol, start_date, end_date, adjust=None)
 
 
-def load_stock_latest_date(
-    symbol: str,
-    base_dir: Path = None
-) -> Optional[str]:
+def _apply_qfq_adjustment(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     """
-    获取股票/ETF最新数据日期
+    应用前复权调整
+
+    Args:
+        df: 原始价格数据
+        symbol: 股票代码
 
     Returns:
-        最新日期字符串 'YYYY-MM-DD'，失败返回 None
+        前复权后的价格数据
     """
-    # 自动判断股票/ETF并获取路径
-    price_path = get_symbol_data_path(symbol)
+    if df.empty:
+        return df
 
-    if not price_path.exists():
-        return None
+    # 获取复权因子数据路径
+    adj_path = _get_adjust_factor_path(symbol)
+
+    if not adj_path or not adj_path.exists():
+        # 如果没有复权因子数据，直接返回原始价格
+        return df
 
     try:
-        # 只读取 trade_date 列的最后一行（高效）
-        df = pd.read_parquet(price_path, columns=['trade_date'])
-        if not df.empty:
-            df['trade_date'] = pd.to_datetime(df['trade_date'])
-            latest_date = df['trade_date'].max()
-            return latest_date.strftime('%Y-%m-%d')
+        # 加载复权因子
+        adj_df = pd.read_parquet(adj_path)
+        adj_df['trade_date'] = pd.to_datetime(adj_df['trade_date'])
+
+        # 合并价格数据和复权因子
+        df = df.merge(adj_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
+
+        # 使用最新的复权因子作为基准
+        if 'adj_factor' in df.columns and not df['adj_factor'].isna().all():
+            latest_factor = df['adj_factor'].iloc[-1]
+
+            # 计算前复权价格
+            for col in ['open', 'high', 'low', 'close']:
+                if col in df.columns:
+                    df[col] = df[col] * df['adj_factor'] / latest_factor
+
+            # 删除临时列
+            df = df.drop(columns=['adj_factor'])
+
+        return df
+
     except Exception as e:
-        logger.error(f"获取最新日期失败 {symbol}: {e}")
+        logger.warning(f"应用复权失败 {symbol}: {e}")
+        return df
 
-    return None
+
+def _get_adjust_factor_path(symbol: str) -> Optional[Path]:
+    """获取复权因子数据文件路径"""
+    from DataHub.config import RAW_ADJUST_FACTOR_DIR
+
+    code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
+
+    # 根据资产类型确定路径
+    if is_etf(symbol):
+        # ETF通常不需要复权
+        return None
+    elif is_index(symbol):
+        # 指数不需要复权
+        return None
+    else:
+        return RAW_ADJUST_FACTOR_DIR / f"{code}.parquet"
 
 
-def load_stock_price_at_date(
-    symbol: str,
-    date: str,
-    adjust: str = "qfq",
-    base_dir: Path = None
-) -> Optional[dict]:
+def get_index_codes_from_csv() -> list:
     """
-    获取指定日期的股票价格（默认前复权）
-
-    Args:
-        symbol: 股票代码
-        date: 日期 'YYYY-MM-DD'
-        adjust: 复权方式
-        base_dir: 存储根目录
+    从 official_indices.csv 读取所有指数代码列表
 
     Returns:
-        dict with keys: open, high, low, close, volume, 失败返回 None
+        指数代码列表，格式如 ['000001.SH', '399001.SZ', ...]
     """
-    df = load_stock_prices(symbol, start_date=date, end_date=date, adjust=adjust, base_dir=base_dir)
-    if not df.empty:
-        row = df.iloc[0]
-        return {
-            'open': float(row['open']),
-            'high': float(row['high']),
-            'low': float(row['low']),
-            'close': float(row['close']),
-            'volume': float(row.get('volume', 0))
-        }
-    return None
+    codes = []
+    csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+
+    if csv_path.exists():
+        try:
+            import csv
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    symbol = row.get('symbol', '').strip()
+                    if symbol:
+                        codes.append(symbol)
+        except Exception as e:
+            logger.warning(f"读取指数列表失败: {e}")
+
+    return codes
 
 
-def load_multiple_stocks(
-    symbols: list,
-    start_date: str = None,
-    end_date: str = None,
-    adjust: str = "qfq",
-    base_dir: Path = None
-) -> dict:
+def get_index_name_mapper() -> dict:
     """
-    批量加载多只股票数据
-
-    Args:
-        symbols: 股票代码列表
-        start_date: 开始日期
-        end_date: 结束日期
-        adjust: 复权方式
-        base_dir: 存储根目录
+    获取指数代码到名称的映射
 
     Returns:
-        dict: {symbol: DataFrame}
+        dict: {symbol: name}
     """
-    result = {}
-    for symbol in symbols:
-        df = load_stock_prices(symbol, start_date, end_date, adjust, base_dir)
-        if not df.empty:
-            result[symbol] = df
-    return result
+    mapper = {}
+    csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+
+    if csv_path.exists():
+        try:
+            import csv
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    symbol = row.get('symbol', '').strip()
+                    name = row.get('name', '').strip()
+                    if symbol and name:
+                        mapper[symbol] = name
+        except Exception as e:
+            logger.warning(f"读取指数名称映射失败: {e}")
+
+    return mapper

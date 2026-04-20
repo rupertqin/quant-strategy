@@ -4,8 +4,10 @@
 """
 
 import re
+import csv
+from pathlib import Path
 from functools import lru_cache
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Set
 
 
 class StockCodeUtil:
@@ -27,11 +29,37 @@ class StockCodeUtil:
         '688': 'SH', '689': 'SH',  # 科创板
         '000': 'SZ', '001': 'SZ', '002': 'SZ', '003': 'SZ',  # 深市主板/中小板
         '300': 'SZ', '301': 'SZ',  # 创业板
+        '399': 'SZ',  # 深圳指数
         '430': 'BJ', '8': 'BJ', '82': 'BJ', '83': 'BJ', '87': 'BJ', '88': 'BJ',  # 北交所/新三板
         '92': 'BJ',  # 北交所新股 (920000-920099)
         '510': 'SH', '511': 'SH', '512': 'SH', '513': 'SH', '515': 'SH', '516': 'SH', '517': 'SH', '518': 'SH', '519': 'SH',  # 沪市ETF
         '159': 'SZ',  # 深市ETF
     }
+    
+    _index_codes_sh: Optional[Set[str]] = None
+    
+    @classmethod
+    def _get_index_codes_sh(cls) -> Set[str]:
+        """从 official_indices.csv 读取上海指数代码"""
+        if cls._index_codes_sh is not None:
+            return cls._index_codes_sh
+        
+        cls._index_codes_sh = set()
+        csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+        
+        if csv_path.exists():
+            try:
+                with open(csv_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        code = row.get('code', '').strip()
+                        market = row.get('market', '').strip()
+                        if code and market == '上海':
+                            cls._index_codes_sh.add(code)
+            except Exception:
+                pass
+        
+        return cls._index_codes_sh
     
     @classmethod
     def extract(cls, code_str: str) -> Optional[str]:
@@ -96,6 +124,10 @@ class StockCodeUtil:
         code = cls.extract(code_str)
         if not code:
             return None
+        
+        # 特殊处理：上海指数代码（以000开头，但不是深市股票）
+        if code in cls._get_index_codes_sh():
+            return 'SH'
         
         for prefix, exchange in sorted(cls.PREFIX_EXCHANGE.items(), key=lambda x: len(x[0]), reverse=True):
             if code.startswith(prefix):
@@ -262,7 +294,7 @@ class StockCodeUtil:
     def get_name_mapper(cls) -> dict:
         """
         获取全市场代码到名称的映射字典（缓存）
-        从本地 storage/stock_basic_info.csv 和 etf_basic_info.csv 读取
+        从本地 storage/stock_basic_info.csv、etf_basic_info.csv 和 official_indices.csv 读取
         
         Returns:
             {code: name} 字典，code为6位纯数字
@@ -308,6 +340,23 @@ class StockCodeUtil:
                 print(f"[StockCodeUtil] ETF CSV文件不存在: {etf_csv}")
         except Exception as e:
             print(f"[StockCodeUtil] 读取ETF CSV失败: {e}")
+        
+        # 3. 读取指数数据
+        index_csv = os.path.join(project_root, 'storage', 'official_indices.csv')
+        try:
+            if os.path.exists(index_csv):
+                import pandas as pd
+                df = pd.read_csv(index_csv)
+                if not df.empty and 'symbol' in df.columns and 'name' in df.columns:
+                    codes = df['symbol'].astype(str).str.extract(r'(\d{6})', expand=False)
+                    names = df['name'].astype(str).str.strip()
+                    index_count = len(codes)
+                    mapper.update(dict(zip(codes, names)))
+                    print(f"[StockCodeUtil] 从official_indices.csv加载 {index_count} 条指数名称映射")
+            else:
+                print(f"[StockCodeUtil] 指数CSV文件不存在: {index_csv}")
+        except Exception as e:
+            print(f"[StockCodeUtil] 读取指数CSV失败: {e}")
         
         if mapper:
             print(f"[StockCodeUtil] 总共加载 {len(mapper)} 条名称映射")
@@ -398,8 +447,8 @@ def detect_asset_type(symbol: str, default: str = "stock") -> str:
     - 深圳：15xxxx, 16xxxx
     
     指数代码：
-    - 上海：000001, 000002, 000016, 000300 等
-    - 深圳：399001, 399006 等
+    - 上海：000001, 000002, 000016, 000300 等（以000开头的6位代码）
+    - 深圳：399001, 399006 等（以399开头的6位代码）
     
     Args:
         symbol: 股票/ETF/指数代码，支持带后缀格式如 '510300.SH'
@@ -424,13 +473,11 @@ def detect_asset_type(symbol: str, default: str = "stock") -> str:
     if not code.isdigit():
         return default
     
-    # 指数代码：常见指数代码（通常是3位或6位数字，如 000001 或 000300）
-    index_codes = {
-        '000001', '000002', '000003', '000016', '000300', '000688', 
-        '000905', '000852', '399001', '399002', '399003', '399006', 
-        '399300', '399673'
-    }
-    if code in index_codes:
+    # 指数代码规则：
+    # - 上海指数：000000-000999 范围内的6位代码
+    # - 深圳指数：399000-399999 范围内的6位代码
+    if (code.startswith('000') and len(code) == 6) or \
+       (code.startswith('399') and len(code) == 6):
         return 'index'
     
     # ETF 代码规则（更完整的前缀列表）

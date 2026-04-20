@@ -187,6 +187,17 @@ def get_data_close_time(dt: datetime = None) -> tuple[str, str]:
 class LimitUpScanner:
     """涨停板扫描器"""
 
+    # 主要指数代码映射（用于计算指数表现）
+    CORE_INDICES = {
+        '000001.SH': '上证指数',
+        '399001.SZ': '深证成指',
+        '399006.SZ': '创业板指',
+        '000300.SH': '沪深300',
+        '000016.SH': '上证50',
+        '000905.SH': '中证500',
+        '000852.SH': '中证1000',
+    }
+
     def __init__(self, config_path: str = None, use_datahub: bool = True):
         # 自动查找 config.yaml
         if config_path is None:
@@ -326,6 +337,237 @@ class LimitUpScanner:
             logger.warning(f"分析板块 {sector} 表现失败: {e}")
             return {}
 
+    def _calculate_market_breadth_from_local(self, date_str: str = None) -> dict:
+        """
+        从本地股价数据计算涨跌家数
+        
+        Args:
+            date_str: 日期 'YYYYMMDD'，None表示最新日期
+            
+        Returns:
+            {'up': int, 'down': int, 'flat': int, 'total': int, 'up_ratio': float, 'breadth_score': float}
+        """
+        from DataHub.config import RAW_PRICE_DIR
+        
+        if date_str is None:
+            date_str = get_trading_date()
+        
+        up_count = down_count = flat_count = 0
+        
+        try:
+            price_files = list(RAW_PRICE_DIR.glob("*.parquet"))
+            target_date = pd.to_datetime(date_str).date()
+            
+            for file_path in price_files:
+                try:
+                    df = pd.read_parquet(file_path)
+                    if df.empty or 'trade_date' not in df.columns or 'change_pct' not in df.columns:
+                        continue
+                    
+                    df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+                    day_data = df[df['trade_date'] == target_date]
+                    
+                    if day_data.empty:
+                        continue
+                    
+                    change_pct = day_data.iloc[0]['change_pct']
+                    if pd.isna(change_pct):
+                        continue
+                    
+                    if change_pct > 0:
+                        up_count += 1
+                    elif change_pct < 0:
+                        down_count += 1
+                    else:
+                        flat_count += 1
+                except Exception:
+                    continue
+            
+            total = up_count + down_count + flat_count
+            up_ratio = up_count / total if total > 0 else 0.5
+            breadth_score = (up_ratio - 0.5) * 200  # 范围 -100 到 100
+            
+            return {
+                'up': up_count,
+                'down': down_count,
+                'flat': flat_count,
+                'total': total,
+                'up_ratio': up_ratio,
+                'breadth_score': breadth_score
+            }
+        except Exception as e:
+            logger.warning(f"从本地数据计算涨跌家数失败: {e}")
+            return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
+
+    def _get_limit_threshold(self, symbol: str) -> dict:
+        """
+        根据股票代码获取涨跌幅限制阈值
+        
+        Args:
+            symbol: 股票代码 (如 '300001.SZ', '688001.SH', '000001.SZ')
+            
+        Returns:
+            {'up': 涨停阈值, 'down': 跌停阈值}
+        """
+        # 提取纯数字代码
+        code = symbol.split('.')[0] if '.' in symbol else symbol
+        
+        # 创业板 (300/301开头): 20%涨跌幅
+        if code.startswith('300') or code.startswith('301'):
+            return {'up': 19.8, 'down': -19.8, 'type': '创业板'}
+        
+        # 科创板 (688/689开头): 20%涨跌幅
+        if code.startswith('688') or code.startswith('689'):
+            return {'up': 19.8, 'down': -19.8, 'type': '科创板'}
+        
+        # 北交所 (8/43/83/87/88开头): 30%涨跌幅
+        if (code.startswith('8') or code.startswith('43') or 
+            code.startswith('83') or code.startswith('87') or code.startswith('88')):
+            return {'up': 29.7, 'down': -29.7, 'type': '北交所'}
+        
+        # 主板/中小板 (00/60/68开头): 10%涨跌幅
+        return {'up': 9.9, 'down': -9.9, 'type': '主板'}
+    
+    def _calculate_zt_dt_from_local(self, date_str: str = None) -> tuple:
+        """
+        从本地股价数据计算涨停跌停数量（区分不同板块的涨跌幅限制）
+        
+        Args:
+            date_str: 日期 'YYYYMMDD'，None表示最新日期
+            
+        Returns:
+            (zt_count, dt_count)
+        """
+        from DataHub.config import RAW_PRICE_DIR
+        
+        if date_str is None:
+            date_str = get_trading_date()
+        
+        zt_count = dt_count = 0
+        zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0}
+        dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0}
+        
+        try:
+            price_files = list(RAW_PRICE_DIR.glob("*.parquet"))
+            target_date = pd.to_datetime(date_str).date()
+            
+            for file_path in price_files:
+                try:
+                    # 从文件名提取股票代码
+                    symbol = file_path.stem
+                    
+                    df = pd.read_parquet(file_path)
+                    if df.empty or 'trade_date' not in df.columns or 'change_pct' not in df.columns:
+                        continue
+                    
+                    df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+                    day_data = df[df['trade_date'] == target_date]
+                    
+                    if day_data.empty:
+                        continue
+                    
+                    change_pct = day_data.iloc[0]['change_pct']
+                    if pd.isna(change_pct):
+                        continue
+                    
+                    # 根据股票代码获取对应的涨跌幅阈值
+                    threshold = self._get_limit_threshold(symbol)
+                    stock_type = threshold['type']
+                    
+                    # 使用对应板块的阈值判断
+                    if change_pct >= threshold['up']:
+                        zt_count += 1
+                        zt_breakdown[stock_type] = zt_breakdown.get(stock_type, 0) + 1
+                    elif change_pct <= threshold['down']:
+                        dt_count += 1
+                        dt_breakdown[stock_type] = dt_breakdown.get(stock_type, 0) + 1
+                except Exception:
+                    continue
+            
+            # 打印分类统计
+            if zt_count > 0 or dt_count > 0:
+                print(f"    涨停分类: 主板{zt_breakdown['主板']}/创业板{zt_breakdown['创业板']}/科创板{zt_breakdown['科创板']}/北交所{zt_breakdown['北交所']}")
+                print(f"    跌停分类: 主板{dt_breakdown['主板']}/创业板{dt_breakdown['创业板']}/科创板{dt_breakdown['科创板']}/北交所{dt_breakdown['北交所']}")
+            
+            return zt_count, dt_count
+        except Exception as e:
+            logger.warning(f"从本地数据计算涨跌停失败: {e}")
+            return 0, 0
+
+    def _calculate_index_performance_from_local(self) -> dict:
+        """
+        从本地指数数据文件计算主要指数表现（包含道氏理论和波浪理论分析）
+        
+        Returns:
+            {指数名称: {'change': float, 'close': float, 'trend': str, 'dow_theory': {...}, 'elliott_wave': {...}}}
+        """
+        from DataHub.config import RAW_INDEX_PRICE_DIR
+        
+        result = {}
+        
+        try:
+            for symbol, name in self.CORE_INDICES.items():
+                try:
+                    file_path = RAW_INDEX_PRICE_DIR / f"{symbol}.parquet"
+                    if not file_path.exists():
+                        continue
+                    
+                    df = pd.read_parquet(file_path)
+                    if df.empty or 'trade_date' not in df.columns or 'change_pct' not in df.columns or 'close' not in df.columns:
+                        continue
+                    
+                    df['trade_date'] = pd.to_datetime(df['trade_date'])
+                    df = df.sort_values('trade_date')
+                    
+                    latest = df.iloc[-1]
+                    change_pct = latest.get('change_pct', 0)
+                    close = latest.get('close', 0)
+                    
+                    # 判断趋势
+                    if len(df) >= 20:
+                        ma20 = df['close'].rolling(20).mean().iloc[-1]
+                        trend = 'UP' if close > ma20 else 'DOWN'
+                    else:
+                        trend = 'NEUTRAL'
+                    
+                    # 准备技术分析用的DataFrame（需要标准列名）
+                    tech_df = df.rename(columns={
+                        'trade_date': 'date',
+                        'open': 'open',
+                        'high': 'high',
+                        'low': 'low',
+                        'close': 'close',
+                        'volume': 'volume'
+                    }).copy()
+                    
+                    # 确保date列为字符串格式
+                    tech_df['date'] = tech_df['date'].astype(str)
+                    
+                    # 使用 market_regime 计算道氏理论分析
+                    dow_theory = self.market_regime._dow_theory_analysis(tech_df)
+                    
+                    # 使用 market_regime 计算波浪理论分析
+                    elliott_wave = self.market_regime._elliott_wave_analysis(tech_df)
+                    
+                    result[name] = {
+                        'change': change_pct if not pd.isna(change_pct) else 0,
+                        'close': close if not pd.isna(close) else 0,
+                        'trend': trend,
+                        'dow_theory': dow_theory,
+                        'elliott_wave': elliott_wave
+                    }
+                except Exception as e:
+                    logger.debug(f"处理指数 {name} 失败: {e}")
+                    continue
+            
+            # 添加跨指数验证
+            result['inter_index_validation'] = self.market_regime._validate_across_indices(result)
+            
+            return result
+        except Exception as e:
+            logger.warning(f"从本地数据计算指数表现失败: {e}")
+            return {}
+
     def generate_daily_signals(self, date: str = None) -> dict:
         """
         生成每日信号 - 宏观+技术面综合分析
@@ -343,55 +585,41 @@ class LimitUpScanner:
         print(f"扫描日期: {date}")
         print('='*50)
 
-        # ========== 1. 技术面指标采集 ==========
-        print("\n📊 采集技术面指标...")
+        # ========== 1. 技术面指标采集（从本地数据计算）==========
+        print("\n📊 从本地数据计算技术面指标...")
         
-        # 1.1 市场涨跌家数（广度）
-        breadth = self.market_regime.get_market_breadth()
+        # 1.1 市场涨跌家数（广度）- 从本地股价数据计算
+        breadth = self._calculate_market_breadth_from_local(date)
         print(f"  涨跌家数: 涨{breadth['up']}/跌{breadth['down']}/平{breadth['flat']}")
         print(f"  涨跌比: {breadth['up_ratio']:.1%}")
         
-        # 1.2 主要指数表现（含道氏理论和波浪理论分析）
-        indices = self.market_regime.get_index_performance()
+        # 1.2 主要指数表现 - 从本地指数数据文件计算
+        indices = self._calculate_index_performance_from_local()
         print(f"  指数表现:")
         for name, data in indices.items():
             if name == 'inter_index_validation':
                 continue
             print(f"    {name}: {data['change']:+.2f}% ({data['trend']})")
-            
-            # 道氏理论
-            if 'dow_theory' in data:
-                dow = data['dow_theory']
-                print(f"      📊 道氏理论: {dow.get('primary_desc', 'N/A')} | {dow.get('secondary_desc', 'N/A')}")
-                if 'trend_strength' in dow:
-                    print(f"         趋势强度: {dow['trend_strength'].get('strength', 'unknown')} (ADX: {dow['trend_strength'].get('adx', 0)})")
-            
-            # 波浪理论
-            if 'elliott_wave' in data:
-                wave = data['elliott_wave']
-                print(f"      🌊 波浪理论: {wave.get('current_phase', 'N/A')}")
-                if 'structure' in wave and wave['structure']:
-                    struct = wave['structure']
-                    print(f"         斐波那契位: 38.2%={struct.get('fib_382')}, 50%={struct.get('fib_500')}, 61.8%={struct.get('fib_618')}")
         
-        # 跨指数验证
-        if 'inter_index_validation' in indices:
-            validation = indices['inter_index_validation']
-            print(f"    📈 跨指数验证: {validation.get('note', 'N/A')}")
-        
-        # 1.3 板块强度（进攻vs防守）
-        sectors = self.market_regime.get_sector_strength()
+        # 1.3 板块强度（进攻vs防守）- 暂时使用默认值
+        sectors = {
+            'offensive_avg': 0,
+            'defensive_avg': 0,
+            'bias': 0,
+            'leader': '中性',
+            'offensive_count': 0,
+            'defensive_count': 0
+        }
         print(f"  板块风格: 进攻板块{sectors['offensive_avg']:+.2f}% vs 防守板块{sectors['defensive_avg']:+.2f}%")
         print(f"  风格偏向: {sectors['leader']}")
         
         # ========== 2. 获取涨停数据（统一数据源）==========
         df_zt = self.get_today_zt_pool(date)
         
-        # 1.4 涨停统计（使用同花顺数据更准确）
-        ths_zt = self.market_regime.get_limit_up_stats()
-        zt_count = ths_zt.get('zt_count', len(df_zt))
+        # 1.4 涨停跌停统计 - 从本地股价数据计算
+        zt_count, dt_count = self._calculate_zt_dt_from_local(date)
         
-        # 热点板块统计仍基于股池数据（同花顺无法获取板块分布）
+        # 热点板块统计仍基于股池数据
         if not df_zt.empty and '所属行业' in df_zt.columns:
             sector_counts = df_zt['所属行业'].value_counts()
             hot_sectors_count = len(sector_counts[sector_counts >= 3])
@@ -512,10 +740,32 @@ class LimitUpScanner:
         # 技术面综合评分
         tech_score = self._calculate_technical_score(breadth, indices, sectors, zt_stats)
         
-        # 1.5 跌停统计
-        print("\n📉 采集跌停统计...")
-        dt_stats = self.market_regime.get_limit_down_stats()
-        print(f"  跌停家数: {dt_stats.get('dt_count', 0)}家, 恐慌程度: {dt_stats.get('panic', '未知')}")
+        # 1.5 跌停统计 - 使用已计算的跌停数
+        print("\n📉 跌停统计...")
+        # 根据跌停数评估恐慌程度
+        if dt_count >= 100:
+            panic = '极度恐慌'
+            risk_level = 5
+        elif dt_count >= 50:
+            panic = '高度恐慌'
+            risk_level = 4
+        elif dt_count >= 20:
+            panic = '中度恐慌'
+            risk_level = 3
+        elif dt_count >= 10:
+            panic = '轻度恐慌'
+            risk_level = 2
+        else:
+            panic = '正常'
+            risk_level = 1
+        
+        dt_stats = {
+            'dt_count': dt_count,
+            'panic': panic,
+            'risk_level': risk_level,
+            'assessment': f'{dt_count}家跌停' if dt_count > 0 else '无跌停'
+        }
+        print(f"  跌停家数: {dt_stats['dt_count']}家, 恐慌程度: {dt_stats['panic']}")
         
         # ========== 3. 宏观指标采集 ==========
         print("\n🌍 采集宏观指标...")
@@ -540,25 +790,31 @@ class LimitUpScanner:
         oil = self.market_regime.get_oil_price()
         print(f"  原油价格: {oil.get('current', 0):.2f} ({oil.get('change_pct', 0):+.2f}%)")
 
-        # 4. 获取指数历史数据（用于图表展示）
-        print("\n📈 获取指数历史数据...")
+        # 4. 获取指数历史数据（用于图表展示）- 从本地数据文件读取
+        print("\n📈 从本地数据获取指数历史...")
         index_history = {}
-        index_codes = {
-            '沪深300': '000300',
-            '中证1000': '000852',
-            '创业板': '399006',
-            '上证指数': '000001'
-        }
-        for name, code in index_codes.items():
+        from DataHub.config import RAW_INDEX_PRICE_DIR
+        
+        for code, name in self.CORE_INDICES.items():
             try:
-                hist_df = self.market_regime._get_index_history(code, days=90)
-                if not hist_df.empty:
-                    # 转换为可序列化的格式
-                    hist_df['date'] = hist_df['date'].astype(str)
-                    index_history[name] = hist_df[['date', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
-                    print(f"  ✓ {name}: {len(hist_df)} 条数据")
-                else:
-                    print(f"  ✗ {name}: 无数据")
+                file_path = RAW_INDEX_PRICE_DIR / f"{code}.parquet"
+                if not file_path.exists():
+                    print(f"  ✗ {name}: 文件不存在")
+                    continue
+                
+                hist_df = pd.read_parquet(file_path)
+                if hist_df.empty or 'trade_date' not in hist_df.columns or 'close' not in hist_df.columns:
+                    print(f"  ✗ {name}: 数据不完整")
+                    continue
+                
+                # 按日期排序，取最近90天
+                hist_df['trade_date'] = pd.to_datetime(hist_df['trade_date'])
+                hist_df = hist_df.sort_values('trade_date').tail(90)
+                
+                # 转换为可序列化的格式
+                hist_df['date'] = hist_df['trade_date'].astype(str)
+                index_history[name] = hist_df[['date', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+                print(f"  ✓ {name}: {len(hist_df)} 条数据")
             except Exception as e:
                 print(f"  ✗ {name}: 获取失败 - {e}")
 
@@ -686,6 +942,49 @@ class LimitUpScanner:
         print(f"  当天: {daily_latest_file}")
         print(f"  历史: {timed_file}")
 
+        return result
+
+    def _get_main_index_codes(self) -> dict:
+        """
+        从 official_indices.csv 读取主要指数代码
+        
+        Returns:
+            dict: {名称: 代码}
+        """
+        import csv
+        from pathlib import Path
+        
+        # 默认的主要指数
+        default_indices = {
+            '沪深300': '000300',
+            '中证1000': '000852',
+            '创业板': '399006',
+            '上证指数': '000001'
+        }
+        
+        csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+        if not csv_path.exists():
+            return default_indices
+        
+        # 目标指数代码集合
+        target_codes = {'000300', '000852', '399006', '000001', '000016', '000905', '399001'}
+        result = {}
+        
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    code = row.get('code', '').strip()
+                    name = row.get('name', '').strip()
+                    if code in target_codes and name:
+                        result[name] = code
+        except Exception:
+            pass
+        
+        # 如果CSV读取失败或没有数据，使用默认值
+        if not result:
+            return default_indices
+        
         return result
 
     def _calculate_technical_score(self, breadth: dict, indices: dict, sectors: dict, zt_stats: dict) -> dict:
