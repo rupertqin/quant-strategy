@@ -227,15 +227,21 @@ def resample_to_weekly(df: pd.DataFrame) -> pd.DataFrame:
     df['trade_date'] = pd.to_datetime(df['trade_date'])
     df.set_index('trade_date', inplace=True)
 
-    # 按周重采样
-    weekly = df.resample('W-FRI').agg({
+    # 基础聚合字段
+    agg_dict = {
         'open': 'first',
         'high': 'max',
         'low': 'min',
         'close': 'last',
         'volume': 'sum',
-        'amount': 'sum'
-    }).dropna()
+    }
+    
+    # ETF数据可能没有amount列
+    if 'amount' in df.columns:
+        agg_dict['amount'] = 'sum'
+
+    # 按周重采样
+    weekly = df.resample('W-FRI').agg(agg_dict).dropna()
 
     weekly.reset_index(inplace=True)
 
@@ -294,15 +300,21 @@ def resample_to_monthly(df: pd.DataFrame) -> pd.DataFrame:
     df['trade_date'] = pd.to_datetime(df['trade_date'])
     df.set_index('trade_date', inplace=True)
 
-    # 按月重采样
-    monthly = df.resample('ME').agg({
+    # 基础聚合字段
+    agg_dict = {
         'open': 'first',
         'high': 'max',
         'low': 'min',
         'close': 'last',
         'volume': 'sum',
-        'amount': 'sum'
-    }).dropna()
+    }
+    
+    # ETF数据可能没有amount列
+    if 'amount' in df.columns:
+        agg_dict['amount'] = 'sum'
+
+    # 按月重采样
+    monthly = df.resample('ME').agg(agg_dict).dropna()
 
     monthly.reset_index(inplace=True)
 

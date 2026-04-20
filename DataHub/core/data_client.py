@@ -129,9 +129,19 @@ class UnifiedDataClient:
         )
         
         if df is not None and not df.empty:
-            if '日期' in df.columns:
-                df['日期'] = pd.to_datetime(df['日期'])
-                df = df.set_index('日期')
+            # yfinance 返回的列名是英文，需要转换
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df = df.set_index('Date')
+            # 重命名列以匹配统一格式
+            column_map = {
+                'Open': 'open',
+                'High': 'high',
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume',
+            }
+            df = df.rename(columns=column_map)
             df = df.sort_index()
         
         return df
@@ -173,29 +183,69 @@ class UnifiedDataClient:
         }
         ak_period = period_map.get(period, "daily")
         
-        # fund_etf_hist_sina 不支持 period 参数
-        # 去掉 .SH/.SZ 后缀，只保留纯数字代码
-        clean_symbol = symbol.replace(".SH", "").replace(".SZ", "")
-        df = ak.fund_etf_hist_sina(
-            symbol=clean_symbol,
-            start_date=start,
-            end_date=end,
-            adjust="" if adjust == "" else "qfq"
-        )
+        # 使用 Yahoo Finance 获取 ETF 前复权数据
+        # Yahoo 的 Close 列默认已经是前复权价格
+        try:
+            import yfinance as yf
+            
+            # 转换代码格式: 510300.SH -> 510300.SS
+            if symbol.endswith(".SH"):
+                yf_symbol = symbol.replace(".SH", ".SS")
+            elif symbol.endswith(".SZ"):
+                yf_symbol = symbol.replace(".SZ", ".SZ")
+            else:
+                yf_symbol = symbol
+            
+            ticker = yf.Ticker(yf_symbol)
+            df = ticker.history(start=start_date, end=end_date)
+            
+        except Exception as e:
+            logger.warning(f"Yahoo Finance failed for {symbol}: {e}, falling back to East Money")
+            df = pd.DataFrame()
         
-        if (df is None or df.empty) and adjust == "qfq":
-            df = ak.fund_etf_hist_em(
-                symbol=symbol.replace(".SH", "").replace(".SZ", ""),
-                period=ak_period,
-                start_date=start,
-                end_date=end,
-                adjust="qfq"
-            )
+        # Yahoo Finance 失败时回退到东财接口
+        if df is None or df.empty:
+            try:
+                clean_symbol = symbol.replace(".SH", "").replace(".SZ", "")
+                df = ak.fund_etf_hist_em(
+                    symbol=clean_symbol,
+                    period=ak_period,
+                    start_date=start,
+                    end_date=end,
+                    adjust="qfq"
+                )
+                # 重命名东财返回的中文列
+                if df is not None and not df.empty:
+                    column_map_em = {
+                        '日期': 'Date',
+                        '开盘': 'Open',
+                        '最高': 'High',
+                        '最低': 'Low',
+                        '收盘': 'Close',
+                        '成交量': 'Volume',
+                    }
+                    df = df.rename(columns=column_map_em)
+                    if 'Date' in df.columns:
+                        df['Date'] = pd.to_datetime(df['Date'])
+                        df = df.set_index('Date')
+            except Exception as e2:
+                logger.error(f"East Money also failed for {symbol}: {e2}")
+                return pd.DataFrame()
         
         if df is not None and not df.empty:
-            if '日期' in df.columns:
-                df['日期'] = pd.to_datetime(df['日期'])
-                df = df.set_index('日期')
+            # yfinance 返回的列名是英文，需要转换
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df = df.set_index('Date')
+            # 重命名列以匹配统一格式
+            column_map = {
+                'Open': 'open',
+                'High': 'high',
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume',
+            }
+            df = df.rename(columns=column_map)
             df = df.sort_index()
         
         return df
@@ -246,9 +296,19 @@ class UnifiedDataClient:
         )
         
         if df is not None and not df.empty:
-            if '日期' in df.columns:
-                df['日期'] = pd.to_datetime(df['日期'])
-                df = df.set_index('日期')
+            # yfinance 返回的列名是英文，需要转换
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df = df.set_index('Date')
+            # 重命名列以匹配统一格式
+            column_map = {
+                'Open': 'open',
+                'High': 'high',
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume',
+            }
+            df = df.rename(columns=column_map)
             df = df.sort_index()
         
         return df

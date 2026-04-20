@@ -2,6 +2,7 @@
 股票价格复权工具模块
 
 用于将不复权价格转换为前复权价格
+支持股票和ETF
 """
 
 import pandas as pd
@@ -13,32 +14,53 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def is_etf(symbol: str) -> bool:
+    """
+    判断是否为ETF代码
+
+    Args:
+        symbol: 代码，如 '510300.SH'
+
+    Returns:
+        bool: True表示ETF
+    """
+    if not symbol:
+        return False
+    code = symbol.replace('.SH', '').replace('.SZ', '')
+    # ETF代码通常以5开头（沪市）或1/15开头（深市）
+    return code.startswith(('5', '15', '16', '18'))
+
+
 def load_adjust_factor(symbol: str, base_dir: Path = None) -> Optional[pd.DataFrame]:
     """
-    加载复权因子数据
-    
+    加载复权因子数据（自动判断股票或ETF）
+
     Args:
-        symbol: 股票代码，如 '600519.SH'
+        symbol: 股票/ETF代码，如 '600519.SH' 或 '510300.SH'
         base_dir: 存储根目录
-        
+
     Returns:
         DataFrame with columns: trade_date, adjust_factor
     """
     if base_dir is None:
         base_dir = Path(__file__).parent.parent.parent / "storage"
-    
-    factor_path = base_dir / "raw" / "stocks" / "adjust_factor" / f"{symbol}.parquet"
-    
+
+    # 自动判断股票或ETF
+    if is_etf(symbol):
+        factor_path = base_dir / "raw" / "etf" / "adjust_factor" / f"{symbol}.parquet"
+    else:
+        factor_path = base_dir / "raw" / "stocks" / "adjust_factor" / f"{symbol}.parquet"
+
     if not factor_path.exists():
         logger.debug(f"复权因子文件不存在: {factor_path}")
         return None
-    
+
     try:
         df = pd.read_parquet(factor_path)
         if df.empty:
             logger.debug(f"复权因子文件为空: {symbol}")
             return None
-        
+
         df['trade_date'] = pd.to_datetime(df['trade_date'])
         return df
     except Exception as e:
@@ -121,36 +143,40 @@ def convert_to_qfq(
 
 def get_latest_price_qfq(symbol: str, base_dir: Path = None) -> Optional[float]:
     """
-    获取股票最新前复权价格
-    
+    获取股票/ETF最新前复权价格
+
     Args:
-        symbol: 股票代码
+        symbol: 股票/ETF代码
         base_dir: 存储根目录
-        
+
     Returns:
         最新前复权收盘价，如果失败返回None
     """
     if base_dir is None:
         base_dir = Path(__file__).parent.parent.parent / "storage"
-    
-    # 加载价格数据
-    price_path = base_dir / "raw" / "stocks" / "price" / f"{symbol}.parquet"
+
+    # 自动判断股票或ETF
+    if is_etf(symbol):
+        price_path = base_dir / "raw" / "etf" / "price" / f"{symbol}.parquet"
+    else:
+        price_path = base_dir / "raw" / "stocks" / "price" / f"{symbol}.parquet"
+
     if not price_path.exists():
         return None
-    
+
     try:
         df = pd.read_parquet(price_path)
         df['trade_date'] = pd.to_datetime(df['trade_date'])
         df = df.sort_values('trade_date')
-        
+
         # 转换为前复权
         df_qfq = convert_to_qfq(df, symbol=symbol)
-        
+
         if not df_qfq.empty and 'close' in df_qfq.columns:
             return float(df_qfq['close'].iloc[-1])
     except Exception as e:
         logger.error(f"获取最新价格失败 {symbol}: {e}")
-    
+
     return None
 
 
@@ -161,34 +187,39 @@ def get_price_at_date_qfq(
 ) -> Optional[dict]:
     """
     获取指定日期的前复权价格
-    
+
     Args:
-        symbol: 股票代码
+        symbol: 股票/ETF代码
         date: 日期，格式 'YYYY-MM-DD'
         base_dir: 存储根目录
-        
+
     Returns:
         dict with keys: open, high, low, close, volume
     """
     if base_dir is None:
         base_dir = Path(__file__).parent.parent.parent / "storage"
-    
-    price_path = base_dir / "raw" / "stocks" / "price" / f"{symbol}.parquet"
+
+    # 自动判断股票或ETF
+    if is_etf(symbol):
+        price_path = base_dir / "raw" / "etf" / "price" / f"{symbol}.parquet"
+    else:
+        price_path = base_dir / "raw" / "stocks" / "price" / f"{symbol}.parquet"
+
     if not price_path.exists():
         return None
-    
+
     try:
         df = pd.read_parquet(price_path)
         df['trade_date'] = pd.to_datetime(df['trade_date'])
         df = df.sort_values('trade_date')
-        
+
         # 转换为前复权
         df_qfq = convert_to_qfq(df, symbol=symbol)
-        
+
         # 查找指定日期
         target_date = pd.to_datetime(date)
         day_data = df_qfq[df_qfq['trade_date'] == target_date]
-        
+
         if not day_data.empty:
             row = day_data.iloc[0]
             return {
@@ -200,5 +231,5 @@ def get_price_at_date_qfq(
             }
     except Exception as e:
         logger.error(f"获取日期价格失败 {symbol} {date}: {e}")
-    
+
     return None

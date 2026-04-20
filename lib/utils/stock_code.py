@@ -29,6 +29,8 @@ class StockCodeUtil:
         '300': 'SZ', '301': 'SZ',  # 创业板
         '430': 'BJ', '8': 'BJ', '82': 'BJ', '83': 'BJ', '87': 'BJ', '88': 'BJ',  # 北交所/新三板
         '92': 'BJ',  # 北交所新股 (920000-920099)
+        '510': 'SH', '511': 'SH', '512': 'SH', '513': 'SH', '515': 'SH', '516': 'SH', '517': 'SH', '518': 'SH', '519': 'SH',  # 沪市ETF
+        '159': 'SZ',  # 深市ETF
     }
     
     @classmethod
@@ -146,7 +148,114 @@ class StockCodeUtil:
             return code, exchange
         
         return None, None
-    
+
+    @classmethod
+    def to_baostock(cls, code_str: str) -> Optional[str]:
+        """
+        转换为 baostock 格式: sh.600000 / sz.000001
+
+        Args:
+            code_str: 任意格式的代码，如 '600000.SH', 'sh600000', '600000'
+
+        Returns:
+            baostock 格式代码，如 'sh.600000'，不支持则返回 None
+
+        Examples:
+            >>> StockCodeUtil.to_baostock('600000.SH')
+            'sh.600000'
+            >>> StockCodeUtil.to_baostock('000001.SZ')
+            'sz.000001'
+            >>> StockCodeUtil.to_baostock('920000.BJ')  # 北交所不支持
+            None
+        """
+        code, exchange = cls.parse_prefixed_code(code_str)
+        if not code or not exchange:
+            return None
+
+        # baostock 不支持北交所
+        if exchange == 'BJ':
+            return None
+
+        return f"{exchange.lower()}.{code}"
+
+    @classmethod
+    def to_akshare(cls, code_str: str) -> Optional[str]:
+        """
+        转换为 akshare 格式: 600000 / 000001 (纯数字，无后缀)
+
+        Args:
+            code_str: 任意格式的代码
+
+        Returns:
+            6位纯数字代码
+
+        Examples:
+            >>> StockCodeUtil.to_akshare('600000.SH')
+            '600000'
+            >>> StockCodeUtil.to_akshare('sh600000')
+            '600000'
+        """
+        return cls.extract(code_str)
+
+    @classmethod
+    def to_tushare(cls, code_str: str) -> Optional[str]:
+        """
+        转换为 tushare 格式: 600000.SH / 000001.SZ
+
+        Args:
+            code_str: 任意格式的代码
+
+        Returns:
+            带后缀的代码，如 '600000.SH'
+        """
+        return cls.with_suffix(code_str)
+
+    @classmethod
+    def to_eastmoney(cls, code_str: str) -> Optional[str]:
+        """
+        转换为东财格式: 600000 / 000001 (纯数字)
+
+        与 akshare 相同，都是纯数字格式
+
+        Args:
+            code_str: 任意格式的代码
+
+        Returns:
+            6位纯数字代码
+        """
+        return cls.extract(code_str)
+
+    @classmethod
+    def convert(cls, code_str: str, target: str) -> Optional[str]:
+        """
+        通用转换方法，根据目标接口转换代码格式
+
+        Args:
+            code_str: 任意格式的代码
+            target: 目标接口，支持 'baostock', 'akshare', 'tushare', 'eastmoney'
+
+        Returns:
+            目标格式的代码
+
+        Examples:
+            >>> StockCodeUtil.convert('600000.SH', 'baostock')
+            'sh.600000'
+            >>> StockCodeUtil.convert('sh600000', 'akshare')
+            '600000'
+        """
+        converters = {
+            'baostock': cls.to_baostock,
+            'akshare': cls.to_akshare,
+            'tushare': cls.to_tushare,
+            'eastmoney': cls.to_eastmoney,
+        }
+
+        converter = converters.get(target.lower())
+        if not converter:
+            raise ValueError(f"不支持的目标接口: {target}，支持: {list(converters.keys())}")
+
+        return converter(code_str)
+
     @classmethod
     # 注意：缓存会在模块重载时自动清除
     @lru_cache(maxsize=1)
@@ -280,19 +389,24 @@ def normalize_code(code: str) -> Optional[str]:
     return StockCodeUtil.normalize(code)
 
 
-def detect_asset_type(symbol: str) -> str:
+def detect_asset_type(symbol: str, default: str = "stock") -> str:
     """
-    根据代码自动检测资产类型
+    根据代码自动检测资产类型（ETF/股票/指数）
     
-    ETF 特征：
-    - 上海：51xxxx, 56xxxx, 58xxxx
+    ETF 代码前缀：
+    - 上海：510, 511, 512, 513, 515, 516, 517, 518, 519, 560, 561, 562, 563, 564, 588(科创)
     - 深圳：15xxxx, 16xxxx
     
+    指数代码：
+    - 上海：000001, 000002, 000016, 000300 等
+    - 深圳：399001, 399006 等
+    
     Args:
-        symbol: 股票/ETF代码，支持带后缀格式如 '510300.SH'
+        symbol: 股票/ETF/指数代码，支持带后缀格式如 '510300.SH'
+        default: 默认资产类型，如果无法识别则返回此值
         
     Returns:
-        'stock' 或 'etf'
+        'stock', 'etf', 'index'
         
     Examples:
         >>> detect_asset_type('600519.SH')
@@ -301,15 +415,33 @@ def detect_asset_type(symbol: str) -> str:
         'etf'
         >>> detect_asset_type('159915.SZ')
         'etf'
+        >>> detect_asset_type('000001.SH')
+        'index'
     """
     # 去除后缀
     code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
     
-    # ETF 代码规则
-    if len(code) == 6:
-        if code.startswith(('51', '56', '58')):  # 上海ETF
-            return 'etf'
-        if code.startswith(('15', '16')):  # 深圳ETF
-            return 'etf'
+    if not code.isdigit():
+        return default
     
-    return 'stock'
+    # 指数代码：常见指数代码（通常是3位或6位数字，如 000001 或 000300）
+    index_codes = {
+        '000001', '000002', '000003', '000016', '000300', '000688', 
+        '000905', '000852', '399001', '399002', '399003', '399006', 
+        '399300', '399673'
+    }
+    if code in index_codes:
+        return 'index'
+    
+    # ETF 代码规则（更完整的前缀列表）
+    etf_prefixes = (
+        '510', '511', '512', '513', '515', '516', '517', '518', '519',  # 上海ETF
+        '560', '561', '562', '563', '564', '565', '566', '567', '568', '569',  # 上海ETF（新）
+        '588',  # 科创板ETF
+        '159', '16', '18',  # 深圳ETF
+    )
+    
+    if code.startswith(etf_prefixes):
+        return 'etf'
+    
+    return default

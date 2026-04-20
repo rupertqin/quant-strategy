@@ -37,11 +37,11 @@
 
 
     # ========== 首次全量同步（断点续传）==========
-    python DataHub/services/history_sync.py --all --skip-existing
+    python DataHub/services/history_sync.py --symbol 600519.SH,300750.SZ --skip-existing
 
 
     # ========== 全量更新（覆盖已有数据）==========
-    python DataHub/services/history_sync.py --symbol 600519.SH --full
+    python DataHub/services/history_sync.py --symbol 600519.SH --override
 
 
     # ========== 复权因子同步 ==========
@@ -54,14 +54,15 @@
 参数说明:
     --today            同步当天数据（极速模式）：使用 stock_zh_a_spot 获取全市场
                          当日数据并入库，同时更新复权因子。适合收盘后快速同步。
-    --all              同步所有股票
     --daily [DATE]     每日增量更新。可选指定日期:
                          无参数: 自动同步到最新日期
                          单日: 20260413, 2026-04-13
                          范围: 20260413~20260414, 2026-04-13~2026-04-14
-    --symbol SYMBOL    指定股票，支持单只或多只逗号分隔，后缀可省略
-                         如: 600519, 600519.SH, 600519,300750,000858
-    --full             全量更新（覆盖已有数据，默认增量）
+    --symbol SYMBOL    指定代码，支持单只或多只逗号分隔，后缀可省略
+                         如: 600519, 600519.SH, 000001.SH (指数)
+                         不指定时，根据 --type 自动同步全部
+    --type TYPE        资产类型: stock(股票), etf, index(指数)，默认 stock
+    --override         覆盖已有数据（默认增量）
     --skip-existing    跳过已有文件的股票（首次同步时大幅提速，不读取文件内容）
     --summary          显示已同步数据摘要
     --sync-factors     只同步复权因子（不下载价格数据）
@@ -92,7 +93,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-from DataHub.config import CRAWLER_REQUEST_DELAY, STORAGE_DIR, RAW_PRICE_DIR, RAW_ADJUST_FACTOR_DIR
+from DataHub.config import CRAWLER_REQUEST_DELAY, STORAGE_DIR, RAW_PRICE_DIR, RAW_ADJUST_FACTOR_DIR, RAW_ETF_PRICE_DIR, RAW_INDEX_PRICE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,27 @@ class HistorySyncService:
 
         # 加载股票列表
         self.stock_list = self._load_stock_list()
+        
+        # 加载ETF列表
+        self.etf_list = self._load_etf_list()
+        
+        # 常用指数列表
+        self.index_list = [
+            '000001.SH',  # 上证指数
+            '000002.SH',  # 上证A指
+            '000003.SH',  # 上证B指
+            '000016.SH',  # 上证50
+            '000300.SH',  # 沪深300
+            '000688.SH',  # 科创50
+            '000905.SH',  # 中证500
+            '000852.SH',  # 中证1000
+            '399001.SZ',  # 深证成指
+            '399002.SZ',  # 深证A指
+            '399003.SZ',  # 深证B指
+            '399006.SZ',  # 创业板指
+            '399300.SZ',  # 沪深300(深圳)
+            '399673.SZ',  # 创业板50
+        ]
 
         # 登录状态标记
         self._baostock_logged_in = False
@@ -167,6 +189,17 @@ class HistorySyncService:
             return df
         else:
             logger.warning(f"股票列表文件不存在: {stock_csv}")
+            return pd.DataFrame()
+    
+    def _load_etf_list(self) -> pd.DataFrame:
+        """加载ETF基础信息列表"""
+        etf_csv = STORAGE_DIR / "etf_basic_info.csv"
+        if etf_csv.exists():
+            df = pd.read_csv(etf_csv)
+            logger.info(f"加载ETF列表: {len(df)} 只")
+            return df
+        else:
+            logger.warning(f"ETF列表文件不存在: {etf_csv}")
             return pd.DataFrame()
 
     def _login_baostock(self):
@@ -189,19 +222,13 @@ class HistorySyncService:
 
     def _format_code(self, symbol: str) -> Optional[str]:
         """
-        转换代码格式: 600519.SH -> sh.600519 (baostock格式)
+        转换代码格式为 baostock 格式: 600519.SH -> sh.600519
         
         Returns:
             baostock格式代码，如果不支持则返回 None
         """
-        if '.SH' in symbol:
-            return 'sh.' + symbol.replace('.SH', '')
-        elif '.SZ' in symbol:
-            return 'sz.' + symbol.replace('.SZ', '')
-        elif '.BJ' in symbol:
-            # baostock 不支持北交所，返回None以便使用akshare
-            return None
-        return symbol
+        from lib.utils import StockCodeUtil
+        return StockCodeUtil.to_baostock(symbol)
     
     def _is_bj_stock(self, symbol: str) -> bool:
         """判断是否为北交所股票"""
@@ -229,13 +256,17 @@ class HistorySyncService:
         """清空待处理列表"""
         self.pending_symbols = []
 
-    def get_stock_file_path(self, symbol: str) -> Path:
-        """获取股票数据文件路径"""
+    def get_stock_file_path(self, symbol: str, asset_type: str = "stock") -> Path:
+        """获取股票/ETF/指数数据文件路径"""
+        if asset_type == "etf":
+            return RAW_ETF_PRICE_DIR / f"{symbol}.parquet"
+        elif asset_type == "index":
+            return RAW_INDEX_PRICE_DIR / f"{symbol}.parquet"
         return self.raw_price_dir / f"{symbol}.parquet"
 
-    def load_existing_data(self, symbol: str) -> Optional[pd.DataFrame]:
-        """加载股票已存在的历史数据"""
-        file_path = self.get_stock_file_path(symbol)
+    def load_existing_data(self, symbol: str, asset_type: str = "stock") -> Optional[pd.DataFrame]:
+        """加载股票/ETF已存在的历史数据"""
+        file_path = self.get_stock_file_path(symbol, asset_type)
         if file_path.exists():
             try:
                 df = pd.read_parquet(file_path)
@@ -249,25 +280,47 @@ class HistorySyncService:
         self,
         symbol: str,
         start_date: str,
-        end_date: str
+        end_date: str,
+        asset_type: str = "stock"
     ) -> Optional[pd.DataFrame]:
         """
-        获取单只股票历史数据 (使用baostock - 前复权)
+        获取单只股票历史数据
 
         Args:
             symbol: 股票代码，如 '600519.SH'
             start_date: 开始日期 'YYYYMMDD'
             end_date: 结束日期 'YYYYMMDD'
+            asset_type: 资产类型，'stock'(股票) 或 'etf'(ETF)
 
         Returns:
             DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
+        """
+        # ETF 使用 Yahoo Finance 获取前复权价格
+        if asset_type == "etf":
+            return self._fetch_etf_history_from_yfinance(symbol, start_date, end_date)
+
+        # 指数使用 baostock/akshare 获取
+        if asset_type == "index":
+            return self._fetch_index_history(symbol, start_date, end_date)
+
+        # 股票使用 baostock（不复权，复权因子单独存储）
+        return self._fetch_stock_history_from_baostock(symbol, start_date, end_date)
+
+    def _fetch_stock_history_from_baostock(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        使用 baostock 获取股票历史数据（不复权）
         """
         # 确保已登录（线程安全）
         self._login_baostock()
 
         try:
             code = self._format_code(symbol)
-            
+
             # 检查是否支持该交易所
             if code is None and self._is_bj_stock(symbol):
                 # 北交所：尝试akshare，但接口不稳定
@@ -286,14 +339,14 @@ class HistorySyncService:
 
             # 使用全局锁保护baostock API调用（线程安全）
             with _baostock_lock:
-                # 调用baostock接口 - flag=3 与历史数据保持一致
+                # 调用baostock接口 - flag=3 不复权
                 rs = bs.query_history_k_data_plus(
                     code,
                     "date,code,open,high,low,close,volume,amount,pctChg",
                     start_date=start_dt,
                     end_date=end_dt,
                     frequency="d",
-                    adjustflag="3"  # 与历史数据保持一致
+                    adjustflag="3"  # 不复权
                 )
 
                 if rs.error_code != '0':
@@ -349,6 +402,327 @@ class HistorySyncService:
         except Exception as e:
             logger.error(color_log('error', f"❌ 获取 {symbol} 历史数据失败: {e}"))
             return None
+
+    def _fetch_etf_history_from_yfinance(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取 ETF 历史数据（前复权）
+        
+        使用 Yahoo Finance (yfinance) 获取前复权数据
+        雅虎的 Close 列默认已经是前复权价格
+
+        Args:
+            symbol: ETF代码，如 '510300.SH'
+            start_date: 开始日期 'YYYYMMDD'
+            end_date: 结束日期 'YYYYMMDD'
+
+        Returns:
+            DataFrame with columns: symbol, trade_date, open, high, low, close, volume
+        """
+        try:
+            import yfinance as yf
+            
+            # 转换代码格式: 510300.SH -> 510300.SS (上交所加.SS，深交所加.SZ)
+            if symbol.endswith('.SH'):
+                yf_symbol = symbol.replace('.SH', '.SS')
+            elif symbol.endswith('.SZ'):
+                yf_symbol = symbol.replace('.SZ', '.SZ')
+            else:
+                yf_symbol = symbol
+            
+            # 转换日期格式: YYYYMMDD -> YYYY-MM-DD
+            start_fmt = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
+            end_fmt = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+            
+            # 使用 yfinance 获取数据（auto_adjust=True 获取前复权数据）
+            ticker = yf.Ticker(yf_symbol)
+            df = ticker.history(start=start_fmt, end=end_fmt, auto_adjust=True)
+            
+            if df is None or df.empty:
+                logger.warning(f"{symbol} 未获取到数据")
+                return None
+            
+            # 重置索引，将日期变为列
+            df = df.reset_index()
+            
+            # 添加symbol列
+            df['symbol'] = symbol
+            
+            # 重命名列以统一格式
+            column_map = {
+                'Date': 'trade_date',
+                'Open': 'open',
+                'High': 'high',
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume',
+            }
+            df = df.rename(columns=column_map)
+            
+            # 转换日期格式
+            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+            
+            # 转换数值类型
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # 选择需要的列（Yahoo 不提供 amount 和 change_pct）
+            keep_cols = [
+                'symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume'
+            ]
+            df = df[[c for c in keep_cols if c in df.columns]]
+            
+            logger.info(f"获取 {symbol} ETF数据: {len(df)} 条 (前复权/Yahoo)")
+            return df
+            
+        except Exception as e:
+            logger.warning(color_log('warning', f"⚠️  Yahoo Finance 获取 {symbol} 失败: {e}，尝试回退到东财接口..."))
+            # 回退到东财接口
+            return self._fetch_etf_history_from_em(symbol, start_date, end_date)
+
+    def _fetch_etf_history_from_em(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取 ETF 历史数据（前复权）- 东财备选接口
+        
+        当 Yahoo Finance 失败时使用东财接口作为备选
+
+        Args:
+            symbol: ETF代码，如 '510300.SH'
+            start_date: 开始日期 'YYYYMMDD'
+            end_date: 结束日期 'YYYYMMDD'
+
+        Returns:
+            DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
+        """
+        try:
+            import akshare as ak
+            
+            # 转换代码格式: 510300.SH -> 510300
+            code = symbol.replace('.SH', '').replace('.SZ', '')
+            
+            # 使用东财接口获取 ETF 前复权数据
+            df = ak.fund_etf_hist_em(
+                symbol=code,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq"  # 前复权
+            )
+            
+            if df is None or df.empty:
+                logger.warning(f"{symbol} 未获取到数据")
+                return None
+            
+            # 添加symbol列
+            df['symbol'] = symbol
+            
+            # 重命名列以统一格式
+            column_map = {
+                '日期': 'trade_date',
+                '开盘': 'open',
+                '最高': 'high',
+                '最低': 'low',
+                '收盘': 'close',
+                '成交量': 'volume',
+                '成交额': 'amount',
+                '涨跌幅': 'change_pct',
+            }
+            df = df.rename(columns=column_map)
+            
+            # 转换日期格式
+            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+            
+            # 转换数值类型
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # 选择需要的列
+            keep_cols = [
+                'symbol', 'trade_date', 'open', 'high', 'low', 'close',
+                'volume', 'amount', 'change_pct'
+            ]
+            df = df[[c for c in keep_cols if c in df.columns]]
+            
+            logger.info(f"获取 {symbol} ETF数据: {len(df)} 条 (前复权/东财备选)")
+            return df
+            
+        except Exception as e:
+            logger.error(color_log('error', f"❌ 东财接口获取 {symbol} ETF数据也失败: {e}"))
+            return None
+
+    def _fetch_index_history(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取指数历史数据
+
+        优先级: baostock > akshare
+        不使用东财数据
+
+        Args:
+            symbol: 指数代码，如 '000001.SH', '000300.SH', '399001.SZ'
+            start_date: 开始日期 'YYYYMMDD'
+            end_date: 结束日期 'YYYYMMDD'
+
+        Returns:
+            DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
+        """
+        # 尝试 baostock
+        try:
+            return self._fetch_index_from_baostock(symbol, start_date, end_date)
+        except Exception as e:
+            logger.warning(f"baostock 获取指数 {symbol} 失败: {e}，尝试 akshare...")
+
+        # 备选: akshare
+        try:
+            return self._fetch_index_from_akshare(symbol, start_date, end_date)
+        except Exception as e:
+            logger.error(color_log('error', f"❌ 所有接口获取指数 {symbol} 都失败: {e}"))
+            return None
+
+    def _fetch_index_from_baostock(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        使用 baostock 获取指数数据
+
+        指数代码格式: sh.000001 (上证指数), sz.399001 (深证成指)
+        """
+        self._login_baostock()
+
+        # 转换代码格式: 000001.SH -> sh.000001
+        if symbol.endswith('.SH'):
+            bs_symbol = f"sh.{symbol.replace('.SH', '')}"
+        elif symbol.endswith('.SZ'):
+            bs_symbol = f"sz.{symbol.replace('.SZ', '')}"
+        else:
+            bs_symbol = symbol
+
+        with _baostock_lock:
+            rs = bs.query_history_k_data_plus(
+                bs_symbol,
+                "date,open,high,low,close,preclose,volume,amount,pctChg",
+                start_date=start_date,
+                end_date=end_date,
+                frequency="d"
+            )
+
+        if rs.error_code != '0':
+            raise Exception(f"baostock error: {rs.error_msg}")
+
+        data_list = []
+        while (rs.error_code == '0') & rs.next():
+            data_list.append(rs.get_row_data())
+
+        if not data_list:
+            logger.warning(f"{symbol} 未获取到数据")
+            return None
+
+        df = pd.DataFrame(data_list, columns=rs.fields)
+
+        # 数据处理
+        df['symbol'] = symbol
+        df = df.rename(columns={
+            'date': 'trade_date',
+            'pctChg': 'change_pct'
+        })
+
+        # 转换日期格式
+        df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+
+        # 转换数值类型
+        numeric_cols = ['open', 'high', 'low', 'close', 'preclose', 'volume', 'amount', 'change_pct']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # 计算 amount 单位（baostock 返回的是元，统一为万元）
+        if 'amount' in df.columns:
+            df['amount'] = df['amount'] / 10000
+
+        # 选择需要的列
+        keep_cols = ['symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
+        df = df[[c for c in keep_cols if c in df.columns]]
+
+        logger.info(f"获取 {symbol} 指数数据: {len(df)} 条 (baostock)")
+        return df
+
+    def _fetch_index_from_akshare(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        使用 akshare 获取指数数据（备选）
+
+        不使用东财接口
+        """
+        import akshare as ak
+
+        # 转换代码格式
+        code = symbol.replace('.SH', '').replace('.SZ', '')
+
+        # 使用 akshare 的指数历史数据接口（非东财）
+        # 注意: akshare 的 index_zh_a_hist 实际上也是东财源，这里用其他源
+        # 使用 stock_zh_index_daily 接口
+
+        try:
+            # 尝试使用 stock_zh_index_daily（新浪源）
+            df = ak.stock_zh_index_daily(symbol=symbol)
+
+            if df is None or df.empty:
+                raise Exception("无数据")
+
+            # 筛选日期范围
+            df['date'] = pd.to_datetime(df['date']).dt.date
+            start_dt = pd.to_datetime(start_date).date()
+            end_dt = pd.to_datetime(end_date).date()
+            df = df[(df['date'] >= start_dt) & (df['date'] <= end_dt)]
+
+            if df.empty:
+                raise Exception("日期范围内无数据")
+
+            # 添加symbol列并重命名
+            df['symbol'] = symbol
+            df = df.rename(columns={
+                'date': 'trade_date',
+                'close': 'close',
+                'open': 'open',
+                'high': 'high',
+                'low': 'low',
+                'volume': 'volume'
+            })
+
+            # 计算涨跌幅（如果没有）
+            if 'change_pct' not in df.columns:
+                df['change_pct'] = df['close'].pct_change() * 100
+
+            logger.info(f"获取 {symbol} 指数数据: {len(df)} 条 (akshare/新浪)")
+            return df
+
+        except Exception as e:
+            logger.error(f"akshare 获取指数 {symbol} 失败: {e}")
+            raise
 
     def _fetch_bj_stock_history(
         self,
@@ -654,7 +1028,8 @@ class HistorySyncService:
         symbol: str,
         start_date: str = None,
         end_date: str = None,
-        incremental: bool = True
+        incremental: bool = True,
+        asset_type: str = "stock"
     ) -> dict:
         """
         同步单只股票的历史数据
@@ -664,11 +1039,12 @@ class HistorySyncService:
             start_date: 开始日期 'YYYYMMDD'，None表示从最早开始
             end_date: 结束日期 'YYYYMMDD'，None表示到今天
             incremental: 是否增量更新，True表示只获取新数据
+            asset_type: 资产类型，'stock'(股票) 或 'etf'(ETF)
 
         Returns:
             同步结果
         """
-        file_path = self.get_stock_file_path(symbol)
+        file_path = self.get_stock_file_path(symbol, asset_type)
 
         # 确定日期范围
         if end_date is None:
@@ -676,7 +1052,7 @@ class HistorySyncService:
 
         existing_df = None
         if incremental and file_path.exists():
-            existing_df = self.load_existing_data(symbol)
+            existing_df = self.load_existing_data(symbol, asset_type)
             if existing_df is not None and not existing_df.empty:
                 # 获取最新日期，从第二天开始同步
                 latest_date = existing_df['trade_date'].max()
@@ -720,7 +1096,7 @@ class HistorySyncService:
             }
 
         # 获取新数据
-        new_df = self.fetch_stock_history(symbol, start_date, end_date)
+        new_df = self.fetch_stock_history(symbol, start_date, end_date, asset_type)
 
         if new_df is None or new_df.empty:
             logger.warning(color_log('warning', f"⚠️  {symbol} 没有获取到新数据"))
@@ -741,11 +1117,12 @@ class HistorySyncService:
         else:
             combined_df = new_df
 
-        # 保存（不复权原始价格）
+        # 保存
         combined_df.to_parquet(file_path, index=False, compression='zstd')
 
-        # 同步复权因子
-        factor_result = self.sync_adjust_factor(symbol, start_date, end_date, incremental)
+        # 同步复权因子（仅股票，ETF直接存储前复权价格，不需要复权因子）
+        if asset_type == "stock":
+            factor_result = self.sync_adjust_factor(symbol, start_date, end_date, incremental)
 
         logger.info(color_log('success', f"✓ {symbol} 同步完成: {len(new_df)} 条新数据，共 {len(combined_df)} 条"))
 
@@ -1295,23 +1672,25 @@ class HistorySyncService:
         symbol: str,
         incremental: bool,
         start_date: str = None,
-        end_date: str = None
+        end_date: str = None,
+        asset_type: str = "stock"
     ) -> dict:
         """
-        同步单只股票（线程安全包装）
+        同步单只股票/ETF（线程安全包装）
 
         Args:
             symbol: 股票代码
             incremental: 是否增量更新
             start_date: 指定开始日期（可选）
             end_date: 指定结束日期（可选）
+            asset_type: 资产类型，'stock'(股票) 或 'etf'(ETF)
 
         Returns:
             同步结果
         """
         # 如果指定了日期范围，先快速检查是否已包含该日期范围
         if start_date and end_date:
-            file_path = self.get_stock_file_path(symbol)
+            file_path = self.get_stock_file_path(symbol, asset_type)
             if file_path.exists():
                 try:
                     df = pd.read_parquet(file_path)
@@ -1342,7 +1721,8 @@ class HistorySyncService:
                 symbol,
                 start_date=start_date,
                 end_date=end_date,
-                incremental=incremental
+                incremental=incremental,
+                asset_type=asset_type
             )
             return result
         except Exception as e:
@@ -1356,10 +1736,11 @@ class HistorySyncService:
         skip_existing: bool = False,
         max_workers: int = 3,
         start_date: str = None,
-        end_date: str = None
+        end_date: str = None,
+        asset_type: str = "stock"
     ) -> dict:
         """
-        同步所有股票数据（并行版本）
+        同步所有股票/ETF数据（并行版本）
 
         Args:
             symbols: 股票代码列表，None表示全部
@@ -1368,28 +1749,49 @@ class HistorySyncService:
             max_workers: 最大并发数（默认3，建议3-5）
             start_date: 指定开始日期（覆盖自动计算的日期）
             end_date: 指定结束日期（覆盖自动计算的日期）
+            asset_type: 资产类型，'stock'(股票) 或 'etf'(ETF)
 
         Returns:
             同步结果统计
         """
+        # 根据资产类型选择列表
         if symbols is None:
-            if self.stock_list.empty:
-                return {'status': 'failed', 'message': '没有股票列表'}
-            symbols = self.stock_list['symbol'].tolist()
+            if asset_type == "etf":
+                if self.etf_list.empty:
+                    return {'status': 'failed', 'message': '没有ETF列表'}
+                symbols = self.etf_list['symbol'].tolist()
+            elif asset_type == "index":
+                symbols = self.index_list
+            else:
+                if self.stock_list.empty:
+                    return {'status': 'failed', 'message': '没有股票列表'}
+                symbols = self.stock_list['symbol'].tolist()
 
         # 如果跳过已有文件，快速扫描已存在的股票
         if skip_existing:
             existing_symbols = set()
-            for f in self.raw_price_dir.glob("*.parquet"):
+            if asset_type == "etf":
+                price_dir = RAW_ETF_PRICE_DIR
+            elif asset_type == "index":
+                price_dir = RAW_INDEX_PRICE_DIR
+            else:
+                price_dir = self.raw_price_dir
+            for f in price_dir.glob("*.parquet"):
                 existing_symbols.add(f.stem)
 
             original_count = len(symbols)
             symbols = [s for s in symbols if s not in existing_symbols]
             skipped_count = original_count - len(symbols)
-            logger.info(f"跳过已有文件的 {skipped_count} 只股票，实际需同步 {len(symbols)} 只")
+            logger.info(f"跳过已有文件的 {skipped_count} 只，实际需同步 {len(symbols)} 只")
 
         total = len(symbols)
-        logger.info(f"开始同步 {total} 只股票，并发数: {max_workers}")
+        if asset_type == "etf":
+            asset_type_str = "ETF"
+        elif asset_type == "index":
+            asset_type_str = "指数"
+        else:
+            asset_type_str = "股票"
+        logger.info(f"开始同步 {total} 只{asset_type_str}，并发数: {max_workers}")
 
         success_count = 0
         failed_symbols = []
@@ -1416,7 +1818,7 @@ class HistorySyncService:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 提交所有任务（传递日期参数用于快速跳过检查）
             future_to_symbol = {
-                executor.submit(self._sync_single_stock, symbol, incremental, start_date, end_date): symbol
+                executor.submit(self._sync_single_stock, symbol, incremental, start_date, end_date, asset_type): symbol
                 for symbol in symbols
             }
 
@@ -1451,9 +1853,15 @@ class HistorySyncService:
             'pending_count': len(self.pending_symbols)
         }
 
-    def list_existing_files(self) -> List[Path]:
+    def list_existing_files(self, asset_type: str = "stock") -> List[Path]:
         """列出所有已存在的Parquet文件"""
-        files = sorted(self.raw_price_dir.glob("*.parquet"))
+        if asset_type == "etf":
+            price_dir = RAW_ETF_PRICE_DIR
+        elif asset_type == "index":
+            price_dir = RAW_INDEX_PRICE_DIR
+        else:
+            price_dir = self.raw_price_dir
+        files = sorted(price_dir.glob("*.parquet"))
         return files
 
     def get_sync_summary(self) -> dict:
@@ -1598,13 +2006,16 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='历史数据同步服务')
-    parser.add_argument('--symbol', type=str, help='指定股票，支持单只或多只逗号分隔，如 600519.SH 或 600519.SH,300750.SZ')
-    parser.add_argument('--all', action='store_true', help='同步所有股票')
+    parser.add_argument('--type', type=str, default='stock', choices=['stock', 'etf', 'index'],
+                        help='同步类型: stock(股票), etf, index(指数)，默认 stock')
+    parser.add_argument('--data-type', type=str, default='price', choices=['price', 'factor', 'all'],
+                        help='数据类型: price(价格), factor(复权因子), all(全部)，默认 price')
+    parser.add_argument('--symbol', type=str, help='指定股票，支持单只或多只逗号分隔，如 600519.SH 或 600519.SH,300750.SZ。不指定时根据--type同步全部')
     parser.add_argument('--daily', nargs='?', const=True, default=False,
                         help='每日增量更新。可指定日期: 20260413, 2026-04-13, 20260413~20260414')
     parser.add_argument('--start-date', type=str, help='开始日期 YYYYMMDD（已废弃，建议使用 --daily DATE）')
     parser.add_argument('--end-date', type=str, help='结束日期 YYYYMMDD（已废弃，建议使用 --daily DATE')
-    parser.add_argument('--full', action='store_true', help='全量更新（非增量）')
+    parser.add_argument('--override', action='store_true', help='覆盖已有数据（默认增量）')
     parser.add_argument('--skip-existing', action='store_true', help='首次同步时跳过已有文件的股票（大幅提速）')
     parser.add_argument('--summary', action='store_true', help='显示同步摘要')
     parser.add_argument('--limit', type=int, help='限制股票数量（测试用）')
@@ -1767,15 +2178,28 @@ def main():
 
         # 补全代码后缀
         from lib.utils import StockCodeUtil
+        from lib.utils.stock_code import detect_asset_type
         symbol_list = [StockCodeUtil.with_suffix(s) or s for s in symbol_list]
 
+        # 自动识别资产类型（如果未指定或默认为stock）
+        detected_type = detect_asset_type(symbol_list[0], args.type)
+        if detected_type != args.type:
+            print(f"自动识别资产类型: {symbol_list[0]} -> {detected_type}")
+
         if len(symbol_list) == 1:
-            # 单只股票
+            # 单只股票/ETF
+            # --override 模式下先删除旧文件，确保完全重新获取
+            if args.override:
+                file_path = service.get_stock_file_path(symbol_list[0], detected_type)
+                if file_path.exists():
+                    file_path.unlink()
+                    print(f"已删除旧文件: {file_path}")
             result = service.sync_stock(
                 symbol_list[0],
                 start_date=args.start_date,
                 end_date=args.end_date,
-                incremental=not args.full
+                incremental=not args.override,
+                asset_type=detected_type
             )
             print("\n同步结果:")
             print(f"  状态: {result['status']}")
@@ -1789,10 +2213,11 @@ def main():
             print(f"\n同步 {len(symbol_list)} 只股票: {', '.join(symbol_list[:5])}{'...' if len(symbol_list) > 5 else ''}")
             result = service.sync_all(
                 symbols=symbol_list,
-                incremental=not args.full,
+                incremental=not args.override,
                 max_workers=args.workers,
                 start_date=args.start_date,
-                end_date=args.end_date
+                end_date=args.end_date,
+                asset_type=detected_type
             )
             print("\n批量同步结果:")
             print(f"  成功: {result['success']}/{result['total_symbols']}")
@@ -1805,22 +2230,39 @@ def main():
         print("执行每日增量更新")
         print("="*60)
 
-        # 处理股票列表（统一逻辑：全量/指定/limit 都生成 symbol 列表）
+        # 处理列表：指定代码 > 全部（根据type）> limit测试
         from lib.utils import StockCodeUtil
+        if args.type == "etf":
+            asset_type_str = "ETF"
+        elif args.type == "index":
+            asset_type_str = "指数"
+        else:
+            asset_type_str = "股票"
+
         if args.symbol:
-            # 指定股票列表（逗号分隔）
+            # 指定代码列表（逗号分隔）
             symbols = [s.strip() for s in args.symbol.split(',')]
-            symbols = [StockCodeUtil.with_suffix(s) or s for s in symbols]  # 补全后缀
-            print(f"指定股票: {len(symbols)} 只")
+            symbols = [StockCodeUtil.with_suffix(s) or s for s in symbols]
+            print(f"指定{asset_type_str}: {len(symbols)} 只")
             print(f"  {', '.join(symbols[:5])}{'...' if len(symbols) > 5 else ''}")
         elif args.limit:
             # 测试模式：限制数量
-            symbols = service.stock_list['symbol'].tolist()[:args.limit]
-            print(f"测试模式: 只同步前 {args.limit} 只股票")
+            if args.type == "etf":
+                symbols = service.etf_list['symbol'].tolist()[:args.limit]
+            elif args.type == "index":
+                symbols = service.index_list[:args.limit]
+            else:
+                symbols = service.stock_list['symbol'].tolist()[:args.limit]
+            print(f"测试模式: 只同步前 {args.limit} 只{asset_type_str}")
         else:
-            # 全量模式：获取全部股票代码
-            symbols = service.stock_list['symbol'].tolist()
-            print(f"将同步全部 {len(symbols)} 只股票")
+            # 不指定symbol时，根据type自动获取全部
+            if args.type == "etf":
+                symbols = service.etf_list['symbol'].tolist()
+            elif args.type == "index":
+                symbols = service.index_list
+            else:
+                symbols = service.stock_list['symbol'].tolist()
+            print(f"将同步全部 {len(symbols)} 只{asset_type_str}（--type={args.type}）")
         
         # 默认跳过北交所股票（除非指定 --include-bj）
         if not args.include_bj:
@@ -1853,39 +2295,84 @@ def main():
             max_workers=args.workers,
             skip_existing=args.skip_existing,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            asset_type=args.type
         )
         print("\n同步结果:")
         print(f"  状态: {result['status']}")
-        print(f"  总股票: {result['total_symbols']}")
+        print(f"  总{asset_type_str}: {result['total_symbols']}")
         print(f"  成功: {result['success']}")
         print(f"  失败: {result['failed']}")
         print(f"  新增记录: {result['new_records']:,}")
         if result['failed_symbols']:
-            print(f"  失败股票: {', '.join(result['failed_symbols'])}")
+            print(f"  失败: {', '.join(result['failed_symbols'])}")
 
         print("\n" + "="*60)
-        print("每日增量更新完成（价格与复权因子已同步）")
+        if args.type == "etf":
+            print("每日增量更新完成（ETF价格已同步）")
+        elif args.type == "index":
+            print("每日增量更新完成（指数数据已同步）")
+        else:
+            print("每日增量更新完成（价格与复权因子已同步）")
         print("="*60)
 
-    elif args.all:
-        # 同步所有股票（可指定全量或增量）
-        symbols = None
-        if args.limit:
-            symbols = service.stock_list['symbol'].tolist()[:args.limit]
+    elif args.symbol or args.override or not any([args.today, args.summary, args.sync_factors]):
+        # 全量同步模式（支持 --override 覆盖）
+        # 处理列表：指定代码 > 全部（根据type）
+        from lib.utils import StockCodeUtil
+        if args.type == "etf":
+            asset_type_str = "ETF"
+        elif args.type == "index":
+            asset_type_str = "指数"
+        else:
+            asset_type_str = "股票"
+
+        if args.symbol:
+            # 指定代码列表（逗号分隔）
+            symbols = [s.strip() for s in args.symbol.split(',')]
+            symbols = [StockCodeUtil.with_suffix(s) or s for s in symbols]
+            print(f"指定{asset_type_str}: {len(symbols)} 只")
+            print(f"  {', '.join(symbols[:5])}{'...' if len(symbols) > 5 else ''}")
+        else:
+            # 不指定symbol时，根据type自动获取全部
+            if args.type == "etf":
+                symbols = service.etf_list['symbol'].tolist()
+            elif args.type == "index":
+                symbols = service.index_list
+            else:
+                symbols = service.stock_list['symbol'].tolist()
+            print(f"将同步全部 {len(symbols)} 只{asset_type_str}（--type={args.type}）")
+
+        # 默认跳过北交所股票（除非指定 --include-bj）- 指数不适用
+        if args.type != "index" and not args.include_bj:
+            bj_count = sum(1 for s in symbols if '.BJ' in s)
+            symbols = [s for s in symbols if '.BJ' not in s]
+            if bj_count > 0:
+                print(f"提示: 已跳过 {bj_count} 只北交所股票（使用 --include-bj 可包含）")
+
+        update_mode = "覆盖" if args.override else "增量"
+        print("\n" + "="*60)
+        print(f"执行{asset_type_str}{update_mode}同步")
+        print("="*60)
+        print(f"类型: {asset_type_str}")
+        print(f"模式: {update_mode}")
+        print(f"并发: {args.workers}")
+        print("="*60)
 
         result = service.sync_all(
             symbols=symbols,
-            incremental=not args.full,
+            incremental=not args.override,
             skip_existing=args.skip_existing,
-            max_workers=args.workers
+            max_workers=args.workers,
+            asset_type=args.type
         )
         print("\n同步结果:")
         print(f"  状态: {result['status']}")
-        print(f"  总股票: {result['total_symbols']}")
+        print(f"  总{asset_type_str}: {result['total_symbols']}")
         print(f"  成功: {result['success']}")
         print(f"  失败: {result['failed']}")
         print(f"  新记录: {result['new_records']:,}")
+        print("="*60)
 
     else:
         parser.print_help()

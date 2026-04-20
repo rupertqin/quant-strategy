@@ -241,14 +241,36 @@ def get_strength_class(strength: str) -> str:
 
 # ============= 页面主函数 =============
 def main():
+    # 从 URL 参数读取 type（支持 ?type=stock 或 ?type=etf）
+    query_params = st.query_params
+    url_type = query_params.get("type", "stock").lower()
+    
+    # 验证 URL 参数
+    if url_type not in ["stock", "etf"]:
+        url_type = "stock"
+    
+    # 使用 session_state 管理资产类型，避免重复切换
+    if "asset_type" not in st.session_state:
+        st.session_state.asset_type = "ETF" if url_type == "etf" else "股票"
+    
     # 侧边栏 - 资产类型选择（放在最上方）
     with st.sidebar:
         st.header("📊 资产类型")
         
+        def on_asset_change():
+            """当选择变化时更新 URL"""
+            new_type = st.session_state.asset_type
+            asset_type_map = {"股票": "stock", "ETF": "etf"}
+            selected = asset_type_map[new_type]
+            if selected != st.query_params.get("type", "stock"):
+                st.query_params["type"] = selected
+        
         asset_type = st.radio(
             "选择监控对象",
             ["股票", "ETF"],
-            index=0,
+            index=0 if st.session_state.asset_type == "股票" else 1,
+            key="asset_type",
+            on_change=on_asset_change,
             help="切换股票或ETF信号监控"
         )
         asset_type_map = {"股票": "stock", "ETF": "etf"}
