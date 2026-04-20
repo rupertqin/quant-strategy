@@ -3,7 +3,7 @@
 
 使用 Lightweight Charts 实现专业K线图表，包含：
 - K线蜡烛图
-- 多周期均线 (MA5/10/20/60)
+- 多周期均线 (MA5/10/20/60/120)
 - 成交量副图
 - 时间范围切换
 - 十字光标和提示框
@@ -280,7 +280,7 @@ def convert_to_forward_adjusted(df: pd.DataFrame, latest_close: float = None) ->
             df_adj[col] = df_adj[col] * ratio
 
     # 转换均线
-    ma_cols = ['ma5', 'ma10', 'ma20', 'ma60']
+    ma_cols = ['ma5', 'ma10', 'ma20', 'ma60', 'ma120']
     for col in ma_cols:
         if col in df_adj.columns:
             df_adj[col] = df_adj[col] * ratio
@@ -467,6 +467,7 @@ def _load_stock_data_impl(symbol: str, force_adjust: str = 'qfq') -> pd.DataFram
         df['ma10'] = df['close'].rolling(window=10).mean()
         df['ma20'] = df['close'].rolling(window=20).mean()
         df['ma60'] = df['close'].rolling(window=60).mean()
+        df['ma120'] = df['close'].rolling(window=120).mean()
 
         # 计算MACD
         df['macd_dif'], df['macd_dea'], df['macd_bar'] = calculate_macd(df)
@@ -579,6 +580,7 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
     ma10_data = []
     ma20_data = []
     ma60_data = []
+    ma120_data = []
 
     for _, row in df.iterrows():
         timestamp = int(row['trade_date'].timestamp())
@@ -590,6 +592,8 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
             ma20_data.append({'time': timestamp, 'value': round(row['ma20'], 2)})
         if not pd.isna(row['ma60']):
             ma60_data.append({'time': timestamp, 'value': round(row['ma60'], 2)})
+        if not pd.isna(row['ma120']):
+            ma120_data.append({'time': timestamp, 'value': round(row['ma120'], 2)})
 
     # 准备MACD数据
     macd_dif_data = []
@@ -626,6 +630,7 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
     ma10_json = json.dumps(ma10_data)
     ma20_json = json.dumps(ma20_data)
     ma60_json = json.dumps(ma60_data)
+    ma120_json = json.dumps(ma120_data)
     macd_dif_json = json.dumps(macd_dif_data)
     macd_dea_json = json.dumps(macd_dea_data)
     macd_bar_json = json.dumps(macd_bar_data)
@@ -684,10 +689,11 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
                 </div>
                 <div class="tooltip-row">
                     <span class="tooltip-label">均线:</span>
-                    <span class="tooltip-val" style="color:#ff9f43">MA5:<span id="tt-ma5">--</span></span>
-                    <span class="tooltip-val" style="color:#00d2d3">MA10:<span id="tt-ma10">--</span></span>
-                    <span class="tooltip-val" style="color:#5f27cd">MA20:<span id="tt-ma20">--</span></span>
-                    <span class="tooltip-val" style="color:#10ac84">MA60:<span id="tt-ma60">--</span></span>
+                    <span class="tooltip-val" style="color:#000000">MA5:<span id="tt-ma5">--</span></span>
+                    <span class="tooltip-val" style="color:#f1c40f">MA10:<span id="tt-ma10">--</span></span>
+                    <span class="tooltip-val" style="color:#9b59b6">MA20:<span id="tt-ma20">--</span></span>
+                    <span class="tooltip-val" style="color:#fd79a8">MA60:<span id="tt-ma60">--</span></span>
+                    <span class="tooltip-val" style="color:#6c5ce7">MA120:<span id="tt-ma120">--</span></span>
                 </div>
                 <div class="tooltip-row">
                     <span class="tooltip-label">MACD:</span>
@@ -760,8 +766,10 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
             candleSeries.setData({candles_json});
 
             // 均线 - 禁用右侧标签和标题（使用上方自定义图例）
+            // 使用与K线图相同的价格刻度(priceScaleId: 'right')确保对齐
             const ma5Series = chart.addLineSeries({{
-                color: '#ff9f43', lineWidth: 1,
+                color: '#000000', lineWidth: 1,
+                priceScaleId: 'right',
                 lastValueVisible: false,
                 priceLineVisible: false,
                 title: '',
@@ -770,7 +778,8 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
             ma5Series.setData({ma5_json});
 
             const ma10Series = chart.addLineSeries({{
-                color: '#00d2d3', lineWidth: 1,
+                color: '#f1c40f', lineWidth: 1,
+                priceScaleId: 'right',
                 lastValueVisible: false,
                 priceLineVisible: false,
                 title: '',
@@ -779,7 +788,8 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
             ma10Series.setData({ma10_json});
 
             const ma20Series = chart.addLineSeries({{
-                color: '#5f27cd', lineWidth: 1,
+                color: '#9b59b6', lineWidth: 1,
+                priceScaleId: 'right',
                 lastValueVisible: false,
                 priceLineVisible: false,
                 title: '',
@@ -788,13 +798,24 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
             ma20Series.setData({ma20_json});
 
             const ma60Series = chart.addLineSeries({{
-                color: '#10ac84', lineWidth: 1,
+                color: '#fd79a8', lineWidth: 1,
+                priceScaleId: 'right',
                 lastValueVisible: false,
                 priceLineVisible: false,
                 title: '',
                 crosshairMarkerVisible: false
             }});
             ma60Series.setData({ma60_json});
+
+            const ma120Series = chart.addLineSeries({{
+                color: '#6c5ce7', lineWidth: 1,
+                priceScaleId: 'right',
+                lastValueVisible: false,
+                priceLineVisible: false,
+                title: '',
+                crosshairMarkerVisible: false
+            }});
+            ma120Series.setData({ma120_json});
 
             // 设置主图占比
             candleSeries.priceScale().applyOptions({{
@@ -922,21 +943,24 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
                 const ma10Data = {ma10_json};
                 const ma20Data = {ma20_json};
                 const ma60Data = {ma60_json};
+                const ma120Data = {ma120_json};
                 const macdDifData = {macd_dif_json};
                 const macdDeaData = {macd_dea_json};
                 const kdjKData = {kdj_k_json};
                 const kdjDData = {kdj_d_json};
                 const kdjJData = {kdj_j_json};
-                
+
                 const lastMa5 = ma5Data.filter(d => d.value !== null && d.value !== undefined).pop();
                 const lastMa10 = ma10Data.filter(d => d.value !== null && d.value !== undefined).pop();
                 const lastMa20 = ma20Data.filter(d => d.value !== null && d.value !== undefined).pop();
                 const lastMa60 = ma60Data.filter(d => d.value !== null && d.value !== undefined).pop();
-                
+                const lastMa120 = ma120Data.filter(d => d.value !== null && d.value !== undefined).pop();
+
                 document.getElementById('tt-ma5').textContent = lastMa5 ? lastMa5.value.toFixed(2) : '--';
                 document.getElementById('tt-ma10').textContent = lastMa10 ? lastMa10.value.toFixed(2) : '--';
                 document.getElementById('tt-ma20').textContent = lastMa20 ? lastMa20.value.toFixed(2) : '--';
                 document.getElementById('tt-ma60').textContent = lastMa60 ? lastMa60.value.toFixed(2) : '--';
+                document.getElementById('tt-ma120').textContent = lastMa120 ? lastMa120.value.toFixed(2) : '--';
                 
                 // 更新MACD
                 const lastDif = macdDifData.filter(d => d.value !== null && d.value !== undefined).pop();
@@ -1000,6 +1024,9 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
 
                 var ma60 = data.get(ma60Series);
                 document.getElementById('tt-ma60').textContent = (ma60 && ma60.value) ? ma60.value.toFixed(2) : '--';
+
+                var ma120 = data.get(ma120Series);
+                document.getElementById('tt-ma120').textContent = (ma120 && ma120.value) ? ma120.value.toFixed(2) : '--';
 
                 // 更新MACD
                 var dif = data.get(macdDifSeries);
@@ -1278,10 +1305,10 @@ def main():
                 st.markdown(render_signal_card(sig, idx), unsafe_allow_html=True)
 
     # ============= 周期选择 =============
-    periods = [("120日线", "D120"), ("日线", "D"), ("周线", "W"), ("月线", "M")]
+    periods = [("日线", "D"), ("周线", "W"), ("月线", "M")]
 
     if 'chart_period' not in st.session_state:
-        st.session_state['chart_period'] = "D120"
+        st.session_state['chart_period'] = "D"
 
     cols = st.columns([1, 1, 1, 1, 2])
     for i, (label, value) in enumerate(periods):
@@ -1301,9 +1328,6 @@ def main():
         df_processed = resample_to_weekly(df)
     elif current_period == "M":
         df_processed = resample_to_monthly(df)
-    elif current_period == "D120":
-        # 120日线：只取最近120个交易日
-        df_processed = df.copy().tail(120).reset_index(drop=True)
     else:
         df_processed = df.copy()
 
@@ -1316,6 +1340,7 @@ def main():
         df_processed['ma10'] = df_processed['close'].rolling(window=10).mean()
         df_processed['ma20'] = df_processed['close'].rolling(window=20).mean()
         df_processed['ma60'] = df_processed['close'].rolling(window=60).mean()
+        df_processed['ma120'] = df_processed['close'].rolling(window=120).mean()
         df_processed['macd_dif'], df_processed['macd_dea'], df_processed['macd_bar'] = calculate_macd(df_processed)
         df_processed['kdj_k'], df_processed['kdj_d'], df_processed['kdj_j'] = calculate_kdj(df_processed)
 
@@ -1349,7 +1374,7 @@ def main():
 
         # 显示指标数据
         display_cols = ['trade_date', 'open', 'high', 'low', 'close', 'volume',
-                       'ma5', 'ma10', 'ma20', 'macd_dif', 'macd_dea', 'macd_bar',
+                       'ma5', 'ma10', 'ma20', 'ma60', 'ma120', 'macd_dif', 'macd_dea', 'macd_bar',
                        'kdj_k', 'kdj_d', 'kdj_j']
 
         df_display_formatted = df_display[display_cols].copy()

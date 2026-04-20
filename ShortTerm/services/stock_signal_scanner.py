@@ -284,45 +284,46 @@ class LeftSignalDetector:
         
         latest = df.iloc[-1]
         prev = df.iloc[-2] if len(df) > 1 else latest
-        
+        prev2 = df.iloc[-3] if len(df) > 2 else prev
+
         # 1. MACD底背离
         macd_divergence = self._detect_macd_divergence(df)
         if macd_divergence:
             signals.append(self._create_signal(
                 symbol, name, "MACD底背离", macd_divergence,
-                latest, "价格创新低但MACD未创新低，可能反弹", df, period
+                latest, "价格创新低但MACD未创新低，可能反弹", df, period, prev, prev2
             ))
-        
+
         # 2. KDJ底背离
         kdj_divergence = self._detect_kdj_divergence(df)
         if kdj_divergence:
             signals.append(self._create_signal(
                 symbol, name, "KDJ底背离", kdj_divergence,
-                latest, "价格创新低但KDJ未创新低，超卖反弹", df, period
+                latest, "价格创新低但KDJ未创新低，超卖反弹", df, period, prev, prev2
             ))
-        
+
         # 3. 超跌反弹（股价远离MA60）
         oversold = self._detect_oversold(df, latest)
         if oversold:
             signals.append(self._create_signal(
                 symbol, name, "超跌反弹", oversold,
-                latest, "股价大幅偏离均线，技术性反弹概率高", df, period
+                latest, "股价大幅偏离均线，技术性反弹概率高", df, period, prev, prev2
             ))
-        
+
         # 4. 缩量十字星（企稳信号）
         doji = self._detect_doji(df, latest, prev)
         if doji:
             signals.append(self._create_signal(
                 symbol, name, "缩量十字星", doji,
-                latest, "下跌后出现缩量十字星，可能企稳", df, period
+                latest, "下跌后出现缩量十字星，可能企稳", df, period, prev, prev2
             ))
-        
+
         # 5. 长下影线（支撑信号）
         long_shadow = self._detect_long_lower_shadow(df, latest)
         if long_shadow:
             signals.append(self._create_signal(
                 symbol, name, "长下影线", long_shadow,
-                latest, "出现长下影线，下方有支撑", df, period
+                latest, "出现长下影线，下方有支撑", df, period, prev, prev2
             ))
         
         # 6. 新增：左侧量价信号（缩量整理、量价背离）
@@ -476,8 +477,8 @@ class LeftSignalDetector:
         
         return None
     
-    def _create_signal(self, symbol, name, signal_name, strength, latest, 
-                       description, df, period: str = "daily") -> StockSignal:
+    def _create_signal(self, symbol, name, signal_name, strength, latest,
+                       description, df, period: str = "daily", prev=None, prev2=None) -> StockSignal:
         """创建信号对象"""
         technicals = {
             'ma5': round(latest['ma5'], 2) if not pd.isna(latest['ma5']) else None,
@@ -490,10 +491,15 @@ class LeftSignalDetector:
             'kdj_d': round(latest['kdj_d'], 2) if not pd.isna(latest['kdj_d']) else None,
             'kdj_j': round(latest['kdj_j'], 2) if not pd.isna(latest['kdj_j']) else None,
         }
-        
+
         # 计算综合评分
         score = self._calculate_score(signal_name, strength, latest)
-        
+
+        # 计算涨停质量评分（策略2）
+        zt_quality = self._calculate_zt_quality_score(latest, prev, prev2, df)
+        if zt_quality['zt_quality_score'] is not None:
+            technicals.update(zt_quality)
+
         return StockSignal(
             symbol=symbol,
             name=name,
@@ -594,6 +600,110 @@ class LeftSignalDetector:
         
         # 确保分数在合理范围
         return max(30, min(score, 100))
+    
+    def _calculate_zt_quality_score(self, latest, prev, prev2, df_history: pd.DataFrame) -> dict:
+        """
+        计算涨停质量评分（策略2）
+        
+        用于识别涨停陷阱 vs 优质涨停
+        
+        Returns:
+            {
+                'zt_quality_score': int,  # 涨停质量分 0-100
+                'zt_quality_level': str,  # A/B/C/D 等级
+                'zt_risk_flags': List[str],  # 风险标记
+            }
+        """
+        change_pct = latest.get('change_pct', 0)
+        
+        # 非涨停直接返回
+        if change_pct < 9.9:
+            return {
+                'zt_quality_score': None,
+                'zt_quality_level': None,
+                'zt_risk_flags': [],
+            }
+        
+        score = 100
+        risk_flags = []
+        
+        # 1. 前期涨幅检查（避免高位涨停）
+        if len(df_history) >= 5:
+            recent_changes = df_history['change_pct'].tail(5).tolist()
+            recent_sum = sum(recent_changes[:-1])  # 前4天涨幅
+            
+            if recent_sum > 20:
+                score -= 25
+                risk_flags.append("前4日已涨>20%，高位风险")
+            elif recent_sum > 10:
+                score -= 15
+                risk_flags.append("前4日已涨>10%，追高风险")
+        
+        # 2. 成交量健康度
+        vol_ratio = latest.get('volume_ratio', 1)
+        if vol_ratio > 5:
+            score -= 20
+            risk_flags.append("异常放量(量比>5)，可能出货")
+        elif vol_ratio > 3:
+            score -= 10
+            risk_flags.append("放量过大(量比>3)")
+        elif vol_ratio < 1:
+            score -= 15
+            risk_flags.append("缩量涨停，封单不足")
+        
+        # 3. 涨停类型检查
+        # 左侧信号涨停 = 矛盾（抄底信号却涨停）
+        # 这个在调用处判断，这里只计算基础分
+        
+        # 4. 趋势健康度
+        ma5 = latest.get('ma5')
+        ma10 = latest.get('ma10')
+        ma20 = latest.get('ma20')
+        
+        if not pd.isna(ma5) and not pd.isna(ma10) and not pd.isna(ma20):
+            if ma5 < ma10:
+                score -= 20
+                risk_flags.append("MA5<MA10，趋势未确认")
+            elif ma10 < ma20:
+                score -= 10
+                risk_flags.append("MA10<MA20，中期偏弱")
+        
+        # 5. KDJ超买检查（涨停时KDJ过高有风险）
+        kdj_j = latest.get('kdj_j')
+        if not pd.isna(kdj_j) and kdj_j > 90:
+            score -= 15
+            risk_flags.append("KDJ严重超买(J>90)")
+        elif not pd.isna(kdj_j) and kdj_j > 80:
+            score -= 8
+            risk_flags.append("KDJ超买(J>80)")
+        
+        # 6. 连续涨停检查
+        prev_change = prev.get('change_pct', 0) if prev is not None else 0
+        prev2_change = prev2.get('change_pct', 0) if prev2 is not None else 0
+        
+        if prev_change >= 9.9:
+            score -= 20
+            risk_flags.append("连续涨停，开板风险")
+            if prev2_change >= 9.9:
+                score -= 15
+                risk_flags.append("三连板，高风险")
+        
+        # 确定等级
+        final_score = max(0, min(score, 100))
+        if final_score >= 80:
+            level = 'A'
+        elif final_score >= 65:
+            level = 'B'
+        elif final_score >= 50:
+            level = 'C'
+        else:
+            level = 'D'
+        
+        return {
+            'zt_quality_score': final_score,
+            'zt_quality_level': level,
+            'zt_risk_flags': risk_flags,
+        }
 
 
 class RightSignalDetector:
@@ -632,55 +742,55 @@ class RightSignalDetector:
         if ma_cross:
             signals.append(self._create_signal(
                 symbol, name, "MA5金叉MA10", ma_cross,
-                latest, "短期均线上穿，短期趋势转强", df, period
+                latest, "短期均线上穿，短期趋势转强", df, period, prev, prev2
             ))
-        
+
         # 2. MA5上穿MA20金叉
         ma_cross_20 = self._detect_ma_cross_20(df, latest, prev)
         if ma_cross_20:
             signals.append(self._create_signal(
                 symbol, name, "MA5金叉MA20", ma_cross_20,
-                latest, "短期均线上穿中期均线，趋势转强", df, period
+                latest, "短期均线上穿中期均线，趋势转强", df, period, prev, prev2
             ))
-        
+
         # 3. MACD金叉
         macd_cross = self._detect_macd_cross(latest, prev)
         if macd_cross:
             signals.append(self._create_signal(
                 symbol, name, "MACD金叉", macd_cross,
-                latest, "DIF上穿DEA，动量转强", df, period
+                latest, "DIF上穿DEA，动量转强", df, period, prev, prev2
             ))
-        
+
         # 4. KDJ金叉
         kdj_cross = self._detect_kdj_cross(latest, prev)
         if kdj_cross:
             signals.append(self._create_signal(
                 symbol, name, "KDJ金叉", kdj_cross,
-                latest, "K线上穿D线，短期超买", df, period
+                latest, "K线上穿D线，短期超买", df, period, prev, prev2
             ))
-        
+
         # 5. 量价突破（放量上涨）- 保留原有逻辑，与新模块互补
         volume_breakout = self._detect_volume_breakout(df, latest, prev)
         if volume_breakout:
             signals.append(self._create_signal(
                 symbol, name, "量价突破", volume_breakout,
-                latest, "放量上涨，资金入场", df, period
+                latest, "放量上涨，资金入场", df, period, prev, prev2
             ))
-        
+
         # 6. 均线多头排列
         ma_bull = self._detect_ma_bullish(df, latest)
         if ma_bull:
             signals.append(self._create_signal(
                 symbol, name, "均线多头排列", ma_bull,
-                latest, "均线呈多头排列，趋势良好", df, period
+                latest, "均线呈多头排列，趋势良好", df, period, prev, prev2
             ))
-        
+
         # 7. 突破平台
         platform_break = self._detect_platform_breakout(df, latest)
         if platform_break:
             signals.append(self._create_signal(
                 symbol, name, "突破平台", platform_break,
-                latest, "放量突破近期整理平台", df, period
+                latest, "放量突破近期整理平台", df, period, prev, prev2
             ))
         
         # 8. 新增：右侧量价信号（放量突破、倍量启动）
@@ -839,7 +949,7 @@ class RightSignalDetector:
         return None
     
     def _create_signal(self, symbol, name, signal_name, strength, latest,
-                       description, df, period: str = "daily") -> StockSignal:
+                       description, df, period: str = "daily", prev=None, prev2=None) -> StockSignal:
         """创建信号对象"""
         technicals = {
             'ma5': round(latest['ma5'], 2) if not pd.isna(latest['ma5']) else None,
@@ -854,6 +964,11 @@ class RightSignalDetector:
         }
 
         score = self._calculate_score(signal_name, strength, latest)
+
+        # 计算涨停质量评分（策略2）
+        zt_quality = self._calculate_zt_quality_score(latest, prev, prev2, df)
+        if zt_quality['zt_quality_score'] is not None:
+            technicals.update(zt_quality)
 
         return StockSignal(
             symbol=symbol,
@@ -874,7 +989,7 @@ class RightSignalDetector:
     def _calculate_score(self, signal_name: str, strength: str, latest) -> int:
         """
         计算右侧信号评分 - 严格版
-        
+
         右侧信号要求更严格的量价配合和趋势确认
         """
         score = 35  # 右侧信号基础分稍高（趋势已确认）

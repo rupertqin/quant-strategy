@@ -206,6 +206,27 @@ def render_signal_card(signal: dict, idx: int = 0) -> str:
     if ma_bonding_html:
         html += f'<div style="margin: 5px 0;"><span style="background: linear-gradient(135deg, #8e44ad 0%, #9b59b6 100%); color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">🧲 均线粘合 {ma_bonding_html}</span></div>'
 
+    # 涨停质量等级（策略3：分层展示）
+    zt_level = tech.get('zt_quality_level')
+    zt_score = tech.get('zt_quality_score')
+    zt_flags = tech.get('zt_risk_flags', [])
+
+    if zt_level and zt_score is not None:
+        # 根据等级设置颜色
+        level_colors = {
+            'A': ('#27ae60', '✅'),  # 绿色 - 优质
+            'B': ('#f39c12', '⚠️'),  # 橙色 - 一般
+            'C': ('#e74c3c', '❌'),  # 红色 - 较差
+            'D': ('#c0392b', '🚫'),  # 深红 - 陷阱
+        }
+        color, emoji = level_colors.get(zt_level, ('#95a5a6', '❓'))
+
+        # 风险标记提示
+        risk_tooltip = '\\n'.join(zt_flags) if zt_flags else '无明显风险'
+        risk_hint = f' title="{risk_tooltip}"' if zt_flags else ''
+
+        html += f'<div style="margin: 5px 0;"{risk_hint}><span style="background: {color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">{emoji} 涨停质量 {zt_level}级 ({zt_score}分)</span></div>'
+
     html += '</div>'
 
     return html
