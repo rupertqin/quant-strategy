@@ -418,10 +418,10 @@ def main():
             # 获取该股票的涨跌幅信息（用于风险过滤）
             latest_signal = max(group['signals'], key=lambda x: x.get('trigger_date', ''))
             change_pct = latest_signal.get('change_pct', 0)
-            
+
             # 计算评分，传入涨跌幅
             group['total_score'] = calculate_stock_score(
-                group['signals'], 
+                group['signals'],
                 change_pct=change_pct
             )
 
@@ -528,19 +528,58 @@ def main():
             col1, col2 = st.columns([6, 1])
 
             with col1:
-                # 股票名称和数据日期同一行左右分布
-                name_col, date_col = st.columns([3, 1])
-                with name_col:
-                    # 点击股票名称跳转图表页面
-                    if st.button(
-                        f"📈 {stock_name} ({symbol})",
-                        key=f"btn_stock_{symbol}_{idx}_{page}",
-                        help=f"点击跳转到 {symbol} K线图",
-                        type="primary"
-                    ):
+                # 获取涨跌幅
+                change_pct = stock_group.get('change_pct', 0)
+                if change_pct > 0:
+                    change_str = f"+{change_pct:.2f}%"
+                    change_color = "#ff4757"  # 红色表示上涨
+                elif change_pct < 0:
+                    change_str = f"{change_pct:.2f}%"
+                    change_color = "#2ed573"  # 绿色表示下跌
+                else:
+                    change_str = "0.00%"
+                    change_color = "#888"  # 灰色表示平盘
+
+                # 按钮背景色根据涨跌变化，百分比在按钮内
+                if change_pct > 0:
+                    btn_bg = "linear-gradient(135deg, #ff6b6b 0%, #ff8e8e 100%)"  # 红色渐变（上涨）
+                elif change_pct < 0:
+                    btn_bg = "linear-gradient(135deg, #2ed573 0%, #7bed9f 100%)"  # 绿色渐变（下跌）
+                else:
+                    btn_bg = "linear-gradient(135deg, #95a5a6 0%, #bdc3c7 100%)"  # 灰色渐变（平盘）
+
+                # 一行显示：左侧是按钮（带百分比和颜色），右侧是日期
+                line_col, date_col = st.columns([3, 1])
+                with line_col:
+                    # 使用HTML自定义按钮（背景色根据涨跌变化）
+                    btn_html = f"""
+                    <a href="/?nav={symbol}" target="_self" style="
+                        background: {btn_bg};
+                        color: white;
+                        padding: 10px 20px;
+                        border-radius: 10px;
+                        font-size: 16px;
+                        font-weight: 600;
+                        text-decoration: none;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 10px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                        transition: all 0.3s;
+                    " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'" 
+                    onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.15)'">
+                        📈 {stock_name} ({symbol}) <span style="background: rgba(255,255,255,0.25); padding: 2px 8px; border-radius: 4px; font-size: 14px;">{change_str}</span>
+                    </a>
+                    """
+                    st.markdown(btn_html, unsafe_allow_html=True)
+                    
+                    # 处理点击
+                    if st.query_params.get('nav') == symbol:
                         st.session_state['selected_stock'] = symbol
                         st.session_state['selected_name'] = stock_name
+                        st.query_params.clear()
                         st.switch_page("pages/stock_chart.py")
+
                 with date_col:
                     # 价格时间右对齐（优先显示盘中时间）
                     st.markdown(f'<div style="text-align: right; font-size: 11px; color: {time_color}; margin-top: 8px;"><span style="font-size: 10px; opacity: 0.7;">{time_tooltip}</span>: {time_display}</div>', unsafe_allow_html=True)
