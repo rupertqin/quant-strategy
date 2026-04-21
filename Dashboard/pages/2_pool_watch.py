@@ -129,28 +129,6 @@ for symbol, data in signals_by_stock.items():
 with st.sidebar:
     st.header("📊 股票池")
     
-    # 运行扫描按钮
-    if st.button("🔄 运行股票池扫描", type="primary"):
-        with st.spinner("正在扫描股票池..."):
-            import subprocess
-            try:
-                result = subprocess.run(
-                    [sys.executable, "run_signal_scan.py", "--limit", str(len(pool_stocks))],
-                    cwd=BASE_DIR / "ShortTerm",
-                    capture_output=True,
-                    text=True,
-                    timeout=300
-                )
-                if result.returncode == 0:
-                    st.success("扫描完成!")
-                    st.rerun()
-                else:
-                    st.error(f"运行失败: {result.stderr[:200]}")
-            except Exception as e:
-                st.error(f"错误: {e}")
-    
-    st.divider()
-    
     # 筛选
     st.subheader("筛选")
     filter_signal_type = st.selectbox("信号类型", ["全部", "左侧信号", "右侧信号"])

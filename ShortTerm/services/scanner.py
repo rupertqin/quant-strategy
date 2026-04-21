@@ -399,6 +399,72 @@ class LimitUpScanner:
             logger.warning(f"从本地数据计算涨跌家数失败: {e}")
             return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
 
+    def _calculate_market_breadth_from_realtime(self) -> dict:
+        """
+        从本地存储的实时行情数据文件计算涨跌家数
+        
+        Returns:
+            {'up': int, 'down': int, 'flat': int, 'total': int, 'up_ratio': float, 'breadth_score': float}
+        """
+        try:
+            from DataHub.config import REALTIME_DIR
+            from datetime import datetime
+            
+            today = datetime.now().strftime('%Y%m%d')
+            
+            # 查找今日最新的实时数据文件
+            realtime_files = sorted(REALTIME_DIR.glob(f"realtime_{today}_*.json"))
+            if not realtime_files:
+                print(f"    ⚠️ 未找到今日实时数据文件")
+                return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
+            
+            # 使用最新的文件
+            latest_file = realtime_files[-1]
+            print(f"    从实时数据文件计算: {latest_file.name}")
+            
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            stocks_data = data.get('data', [])
+            if not stocks_data:
+                print("    ⚠️ 实时数据文件为空")
+                return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
+            
+            up_count = 0
+            down_count = 0
+            flat_count = 0
+            
+            for stock in stocks_data:
+                change_pct = stock.get('change_pct')
+                if change_pct is None or pd.isna(change_pct):
+                    continue
+                
+                if change_pct > 0:
+                    up_count += 1
+                elif change_pct < 0:
+                    down_count += 1
+                else:
+                    flat_count += 1
+            
+            total = up_count + down_count + flat_count
+            up_ratio = up_count / total if total > 0 else 0.5
+            breadth_score = (up_ratio - 0.5) * 200  # 范围 -100 到 100
+            
+            print(f"    计算结果: 涨{up_count}/跌{down_count}/平{flat_count}, 总计{total}")
+            
+            return {
+                'up': up_count,
+                'down': down_count,
+                'flat': flat_count,
+                'total': total,
+                'up_ratio': up_ratio,
+                'breadth_score': breadth_score
+            }
+        except Exception as e:
+            print(f"    ⚠️ 从实时数据文件计算涨跌家数失败: {e}")
+            logger.debug(f"从实时数据文件计算涨跌家数失败: {e}")
+            return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
+
     def _get_limit_threshold(self, symbol: str, stock_name: str = None) -> dict:
         """
         根据股票代码和名称获取涨跌幅限制阈值
@@ -520,107 +586,73 @@ class LimitUpScanner:
 
     def _calculate_zt_dt_from_realtime(self) -> tuple:
         """
-        使用实时行情数据计算涨跌停数量（用于验证对比）
+        从本地存储的实时行情数据文件计算涨跌停数量
         
         Returns:
-            (zt_count, dt_count, source)
+            (zt_count, dt_count, source, stats)
         """
         try:
-            import akshare as ak
-            
-            # 方法1: 东方财富实时行情
-            try:
-                df = ak.stock_zh_a_spot_em()
-                if not df.empty and '涨跌幅' in df.columns and '代码' in df.columns:
-                    # 需要获取名称列来判断ST股
-                    name_col = '名称' if '名称' in df.columns else None
-                    
-                    zt_count = 0
-                    dt_count = 0
-                    zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
-                    dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
-                    
-                    for _, row in df.iterrows():
-                        code = str(row['代码'])
-                        change = float(row['涨跌幅'])
-                        name = str(row[name_col]) if name_col else None
-                        
-                        threshold = self._get_limit_threshold(code, name)
-                        stock_type = threshold['type']
-                        
-                        if change >= threshold['up']:
-                            zt_count += 1
-                            zt_breakdown[stock_type] = zt_breakdown.get(stock_type, 0) + 1
-                        elif change <= threshold['down']:
-                            dt_count += 1
-                            dt_breakdown[stock_type] = dt_breakdown.get(stock_type, 0) + 1
-                    
-                    stats = {
-                        'zt_breakdown': zt_breakdown,
-                        'dt_breakdown': dt_breakdown,
-                        'total': len(df)
-                    }
-                    return zt_count, dt_count, "东方财富实时", stats
-            except Exception as e:
-                logger.debug(f"东方财富实时行情失败: {e}")
-            
-            # 方法2: 新浪实时行情
-            try:
-                df = ak.stock_zh_a_spot()
-                if not df.empty:
-                    code_col = '代码' if '代码' in df.columns else 'symbol'
-                    name_col = '名称' if '名称' in df.columns else 'name' if 'name' in df.columns else None
-                    change_col = '涨跌幅' if '涨跌幅' in df.columns else 'change'
-                    
-                    zt_count = 0
-                    dt_count = 0
-                    zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
-                    dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
-                    
-                    for _, row in df.iterrows():
-                        code = str(row[code_col])
-                        change = float(row[change_col])
-                        name = str(row[name_col]) if name_col else None
-                        
-                        threshold = self._get_limit_threshold(code, name)
-                        stock_type = threshold['type']
-                        
-                        if change >= threshold['up']:
-                            zt_count += 1
-                            zt_breakdown[stock_type] = zt_breakdown.get(stock_type, 0) + 1
-                        elif change <= threshold['down']:
-                            dt_count += 1
-                            dt_breakdown[stock_type] = dt_breakdown.get(stock_type, 0) + 1
-                    
-                    stats = {
-                        'zt_breakdown': zt_breakdown,
-                        'dt_breakdown': dt_breakdown,
-                        'total': len(df)
-                    }
-                    return zt_count, dt_count, "新浪实时", stats
-            except Exception as e:
-                logger.debug(f"新浪实时行情失败: {e}")
-            
-            # 方法3: 使用涨停股池接口
+            from DataHub.config import REALTIME_DIR
             from datetime import datetime
+            
             today = datetime.now().strftime('%Y%m%d')
             
-            try:
-                df_zt = ak.stock_zt_pool_em(date=today)
-                zt_count = len(df_zt) if not df_zt.empty else 0
-            except:
-                zt_count = 0
+            # 查找今日最新的实时数据文件
+            realtime_files = sorted(REALTIME_DIR.glob(f"realtime_{today}_*.json"))
+            if not realtime_files:
+                print(f"    ⚠️ 未找到今日实时数据文件")
+                return 0, 0, "无本地数据", {}
             
-            try:
-                df_dt = ak.stock_zt_pool_dtgc_em(date=today)
-                dt_count = len(df_dt) if not df_dt.empty else 0
-            except:
-                dt_count = 0
+            # 使用最新的文件
+            latest_file = realtime_files[-1]
+            print(f"    从实时数据文件计算涨跌停: {latest_file.name}")
             
-            return zt_count, dt_count, "股池接口", {}
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            stocks_data = data.get('data', [])
+            if not stocks_data:
+                print("    ⚠️ 实时数据文件为空")
+                return 0, 0, "数据为空", {}
+            
+            zt_count = 0
+            dt_count = 0
+            zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+            dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
+            
+            for stock in stocks_data:
+                try:
+                    symbol = stock.get('symbol', '')
+                    change_pct = stock.get('change_pct')
+                    name = stock.get('name', '')
+                    
+                    if change_pct is None or pd.isna(change_pct):
+                        continue
+                    
+                    threshold = self._get_limit_threshold(symbol, name)
+                    stock_type = threshold['type']
+                    
+                    if change_pct >= threshold['up']:
+                        zt_count += 1
+                        zt_breakdown[stock_type] = zt_breakdown.get(stock_type, 0) + 1
+                    elif change_pct <= threshold['down']:
+                        dt_count += 1
+                        dt_breakdown[stock_type] = dt_breakdown.get(stock_type, 0) + 1
+                except Exception:
+                    continue
+            
+            stats = {
+                'zt_breakdown': zt_breakdown,
+                'dt_breakdown': dt_breakdown,
+                'total': len(stocks_data)
+            }
+            
+            print(f"    计算结果: 涨停{zt_count}/跌停{dt_count}, 总计{len(stocks_data)}")
+            return zt_count, dt_count, "本地实时文件", stats
             
         except Exception as e:
-            logger.debug(f"实时数据获取失败: {e}")
+            print(f"    ⚠️ 从实时数据文件计算涨跌停失败: {e}")
+            logger.debug(f"从实时数据文件计算涨跌停失败: {e}")
             return 0, 0, "失败", {}
 
     def _calculate_index_performance_from_local(self) -> dict:
@@ -695,6 +727,78 @@ class LimitUpScanner:
             return result
         except Exception as e:
             logger.warning(f"从本地数据计算指数表现失败: {e}")
+            return {}
+
+    def _calculate_index_performance_from_realtime(self) -> dict:
+        """
+        从本地存储的指数实时行情数据文件计算主要指数表现
+        
+        Returns:
+            {指数名称: {'change': float, 'close': float, 'trend': str}}
+        """
+        try:
+            from DataHub.config import REALTIME_DIR
+            from datetime import datetime
+            
+            today = datetime.now().strftime('%Y%m%d')
+            
+            # 查找今日最新的指数实时数据文件
+            index_files = sorted(REALTIME_DIR.glob(f"index_realtime_{today}_*.json"))
+            if not index_files:
+                print(f"    ⚠️ 未找到今日指数实时数据文件")
+                return {}
+            
+            # 使用最新的文件
+            latest_file = index_files[-1]
+            print(f"    从指数实时数据文件计算: {latest_file.name}")
+            
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            index_data = data.get('data', [])
+            if not index_data:
+                print("    ⚠️ 指数实时数据文件为空")
+                return {}
+            
+            result = {}
+            
+            # 指数代码映射（文件中的代码 -> 内部名称）
+            for item in index_data:
+                try:
+                    symbol = item.get('symbol', '')
+                    idx_name = self.CORE_INDICES.get(symbol)
+                    if not idx_name:
+                        continue
+                    
+                    change_pct = item.get('change_pct', 0)
+                    close_price = item.get('close', 0)
+                    
+                    if pd.isna(change_pct):
+                        change_pct = 0
+                    if pd.isna(close_price):
+                        close_price = 0
+                    
+                    # 判断趋势
+                    if change_pct > 1:
+                        trend = 'UP'
+                    elif change_pct < -1:
+                        trend = 'DOWN'
+                    else:
+                        trend = 'NEUTRAL'
+                    
+                    result[idx_name] = {
+                        'change': change_pct,
+                        'close': close_price,
+                        'trend': trend
+                    }
+                except Exception:
+                    continue
+            
+            print(f"    成功计算 {len(result)} 个指数")
+            return result
+        except Exception as e:
+            print(f"    ⚠️ 从实时数据文件计算指数表现失败: {e}")
+            logger.debug(f"从实时数据文件计算指数表现失败: {e}")
             return {}
 
     def _get_index_intraday(self, code: str, name: str) -> list:
@@ -801,21 +905,29 @@ class LimitUpScanner:
         print(f"扫描日期: {date}")
         print('='*50)
 
-        # ========== 1. 技术面指标采集（从本地数据计算）==========
-        print("\n📊 从本地数据计算技术面指标...")
+        # ========== 1. 技术面指标采集（优先使用实时数据）==========
+        print("\n📊 从实时数据计算技术面指标...")
         
-        # 1.1 市场涨跌家数（广度）- 从本地股价数据计算
-        breadth = self._calculate_market_breadth_from_local(date)
+        # 1.1 市场涨跌家数（广度）- 优先从实时数据计算
+        breadth = self._calculate_market_breadth_from_realtime()
+        if breadth['total'] == 0:
+            print("  ⚠️ 实时数据获取失败，回退到本地数据")
+            breadth = self._calculate_market_breadth_from_local(date)
         print(f"  涨跌家数: 涨{breadth['up']}/跌{breadth['down']}/平{breadth['flat']}")
         print(f"  涨跌比: {breadth['up_ratio']:.1%}")
         
-        # 1.2 主要指数表现 - 从本地指数数据文件计算
-        indices = self._calculate_index_performance_from_local()
+        # 1.2 主要指数表现 - 优先从实时数据计算
+        indices = self._calculate_index_performance_from_realtime()
+        if not indices:
+            print("  ⚠️ 实时指数数据获取失败，回退到本地数据")
+            indices = self._calculate_index_performance_from_local()
         print(f"  指数表现:")
         for name, data in indices.items():
             if name == 'inter_index_validation':
                 continue
-            print(f"    {name}: {data['change']:+.2f}% ({data['trend']})")
+            change_str = f"{data.get('change', 0):+.2f}%" if 'change' in data else "N/A"
+            trend_str = data.get('trend', 'UNKNOWN') if 'trend' in data else "UNKNOWN"
+            print(f"    {name}: {change_str} ({trend_str})")
         
         # 1.3 板块强度（进攻vs防守）- 暂时使用默认值
         sectors = {
@@ -832,20 +944,20 @@ class LimitUpScanner:
         # ========== 2. 获取涨停数据（统一数据源）==========
         df_zt = self.get_today_zt_pool(date)
         
-        # 1.4 涨停跌停统计 - 从本地股价数据计算
-        print("\n  📈 涨跌停统计（本地数据）:")
-        zt_count, dt_count = self._calculate_zt_dt_from_local(date)
-        
-        # 实时数据对比（用于验证）
-        print("\n  📊 涨跌停统计（实时数据对比）:")
-        rt_zt, rt_dt, rt_source, rt_stats = self._calculate_zt_dt_from_realtime()
-        print(f"    实时数据({rt_source}): 涨停{rt_zt}/跌停{rt_dt}")
+        # 1.4 涨停跌停统计 - 优先使用实时数据计算（与图表逻辑一致）
+        print("\n  📈 涨跌停统计（基于实时数据）:")
+        zt_count, dt_count, rt_source, rt_stats = self._calculate_zt_dt_from_realtime()
+        print(f"    数据来源: {rt_source}")
+        print(f"    涨停: {zt_count}家, 跌停: {dt_count}家")
         if rt_stats:
-            print(f"    实时涨停分类: 主板{rt_stats['zt_breakdown']['主板']}/创业板{rt_stats['zt_breakdown']['创业板']}/科创板{rt_stats['zt_breakdown']['科创板']}/北交所{rt_stats['zt_breakdown']['北交所']}/ST{rt_stats['zt_breakdown']['ST']}")
-            print(f"    实时跌停分类: 主板{rt_stats['dt_breakdown']['主板']}/创业板{rt_stats['dt_breakdown']['创业板']}/科创板{rt_stats['dt_breakdown']['科创板']}/北交所{rt_stats['dt_breakdown']['北交所']}/ST{rt_stats['dt_breakdown']['ST']}")
-        print(f"    本地数据: 涨停{zt_count}/跌停{dt_count}")
-        if zt_count != rt_zt or dt_count != rt_dt:
-            print(f"    ⚠️  差异: 涨停{zt_count-rt_zt:+,d}/跌停{dt_count-rt_dt:+,d}")
+            print(f"    涨停分类: 主板{rt_stats['zt_breakdown']['主板']}/创业板{rt_stats['zt_breakdown']['创业板']}/科创板{rt_stats['zt_breakdown']['科创板']}/北交所{rt_stats['zt_breakdown']['北交所']}/ST{rt_stats['zt_breakdown']['ST']}")
+            print(f"    跌停分类: 主板{rt_stats['dt_breakdown']['主板']}/创业板{rt_stats['dt_breakdown']['创业板']}/科创板{rt_stats['dt_breakdown']['科创板']}/北交所{rt_stats['dt_breakdown']['北交所']}/ST{rt_stats['dt_breakdown']['ST']}")
+        
+        # 如果实时数据获取失败，回退到本地数据
+        if zt_count == 0 and dt_count == 0:
+            print("\n  ⚠️ 实时数据获取失败，尝试从本地数据计算...")
+            zt_count, dt_count = self._calculate_zt_dt_from_local(date)
+            print(f"    本地数据: 涨停{zt_count}/跌停{dt_count}")
         
         # 热点板块统计仍基于股池数据
         if not df_zt.empty and '所属行业' in df_zt.columns:

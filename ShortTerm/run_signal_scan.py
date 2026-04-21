@@ -74,11 +74,11 @@ class StockRealtimeLoader(RealtimeDataLoader):
     
     def load(self) -> Tuple[Optional[pd.DataFrame], str]:
         from Dashboard.utils.data_access import get_latest_realtime_data
-        return get_latest_realtime_data(force_fetch=False, full_format=True)
+        return get_latest_realtime_data(force_fetch=False, full_format=True, asset_type='stock')
     
     def check_exists(self) -> bool:
         from Dashboard.utils.data_access import get_todays_realtime_file
-        return get_todays_realtime_file() is not None
+        return get_todays_realtime_file(asset_type='stock') is not None
 
 
 class EtfRealtimeLoader(RealtimeDataLoader):
@@ -237,11 +237,39 @@ def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame,
 
 def extract_symbols_from_realtime(realtime_df: pd.DataFrame, asset_type: str, 
                                    limit: Optional[int] = None) -> List[str]:
-    """从实时数据中提取代码列表"""
-    if asset_type == 'etf' or asset_type == 'index':
-        symbols = realtime_df['symbol'].tolist()
+    """从实时数据中提取代码列表，根据资产类型过滤"""
+    from lib.utils import detect_asset_type
+    
+    # 获取所有代码
+    if isinstance(realtime_df, pd.DataFrame):
+        all_symbols = realtime_df['symbol'].tolist()
     else:
-        symbols = filter_excluded_symbols(realtime_df)
+        all_symbols = list(realtime_df)
+    
+    # 根据资产类型过滤
+    if asset_type == 'stock':
+        # 股票：过滤掉北交所、ETF和指数
+        # 正常股票代码特征：不是ETF前缀，不是指数前缀，不是北交所
+        filtered = []
+        for s in all_symbols:
+            # 排除北交所
+            if s.endswith('.BJ'):
+                continue
+            # 检测资产类型，排除ETF和指数
+            detected_type = detect_asset_type(s, default='stock')
+            # default='stock' 表示如果识别不了，就认为是股票
+            # 所以我们要排除明确是etf或index的情况
+            if detected_type not in ['etf', 'index']:
+                filtered.append(s)
+        symbols = filtered
+    elif asset_type == 'etf':
+        # ETF：只保留ETF
+        symbols = [s for s in all_symbols if detect_asset_type(s, default='stock') == 'etf']
+    elif asset_type == 'index':
+        # 指数：只保留指数
+        symbols = [s for s in all_symbols if detect_asset_type(s, default='stock') == 'index']
+    else:
+        symbols = all_symbols
     
     if limit:
         symbols = symbols[:limit]

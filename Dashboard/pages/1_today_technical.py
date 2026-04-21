@@ -764,17 +764,21 @@ with st.sidebar:
     st.header("🔥 今日技术面操作")
 
     if st.button("🔄 刷新数据", type="primary"):
-        st.rerun()
-    
-    # 调试信息
-    with st.expander("🔧 调试信息"):
-        st.write(f"BASE_DIR: {BASE_DIR}")
-        mapper = StockCodeUtil.get_name_mapper()
-        st.write(f"名称映射数量: {len(mapper)}")
-        test_result = get_stock_name('600519')
-        st.write(f"测试 600519: '{test_result}'")
-        # 强制刷新按钮
-        if st.button("🔄 刷新名称映射"):
-            StockCodeUtil.get_name_mapper.cache_clear()
-            st.rerun()
+        with st.spinner("正在运行今日技术面扫描..."):
+            import subprocess
+            try:
+                result = subprocess.run(
+                    [sys.executable, "run_today_technical.py"],
+                    cwd=os.path.join(BASE_DIR, "ShortTerm"),
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if result.returncode == 0:
+                    st.success("扫描完成!")
+                    st.rerun()
+                else:
+                    st.error(f"运行失败: {result.stderr[:200]}")
+            except Exception as e:
+                st.error(f"错误: {e}")
 
