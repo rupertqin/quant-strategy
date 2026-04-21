@@ -691,11 +691,98 @@ class LimitUpScanner:
             
             # 添加跨指数验证
             result['inter_index_validation'] = self.market_regime._validate_across_indices(result)
-            
+
             return result
         except Exception as e:
             logger.warning(f"从本地数据计算指数表现失败: {e}")
             return {}
+
+    def _get_index_intraday(self, code: str, name: str) -> list:
+        """
+        获取指数当日分时数据
+
+        优先从 DataHub 本地存储读取，如果不存在则实时获取
+
+        Args:
+            code: 指数代码，如 '000001.SH'
+            name: 指数名称
+
+        Returns:
+            分时数据列表，每个元素包含 time 和 price
+        """
+        from datetime import datetime
+
+        # 1. 优先从 DataHub 本地存储读取
+        try:
+            from DataHub.core.data_reader import load_index_intraday
+            df = load_index_intraday(code)
+            if df is not None and not df.empty:
+                # 转换为列表格式
+                records = []
+                for _, row in df.iterrows():
+                    records.append({
+                        'time': str(row['time']),
+                        'price': float(row['close']),
+                        'open': float(row['open']) if 'open' in row else float(row['close']),
+                        'high': float(row['high']) if 'high' in row else float(row['close']),
+                        'low': float(row['low']) if 'low' in row else float(row['close']),
+                        'volume': int(row['volume']) if 'volume' in row and pd.notna(row['volume']) else 0
+                    })
+                return records
+        except Exception as e:
+            logger.debug(f"从 DataHub 读取 {name} 分时数据失败: {e}")
+
+        # 2. 本地没有，实时获取
+        try:
+            import akshare as ak
+
+            # 转换代码格式
+            if '.SH' in code:
+                ak_code = code.replace('.SH', '')
+            elif '.SZ' in code:
+                ak_code = code.replace('.SZ', '')
+            else:
+                return None
+
+            # 获取当日分时数据
+            df = ak.index_zh_a_hist_min_em(symbol=ak_code, period="1", start_date="", end_date="")
+
+            if df is not None and not df.empty:
+                # 重命名列
+                df = df.rename(columns={
+                    '时间': 'time',
+                    '开盘': 'open',
+                    '收盘': 'close',
+                    '最高': 'high',
+                    '最低': 'low',
+                    '成交量': 'volume'
+                })
+
+                # 保存到 DataHub 供后续使用
+                try:
+                    from DataHub.core.data_reader import save_index_intraday
+                    today_str = datetime.now().strftime('%Y%m%d')
+                    save_index_intraday(df, code, today_str)
+                except Exception as save_e:
+                    logger.debug(f"保存 {name} 分时数据到 DataHub 失败: {save_e}")
+
+                # 转换为列表格式
+                records = []
+                for _, row in df.iterrows():
+                    records.append({
+                        'time': str(row['time']),
+                        'price': float(row['close']),
+                        'open': float(row['open']),
+                        'high': float(row['high']),
+                        'low': float(row['low']),
+                        'volume': int(row['volume']) if 'volume' in row else 0
+                    })
+                return records
+
+        except Exception as e:
+            logger.debug(f"获取 {name} 分时数据失败: {e}")
+
+        return None
 
     def generate_daily_signals(self, date: str = None) -> dict:
         """
@@ -934,28 +1021,39 @@ class LimitUpScanner:
         # 4. 获取指数历史数据（用于图表展示）- 从本地数据文件读取
         print("\n📈 从本地数据获取指数历史...")
         index_history = {}
+        index_intraday = {}  # 当日分时数据
         from DataHub.config import RAW_INDEX_PRICE_DIR
-        
+
         for code, name in self.CORE_INDICES.items():
             try:
                 file_path = RAW_INDEX_PRICE_DIR / f"{code}.parquet"
                 if not file_path.exists():
                     print(f"  ✗ {name}: 文件不存在")
                     continue
-                
+
                 hist_df = pd.read_parquet(file_path)
                 if hist_df.empty or 'trade_date' not in hist_df.columns or 'close' not in hist_df.columns:
                     print(f"  ✗ {name}: 数据不完整")
                     continue
-                
+
                 # 按日期排序，取最近90天
                 hist_df['trade_date'] = pd.to_datetime(hist_df['trade_date'])
                 hist_df = hist_df.sort_values('trade_date').tail(90)
-                
+
                 # 转换为可序列化的格式
                 hist_df['date'] = hist_df['trade_date'].astype(str)
                 index_history[name] = hist_df[['date', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
-                print(f"  ✓ {name}: {len(hist_df)} 条数据")
+
+                # 获取当日分时数据
+                try:
+                    intraday_data = self._get_index_intraday(code, name)
+                    if intraday_data:
+                        index_intraday[name] = intraday_data
+                        print(f"  ✓ {name}: {len(hist_df)} 条日线 + 分时数据")
+                    else:
+                        print(f"  ✓ {name}: {len(hist_df)} 条日线")
+                except Exception as e:
+                    print(f"  ✓ {name}: {len(hist_df)} 条日线 (分时获取失败: {e})")
             except Exception as e:
                 print(f"  ✗ {name}: 获取失败 - {e}")
 
@@ -1047,6 +1145,7 @@ class LimitUpScanner:
                 }
             },
             'index_history': index_history,
+            'index_intraday': index_intraday,
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'market_close_time': (close_time := get_data_close_time())[0],
             'data_status': close_time[1]

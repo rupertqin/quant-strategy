@@ -13,8 +13,11 @@ BASE_DIR = Path(__file__).parent.parent.parent
 REALTIME_DIR = BASE_DIR / "storage" / "raw" / "realtime"
 
 
-def get_todays_realtime_file() -> Optional[str]:
+def get_todays_realtime_file(asset_type: str = None) -> Optional[str]:
     """获取当天最新的实时数据文件路径
+    
+    Args:
+        asset_type: 'stock'|'etf'|None，None表示获取任意类型最新文件
     
     返回最新数据文件（包括盘中和盘后）
     """
@@ -23,18 +26,27 @@ def get_todays_realtime_file() -> Optional[str]:
     if not REALTIME_DIR.exists():
         return None
 
+    # 根据资产类型确定文件前缀
+    if asset_type == 'etf':
+        patterns = [f"etf_realtime_{today}_*.json"]
+    elif asset_type == 'stock':
+        patterns = [f"realtime_{today}_*.json"]
+    else:
+        # 获取所有类型
+        patterns = [f"realtime_{today}_*.json", f"etf_realtime_{today}_*.json"]
+
     # 获取今天的所有文件
     today_files = []
-    for f in REALTIME_DIR.glob(f"realtime_{today}_*.json"):
-        try:
-            with open(f, 'r', encoding='utf-8') as fp:
-                data = json.load(fp)
-            fetch_time = data.get('fetch_time', '')
-            if fetch_time:
-                hour = int(fetch_time[9:11]) if len(fetch_time) >= 11 else 0
-                today_files.append((f, fetch_time, hour))
-        except:
-            continue
+    for pattern in patterns:
+        for f in REALTIME_DIR.glob(pattern):
+            try:
+                with open(f, 'r', encoding='utf-8') as fp:
+                    data = json.load(fp)
+                fetch_time = data.get('fetch_time', '')
+                if fetch_time:
+                    today_files.append((f, fetch_time))
+            except:
+                continue
 
     if not today_files:
         return None
@@ -68,13 +80,20 @@ def load_realtime_data(filepath: str = None) -> pd.DataFrame:
     # 确保symbol格式统一（添加后缀 .SH/.SZ）
     if 'symbol' in df.columns:
         def format_symbol(code):
-            if '.' in str(code):
-                return str(code)
-            code_str = str(code)
-            if code_str.startswith('6'):
+            code_str = str(code).strip()
+            if '.' in code_str:
+                return code_str
+            # 沪市：6开头股票、500/501/510-519/520/530/560-563/588/589 ETF
+            if code_str.startswith('6') or code_str.startswith('500') or code_str.startswith('501'):
                 return f"{code_str}.SH"
-            elif code_str.startswith('0') or code_str.startswith('3'):
+            if code_str.startswith('51') or code_str.startswith('52') or code_str.startswith('53') or code_str.startswith('56') or code_str.startswith('58') or code_str.startswith('59'):
+                return f"{code_str}.SH"
+            # 深市：0/3开头股票、159/169 ETF
+            if code_str.startswith('0') or code_str.startswith('3') or code_str.startswith('159') or code_str.startswith('169'):
                 return f"{code_str}.SZ"
+            # 北交所
+            if code_str.startswith('4') or code_str.startswith('8'):
+                return f"{code_str}.BJ"
             return code_str
         df['symbol'] = df['symbol'].apply(format_symbol)
 
@@ -103,13 +122,14 @@ def has_realtime_data() -> bool:
     return get_todays_realtime_file() is not None
 
 
-def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = False) -> tuple[pd.DataFrame, str]:
+def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = False, asset_type: str = None) -> tuple[pd.DataFrame, str]:
     """
     获取最新实时数据（统一入口）
     
     Args:
         force_fetch: 是否强制获取最新数据（True=总是fetch，False=优先用缓存）
         full_format: 时间格式（True=YYYY-MM-DD HH:MM，False=HH:MM）
+        asset_type: 'stock'|'etf'|None，None表示获取任意类型最新文件
         
     Returns:
         (DataFrame, fetch_time_str)
@@ -137,7 +157,7 @@ def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = Fals
             df = load_realtime_data(rt_file)
             
             # 提取时间
-            match = __import__('re').search(r'realtime_(\d{8})_(\d{6})\.json', Path(rt_file).name)
+            match = __import__('re').search(r'(?:etf_)?realtime_(\d{8})_(\d{6})\.json', Path(rt_file).name)
             if match:
                 time_str = f"{match.group(2)[:2]}:{match.group(2)[2:4]}"
                 if full_format:
@@ -151,7 +171,7 @@ def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = Fals
             pass
     
     # 使用已有最新数据（用于图表展示）
-    rt_file = get_todays_realtime_file()
+    rt_file = get_todays_realtime_file(asset_type=asset_type)
     if rt_file:
         df = load_realtime_data(rt_file)
 

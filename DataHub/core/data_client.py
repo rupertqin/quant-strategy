@@ -585,6 +585,59 @@ class UnifiedDataClient:
             today - timedelta(days=(today.weekday() - 4))
         ).strftime("%Y%m%d")
     
+    # ==================== 指数分时数据接口 ====================
+
+    def get_index_intraday(self, symbol: str, date: str = None) -> pd.DataFrame:
+        """
+        获取指数当日分时数据（1分钟线）
+
+        Args:
+            symbol: 指数代码，如 '000001.SH'
+            date: 日期，格式 'YYYYMMDD'，None表示当天
+
+        Returns:
+            DataFrame with columns: time, open, high, low, close, volume
+        """
+        if not self._akshare_available:
+            raise ImportError("akshare not available")
+
+        import akshare as ak
+
+        # 转换代码格式
+        if '.SH' in symbol:
+            ak_code = symbol.replace('.SH', '')
+        elif '.SZ' in symbol:
+            ak_code = symbol.replace('.SZ', '')
+        else:
+            ak_code = symbol
+
+        # 获取当日分时数据
+        df = ak.index_zh_a_hist_min_em(symbol=ak_code, period="1", start_date="", end_date="")
+
+        if df is not None and not df.empty:
+            # 重命名列
+            df = df.rename(columns={
+                '时间': 'time',
+                '开盘': 'open',
+                '收盘': 'close',
+                '最高': 'high',
+                '最低': 'low',
+                '成交量': 'volume',
+                '成交额': 'amount',
+            })
+
+            # 确保数值列为 float
+            for col in ['open', 'high', 'low', 'close', 'volume', 'amount']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            # 添加 symbol 列
+            df['symbol'] = symbol
+
+            return df
+
+        return pd.DataFrame()
+
     def __del__(self):
         """析构时登出 baostock"""
         if hasattr(self, '_baostock_logged_in'):

@@ -1070,6 +1070,106 @@ class RightSignalDetector:
         
         return max(35, min(score, 100))
 
+    def _calculate_zt_quality_score(self, latest, prev, prev2, df_history: pd.DataFrame) -> dict:
+        """
+        计算涨停质量评分（策略2）
+        
+        用于识别涨停陷阱 vs 优质涨停
+        
+        Returns:
+            {
+                'zt_quality_score': int,  # 涨停质量分 0-100
+                'zt_quality_level': str,  # A/B/C/D 等级
+                'zt_risk_flags': List[str],  # 风险标记
+            }
+        """
+        change_pct = latest.get('change_pct', 0)
+        
+        # 非涨停直接返回
+        if change_pct < 9.9:
+            return {
+                'zt_quality_score': None,
+                'zt_quality_level': None,
+                'zt_risk_flags': [],
+            }
+        
+        score = 100
+        risk_flags = []
+        
+        # 1. 前期涨幅检查（避免高位涨停）
+        if len(df_history) >= 5:
+            recent_changes = df_history['change_pct'].tail(5).tolist()
+            recent_sum = sum(recent_changes[:-1])  # 前4天涨幅
+            
+            if recent_sum > 20:
+                score -= 25
+                risk_flags.append("前4日已涨>20%，高位风险")
+            elif recent_sum > 10:
+                score -= 15
+                risk_flags.append("前4日已涨>10%，追高风险")
+        
+        # 2. 成交量健康度
+        vol_ratio = latest.get('volume_ratio', 1)
+        if vol_ratio > 5:
+            score -= 20
+            risk_flags.append("异常放量(量比>5)，可能出货")
+        elif vol_ratio > 3:
+            score -= 10
+            risk_flags.append("放量过大(量比>3)")
+        elif vol_ratio < 1:
+            score -= 15
+            risk_flags.append("缩量涨停，封单不足")
+        
+        # 3. 趋势健康度
+        ma5 = latest.get('ma5')
+        ma10 = latest.get('ma10')
+        ma20 = latest.get('ma20')
+        
+        if not pd.isna(ma5) and not pd.isna(ma10) and not pd.isna(ma20):
+            if ma5 < ma10:
+                score -= 20
+                risk_flags.append("MA5<MA10，趋势未确认")
+            elif ma10 < ma20:
+                score -= 10
+                risk_flags.append("MA10<MA20，中期偏弱")
+        
+        # 4. KDJ超买检查（涨停时KDJ过高有风险）
+        kdj_j = latest.get('kdj_j')
+        if not pd.isna(kdj_j) and kdj_j > 90:
+            score -= 15
+            risk_flags.append("KDJ严重超买(J>90)")
+        elif not pd.isna(kdj_j) and kdj_j > 80:
+            score -= 8
+            risk_flags.append("KDJ超买(J>80)")
+        
+        # 5. 连续涨停检查
+        prev_change = prev.get('change_pct', 0) if prev is not None else 0
+        prev2_change = prev2.get('change_pct', 0) if prev2 is not None else 0
+        
+        if prev_change >= 9.9:
+            score -= 20
+            risk_flags.append("连续涨停，开板风险")
+            if prev2_change >= 9.9:
+                score -= 15
+                risk_flags.append("三连板，高风险")
+        
+        # 确定等级
+        final_score = max(0, min(score, 100))
+        if final_score >= 80:
+            level = 'A'
+        elif final_score >= 65:
+            level = 'B'
+        elif final_score >= 50:
+            level = 'C'
+        else:
+            level = 'D'
+        
+        return {
+            'zt_quality_score': final_score,
+            'zt_quality_level': level,
+            'zt_risk_flags': risk_flags,
+        }
+
 
 class StockSignalScanner:
     """个股/ETF信号扫描器主类 - 支持多周期（日线/周线/月线）"""

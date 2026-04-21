@@ -54,17 +54,17 @@ class RealtimeDataService:
         
         self.logger.info("获取ETF实时行情数据...")
         
-        # 获取ETF实时行情
+        # 获取ETF实时行情（新浪优先）
         try:
-            # 使用东财接口获取ETF实时数据
-            df = ak.fund_etf_spot_em()
-            self.logger.info("使用东财接口获取ETF实时数据")
+            # 优先使用新浪接口
+            df = ak.fund_etf_category_sina(symbol="ETF基金")
+            self.logger.info("使用新浪接口获取ETF实时数据")
         except Exception as e:
-            self.logger.error(f"东财接口失败: {e}")
-            # 尝试新浪接口
+            self.logger.error(f"新浪接口失败: {e}")
+            # 尝试东财接口
             try:
-                df = ak.fund_etf_category_sina(symbol="ETF基金")
-                self.logger.info("使用新浪备用接口获取ETF实时数据")
+                df = ak.fund_etf_spot_em()
+                self.logger.info("使用东财备用接口获取ETF实时数据")
             except Exception as e2:
                 self.logger.error(f"备用接口也失败: {e2}")
                 raise RuntimeError(f"无法获取ETF实时数据")
@@ -503,8 +503,8 @@ if __name__ == "__main__":
     
     # 命令行参数
     parser = argparse.ArgumentParser(description='DataHub 实时数据获取服务')
-    parser.add_argument('--type', type=str, choices=['stock', 'etf', 'all'], default='stock',
-                        help='获取类型: stock(股票) / etf(ETF) / all(全部)，默认 stock')
+    parser.add_argument('--type', type=str, choices=['stock', 'etf', 'all'], default='all',
+                        help='获取类型: stock(股票) / etf(ETF) / all(全部)，默认 all')
     args = parser.parse_args()
     
     service = RealtimeDataService()

@@ -277,8 +277,169 @@ if index_performance:
 else:
     st.info("指数数据暂无")
 
-# 指数日线图表展示
-st.markdown("### 📈 指数日线走势")
+# ============= 指数图表函数 =============
+def create_index_chart_html(hist_data: list, name: str, is_intraday: bool = False) -> str:
+    """生成指数 Lightweight Charts HTML"""
+    import json
+
+    df = pd.DataFrame(hist_data)
+    if df.empty:
+        return "<div>数据为空</div>"
+
+    if is_intraday:
+        # 分时数据
+        if 'time' not in df.columns or 'price' not in df.columns:
+            return "<div>分时数据不完整</div>"
+
+        df['time'] = pd.to_datetime(df['time'])
+
+        # 准备数据
+        line_data = []
+        for _, row in df.iterrows():
+            timestamp = int(row['time'].timestamp())
+            line_data.append({
+                'time': timestamp,
+                'value': round(float(row['price']), 2)
+            })
+
+        line_json = json.dumps(line_data)
+
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+            <style>
+                body {{ margin: 0; padding: 0; background: #ffffff; }}
+                #chart-container {{ width: 100%; height: 280px; }}
+            </style>
+        </head>
+        <body>
+            <div id="chart-container"></div>
+            <script>
+                const chart = LightweightCharts.createChart(document.getElementById('chart-container'), {{
+                    layout: {{ background: {{ type: 'solid', color: '#ffffff' }}, textColor: '#333' }},
+                    grid: {{ vertLines: {{ color: '#f0f0f0' }}, horzLines: {{ color: '#f0f0f0' }} }},
+                    crosshair: {{ mode: LightweightCharts.CrosshairMode.Magnet }},
+                    rightPriceScale: {{ borderColor: '#e0e0e0' }},
+                    timeScale: {{ borderColor: '#e0e0e0', timeVisible: true }},
+                }});
+
+                const lineSeries = chart.addLineSeries({{
+                    color: '#2196F3',
+                    lineWidth: 2,
+                }});
+                lineSeries.setData({line_json});
+
+                chart.timeScale().fitContent();
+            </script>
+        </body>
+        </html>
+        """
+    else:
+        # 日线数据 - 使用K线图
+        if 'date' not in df.columns or 'close' not in df.columns:
+            return "<div>日线数据不完整</div>"
+
+        df['date'] = pd.to_datetime(df['date'])
+
+        # 计算均线
+        df['ma5'] = df['close'].rolling(window=5).mean()
+        df['ma10'] = df['close'].rolling(window=10).mean()
+        df['ma20'] = df['close'].rolling(window=20).mean()
+
+        # 准备K线数据
+        candles = []
+        for _, row in df.iterrows():
+            timestamp = int(row['date'].timestamp())
+            candles.append({
+                'time': timestamp,
+                'open': round(float(row['open']), 2) if 'open' in row and pd.notna(row['open']) else round(float(row['close']), 2),
+                'high': round(float(row['high']), 2) if 'high' in row and pd.notna(row['high']) else round(float(row['close']), 2),
+                'low': round(float(row['low']), 2) if 'low' in row and pd.notna(row['low']) else round(float(row['close']), 2),
+                'close': round(float(row['close']), 2)
+            })
+
+        # 准备均线数据
+        ma5_data = []
+        ma10_data = []
+        ma20_data = []
+
+        for _, row in df.iterrows():
+            timestamp = int(row['date'].timestamp())
+            if pd.notna(row['ma5']):
+                ma5_data.append({'time': timestamp, 'value': round(row['ma5'], 2)})
+            if pd.notna(row['ma10']):
+                ma10_data.append({'time': timestamp, 'value': round(row['ma10'], 2)})
+            if pd.notna(row['ma20']):
+                ma20_data.append({'time': timestamp, 'value': round(row['ma20'], 2)})
+
+        candles_json = json.dumps(candles)
+        ma5_json = json.dumps(ma5_data)
+        ma10_json = json.dumps(ma10_data)
+        ma20_json = json.dumps(ma20_data)
+
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+            <style>
+                body {{ margin: 0; padding: 0; background: #ffffff; }}
+                #chart-container {{ width: 100%; height: 280px; }}
+            </style>
+        </head>
+        <body>
+            <div id="chart-container"></div>
+            <script>
+                const chart = LightweightCharts.createChart(document.getElementById('chart-container'), {{
+                    layout: {{ background: {{ type: 'solid', color: '#ffffff' }}, textColor: '#333' }},
+                    grid: {{ vertLines: {{ color: '#f0f0f0' }}, horzLines: {{ color: '#f0f0f0' }} }},
+                    crosshair: {{ mode: LightweightCharts.CrosshairMode.Magnet }},
+                    rightPriceScale: {{ borderColor: '#e0e0e0' }},
+                    timeScale: {{ borderColor: '#e0e0e0', timeVisible: false }},
+                }});
+
+                // K线系列
+                const candleSeries = chart.addCandlestickSeries({{
+                    upColor: '#ff4757', downColor: '#2ed573',
+                    borderUpColor: '#ff4757', borderDownColor: '#2ed573',
+                    wickUpColor: '#ff4757', wickDownColor: '#2ed573',
+                }});
+                candleSeries.setData({candles_json});
+
+                // 均线
+                const ma5Series = chart.addLineSeries({{ color: '#000000', lineWidth: 1 }});
+                ma5Series.setData({ma5_json});
+
+                const ma10Series = chart.addLineSeries({{ color: '#f1c40f', lineWidth: 1 }});
+                ma10Series.setData({ma10_json});
+
+                const ma20Series = chart.addLineSeries({{ color: '#9b59b6', lineWidth: 1 }});
+                ma20Series.setData({ma20_json});
+
+                chart.timeScale().fitContent();
+            </script>
+        </body>
+        </html>
+        """
+
+    return html
+
+
+# 指数图表展示
+st.markdown("### 📈 指数走势")
+
+# 指数名称到代码的映射（用于跳转链接）
+INDEX_CODE_MAP = {
+    '上证指数': '000001.SH',
+    '深证成指': '399001.SZ',
+    '创业板指': '399006.SZ',
+    '沪深300': '000300.SH',
+    '上证50': '000016.SH',
+    '中证500': '000905.SH',
+    '中证1000': '000852.SH',
+}
 
 if index_history:
     # 创建2x2的图表布局
@@ -287,18 +448,42 @@ if index_history:
 
     for name, hist_data in index_history.items():
         with chart_cols[col_idx % 2]:
-            st.markdown(f"**{name}**")
+            # 获取指数代码用于跳转链接
+            index_code = INDEX_CODE_MAP.get(name, '')
 
-            # 转换为DataFrame
-            hist_df = pd.DataFrame(hist_data)
-            if not hist_df.empty and 'date' in hist_df.columns and 'close' in hist_df.columns:
-                hist_df['date'] = pd.to_datetime(hist_df['date'])
-                hist_df = hist_df.set_index('date')
-                chart_df = hist_df[['close']].copy()
-                chart_df.columns = ['收盘价']
+            # 标题行：名称 + 切换按钮
+            title_cols = st.columns([3, 2])
+            with title_cols[0]:
+                # 可点击的标题链接
+                if index_code:
+                    st.markdown(f"**[{name}](/stock_chart?symbol={index_code})**", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"**{name}**")
+            with title_cols[1]:
+                # 每个图表独立的切换按钮
+                chart_key = f"chart_type_{name}"
+                if chart_key not in st.session_state:
+                    st.session_state[chart_key] = "日线"
 
-                # 绘制收盘价线图
-                st.line_chart(chart_df, height=250)
+                # 使用 segments 风格的按钮
+                segment_cols = st.columns(2)
+                is_daily = st.session_state[chart_key] == "日线"
+                with segment_cols[0]:
+                    btn_type = "primary" if is_daily else "secondary"
+                    if st.button("日线", key=f"{chart_key}_daily", use_container_width=True, type=btn_type):
+                        st.session_state[chart_key] = "日线"
+                        st.rerun()
+                with segment_cols[1]:
+                    btn_type = "primary" if not is_daily else "secondary"
+                    if st.button("分时", key=f"{chart_key}_intraday", use_container_width=True, type=btn_type):
+                        st.session_state[chart_key] = "分时"
+                        st.rerun()
+
+            # 根据当前选择的类型显示图表
+            if st.session_state[chart_key] == "日线":
+                # 日线图表 - 使用 Lightweight Charts
+                chart_html = create_index_chart_html(hist_data, name, is_intraday=False)
+                st.components.v1.html(chart_html, height=280, scrolling=False)
 
                 # 获取该指数的极值点数据
                 idx_data = index_performance.get(name, {})
@@ -318,8 +503,22 @@ if index_history:
                         if troughs:
                             latest_trough = troughs[-1]
                             st.caption(f"📉 最近谷值: {latest_trough[1]:.2f} ({latest_trough[0]})")
-            else:
-                st.caption(f"{name} 数据不完整")
+
+            else:  # 分时图表
+                intraday_data = data.get('index_intraday', {}).get(name, [])
+                if intraday_data:
+                    chart_html = create_index_chart_html(intraday_data, name, is_intraday=True)
+                    st.components.v1.html(chart_html, height=280, scrolling=False)
+
+                    # 显示当日统计
+                    intraday_df = pd.DataFrame(intraday_data)
+                    if not intraday_df.empty and 'price' in intraday_df.columns:
+                        day_high = intraday_df['price'].max() if 'high' not in intraday_df.columns else intraday_df['high'].max()
+                        day_low = intraday_df['price'].min() if 'low' not in intraday_df.columns else intraday_df['low'].min()
+                        latest_price = intraday_df['price'].iloc[-1]
+                        st.caption(f"📊 最新: {latest_price:.2f} | 最高: {day_high:.2f} | 最低: {day_low:.2f}")
+                else:
+                    st.caption(f"{name} 暂无分时数据")
 
         col_idx += 1
         if col_idx == 2:  # 每行2个图表

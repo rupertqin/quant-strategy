@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from DataHub.config import RAW_PRICE_DIR, RAW_ETF_PRICE_DIR, RAW_INDEX_PRICE_DIR
+from DataHub.config import RAW_PRICE_DIR, RAW_ETF_PRICE_DIR, RAW_INDEX_PRICE_DIR, RAW_INDEX_INTRADAY_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -311,3 +311,68 @@ def load_stock_latest_date(symbol: str) -> Optional[str]:
     if isinstance(latest_date, pd.Timestamp):
         return latest_date.strftime('%Y-%m-%d')
     return str(latest_date).split()[0]
+
+
+def load_index_intraday(symbol: str, date: str = None) -> pd.DataFrame:
+    """
+    加载指数分时数据（1分钟线）
+
+    优先从本地存储读取，如果不存在则返回空 DataFrame
+    调用方可以使用 DataHub.core.data_client.UnifiedDataClient.get_index_intraday 获取实时数据并保存
+
+    Args:
+        symbol: 指数代码，如 '000001.SH'
+        date: 日期 'YYYYMMDD'，None 表示最新日期
+
+    Returns:
+        DataFrame with columns: time, open, high, low, close, volume, amount, symbol
+    """
+    # 构建文件路径
+    if date:
+        file_path = RAW_INDEX_INTRADAY_DIR / f"{symbol}_{date}.parquet"
+    else:
+        # 查找最新的文件
+        pattern = f"{symbol}_*.parquet"
+        files = sorted(RAW_INDEX_INTRADAY_DIR.glob(pattern), reverse=True)
+        if not files:
+            logger.debug(f"指数分时数据不存在: {symbol}")
+            return pd.DataFrame()
+        file_path = files[0]
+
+    if not file_path.exists():
+        logger.debug(f"指数分时数据不存在: {file_path}")
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_parquet(file_path)
+        logger.debug(f"加载指数分时数据成功: {file_path}, {len(df)} 条")
+        return df
+    except Exception as e:
+        logger.error(f"加载指数分时数据失败 {file_path}: {e}")
+        return pd.DataFrame()
+
+
+def save_index_intraday(df: pd.DataFrame, symbol: str, date: str) -> bool:
+    """
+    保存指数分时数据到本地存储
+
+    Args:
+        df: 分时数据 DataFrame
+        symbol: 指数代码，如 '000001.SH'
+        date: 日期 'YYYYMMDD'
+
+    Returns:
+        是否保存成功
+    """
+    if df is None or df.empty:
+        logger.warning(f"没有数据可保存: {symbol} {date}")
+        return False
+
+    try:
+        file_path = RAW_INDEX_INTRADAY_DIR / f"{symbol}_{date}.parquet"
+        df.to_parquet(file_path, index=False)
+        logger.info(f"保存指数分时数据成功: {file_path}, {len(df)} 条")
+        return True
+    except Exception as e:
+        logger.error(f"保存指数分时数据失败 {symbol} {date}: {e}")
+        return False
