@@ -157,12 +157,22 @@ st.markdown("""
 def _load_signals_impl(asset_type: str = "stock") -> dict:
     """
     加载信号数据实现
-    
+
     Args:
         asset_type: "stock"(股票) 或 "etf"(ETF)
     """
     # 根据资产类型选择文件名
-    prefix = "etf_signals" if asset_type == "etf" else "stock_signals"
+    # 根据资产类型确定文件前缀
+    if asset_type == "etf":
+        prefix = "etf_signals"
+        asset_name = "ETF"
+    elif asset_type == "index":
+        prefix = "index_signals"
+        asset_name = "指数"
+    else:
+        prefix = "stock_signals"
+        asset_name = "股票"
+
     filepath = BASE_DIR / "storage" / "outputs" / "signals" / f"{prefix}_latest.json"
 
     if not filepath.exists():
@@ -179,7 +189,6 @@ def _load_signals_impl(asset_type: str = "stock") -> dict:
         with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
 
-    asset_name = "ETF" if asset_type == "etf" else "股票"
     return {"status": "error", "message": f"暂无{asset_name}信号数据，请先运行扫描器"}
 
 
@@ -192,9 +201,9 @@ def _load_signals_cached(asset_type: str = "stock") -> dict:
 def load_signals(asset_type: str = "stock") -> dict:
     """
     加载信号数据（开发环境无缓存，生产环境有缓存）
-    
+
     Args:
-        asset_type: "stock"(股票) 或 "etf"(ETF)
+        asset_type: "stock"(股票) 或 "etf"(ETF) 或 "index"(指数)
     """
     try:
         mode = st.secrets.get("environment", {}).get("mode", "prod")
@@ -241,51 +250,59 @@ def get_strength_class(strength: str) -> str:
 
 # ============= 页面主函数 =============
 def main():
-    # 从 URL 参数读取 type（支持 ?type=stock 或 ?type=etf）
+    # 从 URL 参数读取 type（支持 ?type=stock 或 ?type=etf 或 ?type=index）
     query_params = st.query_params
     url_type = query_params.get("type", "stock").lower()
-    
+
     # 验证 URL 参数
-    if url_type not in ["stock", "etf"]:
+    if url_type not in ["stock", "etf", "index"]:
         url_type = "stock"
-    
+
     # 使用 session_state 管理资产类型，避免重复切换
     if "asset_type" not in st.session_state:
-        st.session_state.asset_type = "ETF" if url_type == "etf" else "股票"
-    
+        asset_type_init_map = {"stock": "股票", "etf": "ETF", "index": "指数"}
+        st.session_state.asset_type = asset_type_init_map.get(url_type, "股票")
+
     # 侧边栏 - 资产类型选择（放在最上方）
     with st.sidebar:
         st.header("📊 资产类型")
-        
+
         def on_asset_change():
             """当选择变化时更新 URL"""
             new_type = st.session_state.asset_type
-            asset_type_map = {"股票": "stock", "ETF": "etf"}
+            asset_type_map = {"股票": "stock", "ETF": "etf", "指数": "index"}
             selected = asset_type_map[new_type]
             if selected != st.query_params.get("type", "stock"):
                 st.query_params["type"] = selected
-        
+
+        # 获取当前索引
+        asset_options = ["股票", "ETF", "指数"]
+        current_index = asset_options.index(st.session_state.asset_type) if st.session_state.asset_type in asset_options else 0
+
         asset_type = st.radio(
             "选择监控对象",
-            ["股票", "ETF"],
-            index=0 if st.session_state.asset_type == "股票" else 1,
+            asset_options,
+            index=current_index,
             key="asset_type",
             on_change=on_asset_change,
-            help="切换股票或ETF信号监控"
+            help="切换股票、ETF或指数信号监控"
         )
-        asset_type_map = {"股票": "stock", "ETF": "etf"}
+        asset_type_map = {"股票": "stock", "ETF": "etf", "指数": "index"}
         selected_asset = asset_type_map[asset_type]
-        
+
         st.divider()
-    
+
     # 根据资产类型显示不同标题
     if selected_asset == "etf":
         title_text = "📡 ETF信号监控"
         subtitle_text = "基于技术面分析生成ETF左侧（抄底）和右侧（追涨）交易信号"
+    elif selected_asset == "index":
+        title_text = "📡 指数信号监控"
+        subtitle_text = "基于技术面分析生成指数左侧（抄底）和右侧（追涨）交易信号"
     else:
         title_text = "📡 个股信号监控"
         subtitle_text = "基于技术面分析生成左侧（抄底）和右侧（追涨）交易信号"
-    
+
     # 头部
     st.markdown(f"""
     <div class="signal-header">
@@ -389,7 +406,7 @@ def main():
         if selected_asset == "etf":
             st.info("请运行扫描器生成ETF数据:\n```\npython ShortTerm/run_signal_scan.py --type etf\n```")
         else:
-            st.info("请运行扫描器生成股票数据:\n```\npython ShortTerm/run_signal_scan.py --type stock\n```")
+            st.info("请运行扫描器生成指数数据:\n```\npython ShortTerm/run_signal_scan.py --type index\n```")
         return
 
     # 统计数据
@@ -628,7 +645,7 @@ def main():
                         gap: 10px;
                         box-shadow: 0 2px 8px rgba(0,0,0,0.15);
                         transition: all 0.3s;
-                    " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'" 
+                    " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'"
                     onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.15)'">
                         📈 {stock_name} ({symbol}) <span style="background: rgba(255,255,255,0.25); padding: 2px 8px; border-radius: 4px; font-size: 14px;">{change_str}</span>
                     </a>

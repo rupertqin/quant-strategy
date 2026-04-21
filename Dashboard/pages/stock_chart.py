@@ -592,9 +592,13 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
     for _, row in df.iterrows():
         timestamp = int(row['trade_date'].timestamp())
         color = 'rgba(255, 71, 87, 0.5)' if row['close'] >= row['open'] else 'rgba(46, 213, 115, 0.5)'
+        # 处理 NaN 值
+        volume_val = row['volume']
+        if pd.isna(volume_val):
+            volume_val = 0
         volumes.append({
             'time': timestamp,
-            'value': int(row['volume']),
+            'value': int(volume_val),
             'color': color
         })
 
@@ -1118,19 +1122,48 @@ def main():
 
         st.divider()
 
+        # ========== 资产类型筛选 ==========
+        st.subheader("📊 资产类型")
+
+        # 获取各类型资产列表
+        stock_csv = BASE_DIR / "storage" / "stock_basic_info.csv"
+        etf_csv = BASE_DIR / "storage" / "etf_basic_info.csv"
+        index_csv = BASE_DIR / "storage" / "official_indices.csv"
+
+        asset_type = st.radio(
+            "选择监控对象",
+            options=["全部", "股票", "ETF", "指数"],
+            index=0,
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+
+        # 根据资产类型筛选
+        if asset_type == "股票" and stock_csv.exists():
+            df = pd.read_csv(stock_csv)
+            filtered_options = [f"{row['symbol']} - {row['name']}" for _, row in df.iterrows()]
+        elif asset_type == "ETF" and etf_csv.exists():
+            df = pd.read_csv(etf_csv)
+            filtered_options = [f"{row['symbol']} - {row['name']}" for _, row in df.iterrows()]
+        elif asset_type == "指数" and index_csv.exists():
+            df = pd.read_csv(index_csv)
+            filtered_options = [f"{row['symbol']} - {row['name']}" for _, row in df.iterrows()]
+        else:
+            # 全部或其他情况
+            filtered_options = [f"{row['symbol']} - {row['name']}" for _, row in stock_list.iterrows()]
+
+        st.divider()
+
         # ========== 资产搜索 ==========
         st.subheader("🔎 搜索资产")
-
-        # 准备选项列表（股票/ETF/指数）
-        all_options = [f"{row['symbol']} - {row['name']}" for _, row in stock_list.iterrows()]
 
         # 使用 selectbox 搜索（Streamlit 内置搜索功能）
         selected = st.selectbox(
             "选择资产",
-            options=all_options,
+            options=filtered_options,
             key="stock_selector",
             index=None,
-            placeholder="输入代码或名称搜索股票/ETF/指数...",
+            placeholder=f"输入代码或名称搜索{asset_type}...",
             label_visibility="collapsed"
         )
 

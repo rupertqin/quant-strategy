@@ -39,6 +39,83 @@ class RealtimeDataService:
         self.output_dir = output_dir or REALTIME_OUTPUT_DIR
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(self.__class__.__name__)
+
+    def fetch_index_realtime_data(self, symbols: List[str] = None) -> pd.DataFrame:
+        """
+        获取指数实时行情数据
+        
+        Args:
+            symbols: 指数代码列表，如 ['000001.SH', '399001.SZ']，None表示主要指数
+            
+        Returns:
+            DataFrame with real-time data
+        """
+        import akshare as ak
+        
+        self.logger.info("获取指数实时行情数据...")
+        
+        # 获取指数实时行情
+        try:
+            df = ak.stock_zh_index_spot_sina()
+            self.logger.info("使用新浪接口获取指数实时数据")
+        except Exception as e:
+            self.logger.error(f"新浪接口失败: {e}")
+            # 尝试东财接口
+            try:
+                df = ak.index_zh_a_spot_em()
+                self.logger.info("使用东财备用接口获取指数实时数据")
+            except Exception as e2:
+                self.logger.error(f"备用接口也失败: {e2}")
+                raise RuntimeError(f"无法获取指数实时数据")
+        
+        # 处理代码格式
+        if '代码' in df.columns:
+            sample_code = str(df['代码'].iloc[0])
+            if sample_code.startswith(('sh', 'sz')):
+                # 新浪接口格式: sh000001 -> 000001.SH
+                df['symbol'] = df['代码'].apply(lambda x:
+                    x[2:] + '.SH' if str(x).startswith('sh') else
+                    x[2:] + '.SZ' if str(x).startswith('sz') else x
+                )
+            else:
+                # 东财接口格式
+                df['symbol'] = df['代码'].apply(lambda x:
+                    x + '.SH' if str(x).startswith('0') else
+                    x + '.SZ' if str(x).startswith('3') else x
+                )
+        
+        # 筛选指定指数
+        if symbols:
+            df = df[df['symbol'].isin(symbols)]
+        
+        # 统一列名映射
+        column_map = {
+            '最新价': 'close',
+            '最新': 'close',
+            '开盘价': 'open',
+            '开盘': 'open',
+            '最高价': 'high',
+            '最高': 'high',
+            '最低价': 'low',
+            '最低': 'low',
+            '成交量': 'volume',
+            '成交额': 'amount',
+            '涨跌幅': 'change_pct',
+            '名称': 'name',
+        }
+        
+        available_cols = {k: v for k, v in column_map.items() if k in df.columns}
+        df = df.rename(columns=available_cols)
+        df['trade_date'] = datetime.now().date()
+        
+        # 确保必要列存在
+        required_cols = ['symbol', 'name', 'trade_date', 'close']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = None
+        
+        self.logger.info(f"获取到 {len(df)} 个指数实时数据")
+        return df
     
     def fetch_etf_realtime_data(self, symbols: List[str] = None) -> pd.DataFrame:
         """
@@ -503,8 +580,8 @@ if __name__ == "__main__":
     
     # 命令行参数
     parser = argparse.ArgumentParser(description='DataHub 实时数据获取服务')
-    parser.add_argument('--type', type=str, choices=['stock', 'etf', 'all'], default='all',
-                        help='获取类型: stock(股票) / etf(ETF) / all(全部)，默认 all')
+    parser.add_argument('--type', type=str, choices=['stock', 'etf', 'index', 'all'], default='all',
+                        help='获取类型: stock(股票) / etf(ETF) / index(指数) / all(全部)，默认 all')
     args = parser.parse_args()
     
     service = RealtimeDataService()
@@ -579,5 +656,55 @@ if __name__ == "__main__":
             
         except Exception as e:
             print(f"\n❌ ETF数据获取失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # 指数实时数据
+    if args.type in ['index', 'all']:
+        if args.type == 'all':
+            print("\n")
+        
+        print("=" * 60)
+        print("📡 DataHub 指数实时数据获取")
+        print("=" * 60)
+        
+        try:
+            # 获取并保存指数实时数据
+            df = service.fetch_index_realtime_data()
+            # 修改文件名以区分指数
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            index_filepath = service.output_dir / f"index_realtime_{timestamp}.json"
+            
+            # 转换为字典列表
+            records = df.to_dict('records')
+            for record in records:
+                if 'trade_date' in record and hasattr(record['trade_date'], 'isoformat'):
+                    record['trade_date'] = record['trade_date'].isoformat()
+            
+            data = {
+                'fetch_time': timestamp,
+                'record_count': len(records),
+                'data': records
+            }
+            
+            with open(index_filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            print(f"\n✅ 指数实时数据已保存: {index_filepath}")
+            
+            # 显示数据统计
+            print(f"\n📊 数据统计:")
+            print(f"   指数数量: {len(df)}")
+            print(f"   数据列: {list(df.columns)}")
+            
+            # 显示主要指数
+            main_indices = ['000001.SH', '399001.SZ', '399006.SZ', '000300.SH', '000688.SH']
+            main_df = df[df['symbol'].isin(main_indices)]
+            if not main_df.empty:
+                print(f"\n📈 主要指数:")
+                print(main_df[['symbol', 'name', 'close', 'change_pct']].to_string(index=False))
+            
+        except Exception as e:
+            print(f"\n❌ 指数数据获取失败: {e}")
             import traceback
             traceback.print_exc()

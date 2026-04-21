@@ -31,9 +31,11 @@ def get_todays_realtime_file(asset_type: str = None) -> Optional[str]:
         patterns = [f"etf_realtime_{today}_*.json"]
     elif asset_type == 'stock':
         patterns = [f"realtime_{today}_*.json"]
+    elif asset_type == 'index':
+        patterns = [f"index_realtime_{today}_*.json"]
     else:
         # 获取所有类型
-        patterns = [f"realtime_{today}_*.json", f"etf_realtime_{today}_*.json"]
+        patterns = [f"realtime_{today}_*.json", f"etf_realtime_{today}_*.json", f"index_realtime_{today}_*.json"]
 
     # 获取今天的所有文件
     today_files = []
@@ -129,7 +131,7 @@ def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = Fals
     Args:
         force_fetch: 是否强制获取最新数据（True=总是fetch，False=优先用缓存）
         full_format: 时间格式（True=YYYY-MM-DD HH:MM，False=HH:MM）
-        asset_type: 'stock'|'etf'|None，None表示获取任意类型最新文件
+        asset_type: 'stock'|'etf'|'index'|None，None表示获取任意类型最新文件
         
     Returns:
         (DataFrame, fetch_time_str)
