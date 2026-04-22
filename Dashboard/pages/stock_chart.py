@@ -34,6 +34,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.formatters import render_signal_card
 from utils.scoring import calculate_stock_score, get_score_label
+from utils.signal_components import (
+    calculate_risk_score, render_signal_list, render_risk_assessment,
+    render_expander_header, get_risk_color_emoji
+)
 
 # 导入底层数据接口（默认前复权）
 sys.path.insert(0, str(BASE_DIR))
@@ -1257,12 +1261,20 @@ def main():
     # ============= 信号数据加载 =============
     stock_signals = load_stock_signals(symbol)
 
-    # 计算组合评分（用于信号折叠区域显示）
+    # 计算组合评分和风险分（用于信号折叠区域显示）
     portfolio_score = 0
     score_label = "无信号"
+    risk_score = 50
+    risk_explanations = []
+
     if stock_signals:
         portfolio_score = calculate_stock_score(stock_signals, change_pct)
         score_label = get_score_label(portfolio_score)
+
+        # 计算风险分
+        best_signal = max(stock_signals, key=lambda x: x.get("score", 0))
+        tech = best_signal.get("technicals", {})
+        risk_score, risk_explanations = calculate_risk_score(tech, stock_signals)
 
     # ============= 头部信息区 =============
     st.markdown(f"""
@@ -1335,9 +1347,15 @@ def main():
         """, unsafe_allow_html=True)
 
         # 显示该股票的所有信号（使用模块化卡片）
-        with st.expander(f"📡 当前信号 ({signal_count}个) 　　{portfolio_score}分 · {score_label}", expanded=False):
-            for idx, sig in enumerate(stock_signals):
-                st.markdown(render_signal_card(sig, idx), unsafe_allow_html=True)
+        expander_title = render_expander_header(signal_count, portfolio_score, score_label, risk_score)
+
+        with st.expander(expander_title, expanded=False):
+            # 使用组件渲染信号和风险详情（左右布局）
+            sig_col, risk_col = st.columns(2)
+            with sig_col:
+                render_signal_list(stock_signals)
+            with risk_col:
+                render_risk_assessment(risk_score, risk_explanations)
 
     # ============= 周期选择 =============
     periods = [("日线", "D"), ("周线", "W"), ("月线", "M")]

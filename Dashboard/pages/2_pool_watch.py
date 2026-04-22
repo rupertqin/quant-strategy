@@ -19,6 +19,10 @@ sys.path.insert(0, str(BASE_DIR / "Dashboard"))
 from lib.utils import StockCodeUtil, get_stock_name
 from Dashboard.utils.formatters import render_signal_card
 from Dashboard.utils.scoring import calculate_stock_score
+from Dashboard.utils.signal_components import (
+    calculate_stock_metrics, render_signal_list, render_risk_assessment,
+    render_expander_header, get_risk_color_css
+)
 
 st.set_page_config(
     page_title="股票池监控 - Quant Dashboard",
@@ -121,9 +125,12 @@ for sig in pool_signals:
     signals_by_stock[symbol]['signals'].append(sig)
     signals_by_stock[symbol]['periods'].add(sig.get('period', 'daily'))
 
-# 计算总分（复用公共函数）
+# 计算总分和风险分（复用公共函数）
 for symbol, data in signals_by_stock.items():
-    data['total_score'] = calculate_stock_score(data['signals'])
+    signal_score, risk_score, risk_explanations = calculate_stock_metrics(data['signals'])
+    data['total_score'] = signal_score
+    data['risk_score'] = risk_score
+    data['risk_explanations'] = risk_explanations
 
 # 侧边栏
 with st.sidebar:
@@ -213,12 +220,16 @@ for symbol, data in signals_by_stock.items():
         signals = [s for s in signals if s.get('strength') == target_strength]
     
     if signals:
+        # 计算该股票的指标
+        signal_score, risk_score, risk_explanations = calculate_stock_metrics(signals)
         filtered_stocks.append({
             'symbol': symbol,
             'name': data['name'],
             'signals': signals,
             'periods': set(s.get('period', 'daily') for s in signals),
-            'total_score': calculate_stock_score(signals)  # 复用公共函数
+            'total_score': signal_score,
+            'risk_score': risk_score,
+            'risk_explanations': risk_explanations
         })
 
 # 按总评分排序
@@ -245,6 +256,8 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
     signals = stock_data['signals']
     periods = stock_data['periods']
     total_score = stock_data['total_score']
+    risk_score = stock_data['risk_score']
+    risk_explanations = stock_data['risk_explanations']
     
     # 获取最新价格和涨跌幅（从第一个信号）
     first_sig = signals[0]
@@ -301,20 +314,36 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
         
         st.markdown(f'<div style="margin: 5px 0;">{"".join(period_tags)}</div>', unsafe_allow_html=True)
         
-        # 信号卡片
-        for sig in sorted(signals, key=lambda x: ({'daily': 0, 'weekly': 1, 'monthly': 2}.get(x.get('period', 'daily'), 0), -x.get('score', 0))):
-            st.markdown(render_signal_card(sig, idx), unsafe_allow_html=True)
+        # 使用折叠区域显示信号和风险详情（与signal_watch页面一致）
+        from Dashboard.utils.scoring import get_score_label
+        score_label = get_score_label(total_score)
+        expander_title = render_expander_header(len(signals), total_score, score_label, risk_score)
+
+        with st.expander(expander_title, expanded=False):
+            # 使用组件渲染信号和风险详情（左右布局）
+            sig_col, risk_col = st.columns(2)
+            with sig_col:
+                render_signal_list(signals)
+            with risk_col:
+                render_risk_assessment(risk_score, risk_explanations)
     
     with col2:
-        # 总评分
+        # 信号评分
         score_bg = "#ff6b6b" if total_score >= 80 else "#feca57" if total_score >= 60 else "#dfe6e9"
         score_color = "white" if total_score >= 60 else "#333"
-        
+
+        # 风险分颜色和标签
+        risk_bg = get_risk_color_css(risk_score)
+        risk_text = "低风险" if risk_score < 40 else "中风险" if risk_score < 70 else "高风险"
+
         st.markdown(f'''
-        <div style="background: {score_bg}; color: {score_color}; padding: 15px; border-radius: 10px; text-align: center;">
-            <div style="font-size: 24px; font-weight: bold;">{total_score}</div>
-            <div style="font-size: 12px;">总分</div>
-            <div style="font-size: 11px; margin-top: 5px;">{len(signals)} 个信号</div>
+        <div style="background: {score_bg}; color: {score_color}; padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 8px;">
+            <div style="font-size: 20px; font-weight: bold;">{total_score}</div>
+            <div style="font-size: 11px;">信号分</div>
+        </div>
+        <div style="background: {risk_bg}; color: white; padding: 10px; border-radius: 10px; text-align: center;">
+            <div style="font-size: 20px; font-weight: bold;">{risk_score}</div>
+            <div style="font-size: 11px;">{risk_text}</div>
         </div>
         ''', unsafe_allow_html=True)
     
