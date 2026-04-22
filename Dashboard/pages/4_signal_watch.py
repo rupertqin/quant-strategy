@@ -1,11 +1,10 @@
 """
-个股信号监控页面 - 展示左侧/右侧交易信号
+个股信号监控页面 - 展示左侧/右侧交易信号和风险分
 
 读取 ShortTerm/services/stock_signal_scanner.py 生成的信号数据
 """
 
 import streamlit as st
-import pandas as pd
 import json
 from pathlib import Path
 from datetime import datetime
@@ -13,19 +12,13 @@ from datetime import datetime
 # 导入共享格式化工具
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.formatters import format_technicals, format_flat_mas, render_flat_ma_badge, format_ma_bonding, render_signal_card
-from utils.scoring import calculate_stock_score, get_score_color, get_score_label
+from utils.formatters import render_signal_card
+from utils.scoring import calculate_stock_score
 
-# 导入底层数据接口（默认前复权）
+# 导入底层数据接口
 BASE_DIR = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
-from DataHub.core.data_reader import load_stock_latest_price, load_stock_latest_date
-
-import logging
-
-# 设置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from DataHub.core.data_reader import load_stock_latest_date
 
 # 设置页面
 st.set_page_config(
@@ -35,247 +28,382 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 添加项目路径
 BASE_DIR = Path(__file__).parent.parent.parent
 
 # ============= 样式 =============
 st.markdown("""
 <style>
-    .signal-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 20px 30px;
-        border-radius: 12px;
-        margin-bottom: 20px;
+    .page-header {
+        padding: 15px 0;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #eee;
     }
-    .signal-card {
-        background: white;
-        border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        border-left: 4px solid #ddd;
-    }
-    .signal-left {
-        border-left-color: #2ed573;
-    }
-    .signal-right {
-        border-left-color: #ff4757;
-    }
-    .signal-title {
-        font-size: 16px;
+    .page-title {
+        font-size: 22px;
         font-weight: 600;
-        margin-bottom: 8px;
-    }
-    .signal-left .signal-title {
-        color: #2ed573;
-    }
-    .signal-right .signal-title {
-        color: #ff4757;
-    }
-    .signal-meta {
-        font-size: 13px;
-        color: #666;
-        margin-bottom: 8px;
-    }
-    .signal-desc {
-        font-size: 13px;
         color: #333;
-        margin-bottom: 10px;
+        margin-bottom: 5px;
     }
-    .signal-tech {
+    .page-meta {
         font-size: 12px;
         color: #888;
+    }
+    .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        margin-bottom: 10px;
+    }
+    .filter-group {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+    }
+    .list-container {
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #e9ecef;
+        overflow: hidden;
+    }
+    .list-header {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr 1.5fr 0.8fr;
+        padding: 12px 20px;
         background: #f8f9fa;
-        padding: 8px 12px;
-        border-radius: 6px;
-        font-family: monospace;
-    }
-    .strength-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 600;
+        color: #666;
+        border-bottom: 1px solid #e9ecef;
     }
-    .strength-strong {
-        background: #ff6b6b;
-        color: white;
+    .stock-row {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr 1.5fr 0.8fr;
+        padding: 14px 20px;
+        border-bottom: 1px solid #f0f0f0;
+        align-items: center;
+        transition: background 0.15s;
+        text-decoration: none;
+        color: inherit;
     }
-    .strength-medium {
-        background: #feca57;
+    .stock-row:hover {
+        background: #f8f9fa;
+    }
+    .stock-row:last-child {
+        border-bottom: none;
+    }
+    .stock-info {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+    .stock-name {
+        font-size: 14px;
+        font-weight: 600;
         color: #333;
     }
-    .strength-weak {
-        background: #dfe6e9;
+    .stock-code {
+        font-size: 11px;
+        color: #888;
+    }
+    .price-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .stock-price {
+        font-size: 14px;
+        font-weight: 500;
         color: #333;
     }
-    .score-badge {
-        display: inline-flex;
+    .stock-change {
+        font-size: 12px;
+        font-weight: 500;
+    }
+    .score-cell {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .score-value {
+        font-size: 15px;
+        font-weight: 700;
+        width: 32px;
+        height: 32px;
+        display: flex;
         align-items: center;
         justify-content: center;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        font-weight: bold;
-        font-size: 14px;
-    }
-    .score-high {
-        background: #ff6b6b;
+        border-radius: 6px;
         color: white;
     }
-    .score-medium {
-        background: #feca57;
-        color: #333;
+    .score-high { background: #27ae60; }
+    .score-medium { background: #f39c12; }
+    .score-low { background: #e74c3c; }
+    .score-detail {
+        font-size: 11px;
+        color: #888;
     }
-    .score-low {
-        background: #dfe6e9;
-        color: #333;
-    }
-    .stats-card {
-        background: white;
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    }
-    .stats-number {
-        font-size: 32px;
-        font-weight: bold;
-        color: #667eea;
-    }
-    .stats-label {
-        font-size: 14px;
+    .signals-preview {
+        font-size: 12px;
         color: #666;
-        margin-top: 5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .signals-count {
+        font-size: 11px;
+        color: #888;
+        background: #f0f0f0;
+        padding: 2px 8px;
+        border-radius: 10px;
+        display: inline-block;
+    }
+    .pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 20px;
+        padding: 20px 0;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: #888;
+    }
+    /* 覆盖 Streamlit 默认的 p 标签 margin */
+    div[data-testid="stVerticalBlock"] p {
+        margin-bottom: 0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ============= 数据加载 =============
-def _load_signals_impl(asset_type: str = "stock") -> dict:
-    """
-    加载信号数据实现
+def _detect_risk_signals(signals: list) -> list:
+    """从信号列表中检测风险信号（顶背离、趋势走坏等）"""
+    risks = []
 
-    Args:
-        asset_type: "stock"(股票) 或 "etf"(ETF)
-    """
-    # 根据资产类型选择文件名
-    # 根据资产类型确定文件前缀
-    if asset_type == "etf":
-        prefix = "etf_signals"
-        asset_name = "ETF"
-    elif asset_type == "index":
-        prefix = "index_signals"
-        asset_name = "指数"
-    else:
-        prefix = "stock_signals"
-        asset_name = "股票"
+    for sig in signals:
+        sig_name = sig.get("signal_name", "")
+        sig_type = sig.get("signal_type", "left")
 
+        # 顶背离风险
+        if "顶背离" in sig_name or ("背离" in sig_name and sig_type == "right"):
+            risks.append(f"🔴 {sig_name} - 价格新高但指标未新高，见顶信号")
+
+        # 量价背离（高位缩量上涨）
+        if sig_name == "量价背离":
+            desc = sig.get("description", "")
+            if "高位" in desc or "顶背离" in desc:
+                risks.append(f"🔴 量价顶背离 - 价格高位+量能萎缩，上涨乏力")
+
+        # 趋势走坏确认
+        if sig_type == "right" and sig_name in ["MA5死叉MA10", "MA5死叉MA20", "MACD死叉", "KDJ死叉"]:
+            risks.append(f"⚠️ {sig_name} - 趋势转弱信号")
+
+    return risks
+
+
+def _calculate_risk_score(technicals: dict, signals: list) -> tuple:
+    """基于均线数据和信号计算风险分 (0-100，越高越危险) 和详细解释"""
+    explanations = []
+    risk = 50  # 基准
+
+    # 1. 从信号中检测风险信号
+    signal_risks = _detect_risk_signals(signals)
+    for sr in signal_risks:
+        risk += 15
+        explanations.append(sr)
+
+    # 2. 技术面分析
+    if not technicals:
+        return min(100, risk + 10), explanations + ["⚠️ 无技术指标数据"]
+
+    ma5 = technicals.get("ma5", 0)
+    ma10 = technicals.get("ma10", 0)
+    ma20 = technicals.get("ma20", 0)
+    ma60 = technicals.get("ma60", 0)
+    close = technicals.get("close", 0) or ma5
+
+    # 均线排列
+    if ma5 and ma10 and ma20:
+        if ma5 > ma10 > ma20:  # 多头排列
+            risk -= 10
+            explanations.append("✅ 多头排列 - 趋势健康")
+        elif ma5 < ma10 < ma20:  # 空头排列
+            risk += 15
+            explanations.append("🔴 空头排列 - 趋势走坏")
+        elif ma5 < ma10:  # 短期走弱
+            risk += 8
+            explanations.append("⚠️ 短期均线下穿 - 短期偏弱")
+
+    # MA60位置
+    if ma60 and close:
+        pct_from_ma60 = (close - ma60) / ma60 * 100
+        if close > ma60:
+            risk -= 8
+            explanations.append(f"✅ 站上MA60 (+{pct_from_ma60:.1f}%)")
+        else:
+            risk += 12
+            explanations.append(f"🔴 跌破MA60 ({pct_from_ma60:.1f}%)")
+
+    # MACD状态
+    macd_dif = technicals.get("macd_dif", 0)
+    macd_dea = technicals.get("macd_dea", 0)
+    if macd_dif and macd_dea:
+        if macd_dif > macd_dea:
+            risk -= 8
+            explanations.append("✅ MACD金叉")
+        else:
+            risk += 10
+            explanations.append("⚠️ MACD死叉/空头")
+
+    # KDJ超买/超卖
+    kdj_j = technicals.get("kdj_j", 0)
+    if kdj_j:
+        if kdj_j > 90:
+            risk += 12
+            explanations.append(f"🔴 KDJ超买 (J={kdj_j:.1f})")
+        elif kdj_j < 10:
+            risk -= 8
+            explanations.append(f"✅ KDJ超卖 (J={kdj_j:.1f})")
+
+    # 限制在 0-100
+    final_risk = max(0, min(100, int(risk)))
+
+    # 如果没有具体风险项，添加总体评价
+    if not explanations:
+        if final_risk <= 30:
+            explanations.append("✅ 趋势健康")
+        elif final_risk <= 60:
+            explanations.append("⚠️ 趋势中性，注意风险")
+        else:
+            explanations.append("🔴 趋势走坏，建议回避")
+
+    return final_risk, explanations
+
+
+def _transform_signals_to_stocks(data: dict) -> list:
+    """将信号列表转换为股票列表"""
+    # 如果数据已经是股票格式，直接返回
+    if "stocks" in data and data.get("stocks"):
+        stocks = data["stocks"]
+        # 确保每个股票都有风险解释
+        for stock in stocks:
+            if "risk_explanations" not in stock:
+                warnings = stock.get("risk_warnings", [])
+                stock["risk_explanations"] = warnings if warnings else ["暂无风险详情"]
+        return stocks
+
+    # 从信号列表转换
+    signals = data.get("signals", [])
+    if not signals:
+        return []
+
+    # 按股票分组
+    stock_map = {}
+    for sig in signals:
+        symbol = sig.get("symbol")
+        if not symbol:
+            continue
+
+        if symbol not in stock_map:
+            stock_map[symbol] = {
+                "symbol": symbol,
+                "name": sig.get("name", ""),
+                "signals": [],
+                "signal_score": 0,
+                "risk_score": 50,
+                "risk_explanations": [],
+                "has_buy_signal": False,
+                "signal_count": 0
+            }
+
+        stock_map[symbol]["signals"].append(sig)
+        stock_map[symbol]["has_buy_signal"] = True
+        stock_map[symbol]["signal_count"] += 1
+
+    # 计算每个股票的信号分和风险分
+    for symbol, stock in stock_map.items():
+        all_signals = stock["signals"]
+
+        # 使用统一的综合评分算法计算信号分
+        change_pct = all_signals[0].get("change_pct", 0) if all_signals else 0
+        stock["signal_score"] = calculate_stock_score(all_signals, change_pct)
+
+        # 取最高分信号的技术指标用于风险计算
+        best_signal = max(all_signals, key=lambda x: x.get("score", 0)) if all_signals else {}
+        tech = best_signal.get("technicals", {})
+
+        risk_score, risk_explanations = _calculate_risk_score(tech, all_signals)
+        stock["risk_score"] = risk_score
+        stock["risk_explanations"] = risk_explanations
+
+    return list(stock_map.values())
+
+
+def _load_data_impl(asset_type: str = "stock") -> dict:
+    """加载信号数据"""
+    prefix = "etf_signals" if asset_type == "etf" else "index_signals" if asset_type == "index" else "stock_signals"
     filepath = BASE_DIR / "storage" / "outputs" / "signals" / f"{prefix}_latest.json"
 
     if not filepath.exists():
-        # 尝试查找日期版本
         signals_dir = BASE_DIR / "storage" / "outputs" / "signals"
         if signals_dir.exists():
             files = sorted(signals_dir.glob(f"{prefix}_*.json"))
-            # 排除 *_latest.json，找日期版本
             date_files = [f for f in files if not f.name.endswith("_latest.json")]
             if date_files:
                 filepath = date_files[-1]
 
     if filepath.exists():
         with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            # 转换信号格式为股票格式
+            if "signals" in data and "stocks" not in data:
+                data["stocks"] = _transform_signals_to_stocks(data)
+            return data
 
-    return {"status": "error", "message": f"暂无{asset_name}信号数据，请先运行扫描器"}
+    asset_name = "ETF" if asset_type == "etf" else "指数" if asset_type == "index" else "股票"
+    return {"status": "error", "message": f"暂无{asset_name}数据"}
 
 
 @st.cache_data(ttl=60)
-def _load_signals_cached(asset_type: str = "stock") -> dict:
-    """带缓存的信号加载（生产环境使用）"""
-    return _load_signals_impl(asset_type)
+def _load_data_cached(asset_type: str = "stock") -> dict:
+    return _load_data_impl(asset_type)
 
 
-def load_signals(asset_type: str = "stock") -> dict:
-    """
-    加载信号数据（开发环境无缓存，生产环境有缓存）
-
-    Args:
-        asset_type: "stock"(股票) 或 "etf"(ETF) 或 "index"(指数)
-    """
+def load_data(asset_type: str = "stock") -> dict:
+    """加载数据"""
     try:
         mode = st.secrets.get("environment", {}).get("mode", "prod")
         is_dev = mode == "dev"
     except Exception:
         is_dev = False
 
-    if is_dev:
-        return _load_signals_impl(asset_type)
-    else:
-        return _load_signals_cached(asset_type)
-
-
-def format_technicals(tech: dict) -> str:
-    """格式化技术指标显示"""
-    parts = []
-
-    # 均线
-    ma_parts = []
-    for ma in ['ma5', 'ma10', 'ma20', 'ma60']:
-        if tech.get(ma) is not None:
-            ma_parts.append(f"{ma.upper()[-2:]}:{tech[ma]}")
-    if ma_parts:
-        parts.append(" | ".join(ma_parts))
-
-    # MACD
-    if tech.get('macd_dif') is not None and tech.get('macd_dea') is not None:
-        parts.append(f"MACD:{tech['macd_dif']}/{tech['macd_dea']}")
-
-    # KDJ
-    if tech.get('kdj_k') is not None and tech.get('kdj_d') is not None:
-        kdj_str = f"KDJ:{tech['kdj_k']}/{tech['kdj_d']}"
-        if tech.get('kdj_j') is not None:
-            kdj_str += f"/J:{tech['kdj_j']}"
-        parts.append(kdj_str)
-
-    return " | ".join(parts) if parts else "暂无数据"
-
-
-def get_strength_class(strength: str) -> str:
-    """根据强度获取样式类"""
-    return f"strength-{strength}"
+    return _load_data_impl(asset_type) if is_dev else _load_data_cached(asset_type)
 
 
 # ============= 页面主函数 =============
 def main():
-    # 从 URL 参数读取 type（支持 ?type=stock 或 ?type=etf 或 ?type=index）
+    # URL参数
     query_params = st.query_params
     url_type = query_params.get("type", "stock").lower()
-
-    # 验证 URL 参数
     if url_type not in ["stock", "etf", "index"]:
         url_type = "stock"
 
-    # 使用 session_state 管理资产类型，避免重复切换
+    # Session state
     if "asset_type" not in st.session_state:
-        asset_type_init_map = {"stock": "股票", "etf": "ETF", "index": "指数"}
-        st.session_state.asset_type = asset_type_init_map.get(url_type, "股票")
+        st.session_state.asset_type = {"stock": "股票", "etf": "ETF", "index": "指数"}.get(url_type, "股票")
 
-    # 侧边栏 - 资产类型选择（放在最上方）
+    # 侧边栏
     with st.sidebar:
         st.header("📊 资产类型")
 
         def on_asset_change():
-            """当选择变化时更新 URL"""
             new_type = st.session_state.asset_type
-            asset_type_map = {"股票": "stock", "ETF": "etf", "指数": "index"}
-            selected = asset_type_map[new_type]
-            if selected != st.query_params.get("type", "stock"):
-                st.query_params["type"] = selected
+            selected = {"股票": "stock", "ETF": "etf", "指数": "index"}[new_type]
+            st.query_params["type"] = selected
 
-        # 获取当前索引
         asset_options = ["股票", "ETF", "指数"]
         current_index = asset_options.index(st.session_state.asset_type) if st.session_state.asset_type in asset_options else 0
 
@@ -284,500 +412,313 @@ def main():
             asset_options,
             index=current_index,
             key="asset_type",
-            on_change=on_asset_change,
-            help="切换股票、ETF或指数信号监控"
+            on_change=on_asset_change
         )
-        asset_type_map = {"股票": "stock", "ETF": "etf", "指数": "index"}
-        selected_asset = asset_type_map[asset_type]
+        selected_asset = {"股票": "stock", "ETF": "etf", "指数": "index"}[asset_type]
+        st.divider()
+
+        # 数据加载
+        data = load_data(selected_asset)
+
+        if data.get("status") != "error":
+            stocks = data.get("stocks", [])
+        else:
+            stocks = []
+
+        # 🔴 风险控制（一票否决）
+        st.header("🔴 风险控制")
+        st.caption("先排除高危股票，保命第一")
+
+        risk_filter = st.selectbox(
+            "风险筛选",
+            ["显示全部", "仅低风险（风险分<40）", "仅中低风险（风险分<60）", "仅高风险（风险分≥60）"],
+            index=1,  # 默认低风险
+            key="risk_filter"
+        )
 
         st.divider()
 
-    # 根据资产类型显示不同标题
-    if selected_asset == "etf":
-        title_text = "📡 ETF信号监控"
-        subtitle_text = "基于技术面分析生成ETF左侧（抄底）和右侧（追涨）交易信号"
-    elif selected_asset == "index":
-        title_text = "📡 指数信号监控"
-        subtitle_text = "基于技术面分析生成指数左侧（抄底）和右侧（追涨）交易信号"
-    else:
-        title_text = "📡 个股信号监控"
-        subtitle_text = "基于技术面分析生成左侧（抄底）和右侧（追涨）交易信号"
+        # 📈 快速筛选
+        st.header("📈 快速筛选")
+        quick_filter = st.radio(
+            "显示范围",
+            ["全部", "仅信号股（有买入信号）"],
+            index=0,
+            key="quick_filter"
+        )
 
-    # 头部
+    # 主内容区
+    if data.get("status") == "error":
+        st.warning(data.get("message", "暂无数据"))
+        return
+
+    # 筛选 - 🔴 风险控制（一票否决）
+    filtered_stocks = stocks.copy()
+
+    # 风险筛选
+    if risk_filter == "仅低风险（风险分<40）":
+        filtered_stocks = [s for s in filtered_stocks if s['risk_score'] < 40]
+    elif risk_filter == "仅中低风险（风险分<60）":
+        filtered_stocks = [s for s in filtered_stocks if s['risk_score'] < 60]
+    elif risk_filter == "仅高风险（风险分≥60）":
+        filtered_stocks = [s for s in filtered_stocks if s['risk_score'] >= 60]
+
+    # 快速筛选 - 仅显示有信号的股票
+    if quick_filter == "仅信号股（有买入信号）":
+        filtered_stocks = [s for s in filtered_stocks if s['has_buy_signal']]
+
+    # 页面标题
+    title_map = {"stock": "个股", "etf": "ETF", "index": "指数"}
+    scan_time = data.get("scan_time", "")
+
     st.markdown(f"""
-    <div class="signal-header">
-        <h1>{title_text}</h1>
-        <p>{subtitle_text}</p>
-        <div style="margin-top: 10px; font-size: 12px; opacity: 0.9;">
-            <span style="background: rgba(255,255,255,0.2); padding: 3px 10px; border-radius: 12px;">
-                📊 价格数据已前复权处理
-            </span>
+    <div class="page-header">
+        <div>
+            <div class="page-title">📡 {title_map[selected_asset]}信号监控</div>
+            <div class="page-meta">共 {len(filtered_stocks)} 只股票 · {sum(s['signal_count'] for s in filtered_stocks)} 个信号 · 更新于 {scan_time}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # 侧边栏筛选
-    with st.sidebar:
-        st.header("🔍 筛选条件")
-
-        # 数据说明
-        st.info(f"📊 当前显示**{asset_type}**价格均为**前复权**数据", icon="📈")
-
-        signal_type = st.radio(
-            "信号类型",
-            ["全部", "左侧信号", "右侧信号"],
-            index=0
-        )
-
-        signal_type_map = {"全部": "all", "左侧信号": "left", "右侧信号": "right"}
-        selected_type = signal_type_map[signal_type]
-
-        # 加载数据（根据资产类型选择不同文件）
-        data = load_signals(selected_asset)
-
-        if data.get("status") == "success":
-            all_signals = data.get("signals", [])
-
-            # 根据左侧/右侧/全部进行筛选
-            if selected_type != "all":
-                signals = [s for s in all_signals if s.get("signal_type") == selected_type]
-            else:
-                signals = all_signals
-
-            # 强度筛选
-            strengths = list(set([s.get("strength", "medium") for s in signals]))
-            if strengths:
-                selected_strengths = st.multiselect(
-                    "信号强度",
-                    options=strengths,
-                    default=strengths
-                )
-            else:
-                selected_strengths = []
-
-            # 评分筛选
-            min_score = st.slider("最低评分", 0, 100, 50)
-
-            # 信号名称筛选
-            signal_names = list(set([s.get("signal_name", "") for s in signals]))
-            if signal_names:
-                selected_names = st.multiselect(
-                    "信号类型",
-                    options=signal_names,
-                    default=[]
-                )
-        else:
-            signals = []
-            selected_strengths = []
-            min_score = 0
-            selected_names = []
-
-        st.divider()
-        st.info("""
-        **使用说明**
-
-        **左侧信号**（抄底/反转）
-        - MACD/KDJ底背离
-        - 超跌反弹
-        - 缩量十字星
-        - 长下影线
-
-        **右侧信号**（追涨/确认）
-        - 均线金叉
-        - MACD/KDJ金叉
-        - 量价突破
-        - 均线多头排列
-
-        **📏 均线走平指标**
-        当单根均线（MA10/MA20/MA60）长期趋于水平直线时，代表价格围绕某个中枢长期稳定波动。这个"走平"的价格位置就是强支撑/阻力位。
-
-        显示格式：`MAxx@价格`
-        - 🔴红色：强烈走平（分数≥0.90）- 长期稳定中枢
-        - 🟡黄色：较走平（分数≥0.80）- 中期稳定区间
-        - 🔵蓝色：走平（分数≥0.75）- 短期参考位
-
-        **📊 均线粘合指标**
-        当多根均线纠缠在一起时，意味着市场在选择方向，一旦突破往往有大行情。
-        """)
-
-    # 主内容区
-    if data.get("status") != "success":
-        st.warning(data.get("message", "暂无数据"))
-        if selected_asset == "etf":
-            st.info("请运行扫描器生成ETF数据:\n```\npython ShortTerm/run_signal_scan.py --type etf\n```")
-        else:
-            st.info("请运行扫描器生成指数数据:\n```\npython ShortTerm/run_signal_scan.py --type index\n```")
-        return
-
-    # 统计数据
-    stats = data.get("stats", {})
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.markdown(f"""
-        <div class="stats-card">
-            <div class="stats-number">{data.get('total_signals', 0)}</div>
-            <div class="stats-label">总信号数</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown(f"""
-        <div class="stats-card">
-            <div class="stats-number">{stats.get('left', 0)}</div>
-            <div class="stats-label">左侧信号</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col3:
-        st.markdown(f"""
-        <div class="stats-card">
-            <div class="stats-number">{stats.get('right', 0)}</div>
-            <div class="stats-label">右侧信号</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col4:
-        scan_time = data.get('scan_time', '未知')
-        intraday_mode = data.get('intraday_mode', False)
-
-        # 获取扫描时使用的实时数据时间（信号数据里的价格时间）
-        price_fetch_time = data.get('price_fetch_time')
-
-        if price_fetch_time:
-            time_display = f"扫描: {scan_time}<br><span style='color:#ff6b6b'>● 价格: {price_fetch_time}</span>"
-            label_text = "盘中监控" if intraday_mode else "扫描时间"
-        else:
-            # 没有实时数据，只显示扫描时间
-            time_display = scan_time
-            label_text = "扫描时间"
-
-        st.markdown(f"""
-        <div class="stats-card">
-            <div class="stats-number" style="font-size: 14px;">{time_display}</div>
-            <div class="stats-label">{label_text}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # 筛选信号
-    filtered_signals = signals.copy()
-
-    if selected_strengths:
-        filtered_signals = [s for s in filtered_signals if s.get("strength") in selected_strengths]
-
-    filtered_signals = [s for s in filtered_signals if s.get("score", 0) >= min_score]
-
-    if selected_names:
-        filtered_signals = [s for s in filtered_signals if s.get("signal_name") in selected_names]
-
-    # 按股票分组聚合信号
-    def group_signals_by_stock(signals_list):
-        """将同一股票的多个信号聚合在一起"""
-        stock_groups = {}
-        for sig in signals_list:
-            symbol = sig.get('symbol', '')
-            if symbol not in stock_groups:
-                stock_groups[symbol] = {
-                    'symbol': symbol,
-                    'name': sig.get('name', ''),
-                    'signals': [],
-                    'total_score': 0,
-                    'periods': set(),
-                    'types': set()
-                }
-            stock_groups[symbol]['signals'].append(sig)
-            stock_groups[symbol]['periods'].add(sig.get('period', 'daily'))
-            stock_groups[symbol]['types'].add(sig.get('signal_type', 'left'))
-
-        # 计算每个股票的总分（复用公共函数，传入涨跌幅信息）
-        for symbol, group in stock_groups.items():
-            # 获取该股票的涨跌幅信息（用于风险过滤）
-            latest_signal = max(group['signals'], key=lambda x: x.get('trigger_date', ''))
-            change_pct = latest_signal.get('change_pct', 0)
-
-            # 计算评分，传入涨跌幅
-            group['total_score'] = calculate_stock_score(
-                group['signals'],
-                change_pct=change_pct
-            )
-
-            # 添加信号数量、质量集中度和维度覆盖率信息用于展示
-            stock_signals = group['signals']
-            signal_count = len(stock_signals)
-            # 从该股票的信号中取技术指标（取最高分的信号）
-            best_signal = max(stock_signals, key=lambda x: x.get('score', 0))
-            quality_conc = best_signal.get('technicals', {}).get('quality_concentration', 0)
-            dim_coverage = best_signal.get('technicals', {}).get('dimension_coverage', 0)
-            dim_details = best_signal.get('technicals', {}).get('dimension_details', {})
-            group['signal_count'] = signal_count
-            group['quality_concentration'] = quality_conc
-            group['dimension_coverage'] = dim_coverage
-            group['dimension_details'] = dim_details
-            group['change_pct'] = change_pct  # 保存涨跌幅供显示
-
-        return stock_groups
-
-    stock_groups = group_signals_by_stock(filtered_signals)
-    grouped_stocks = list(stock_groups.values())
-
-    # 显示信号列表
-    asset_name = "ETF" if selected_asset == "etf" else "股票"
-    st.subheader(f"信号列表 (共 {len(grouped_stocks)} 只{asset_name}, {len(filtered_signals)} 个信号)")
-
-    if not filtered_signals:
-        st.info("没有符合条件的信号")
-        return
-
-    # 排序选项
-    sort_col1, sort_col2 = st.columns([1, 4])
-    with sort_col1:
-        sort_by = st.selectbox("排序方式", ["综合评分", "维度覆盖率", "信号数量", "日期"], index=0)
-
-    # 排序
-    if sort_by == "综合评分":
-        grouped_stocks.sort(key=lambda x: x['total_score'], reverse=True)
-    elif sort_by == "维度覆盖率":
-        grouped_stocks.sort(key=lambda x: x.get('dimension_coverage', 0), reverse=True)
-    elif sort_by == "信号数量":
-        # 适中数量(2-4个)排在前面，过多降权
-        grouped_stocks.sort(key=lambda x: (abs(len(x['signals']) - 3), -len(x['signals'])))
-    elif sort_by == "日期":
-        grouped_stocks.sort(key=lambda x: max([s.get('trigger_date', '') for s in x['signals']]), reverse=True)
-
-    # 分页显示
+    # 分页设置
     page_size = 20
-    total_pages = (len(grouped_stocks) + page_size - 1) // page_size
+    total_pages = (len(filtered_stocks) + page_size - 1) // page_size
+    
+    # 初始化页码到 session_state
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = 0
+    
+    # 📈 信号排序（择优录取）- 在通过风险筛选的股票中排序
+    st.markdown("<div style='font-size: 12px; color: #888; margin-bottom: 4px;'>📈 在通过风险筛选的股票中，按以下方式排序：</div>", unsafe_allow_html=True)
+    
+    # 排序和分页放在同一行
+    toolbar_cols = st.columns([1, 2])
+    
+    with toolbar_cols[0]:
+        sort_by = st.selectbox(
+            "排序方式",
+            ["风险分(低到高)", "风险分(高到低)", "信号分(高到低)", "信号分(低到高)"],
+            index=2,  # 默认信号分高到低
+            key="sort_by",
+            label_visibility="collapsed"
+        )
+    
+    with toolbar_cols[1]:
+        if total_pages > 1:
+            # 页码输入和总页数显示放在一行
+            page_cols = st.columns([1, 3])
+            with page_cols[0]:
+                page_input = st.number_input(
+                    "页码",
+                    min_value=1,
+                    max_value=total_pages,
+                    value=st.session_state.current_page + 1,
+                    key="page_input",
+                    label_visibility="collapsed"
+                )
+                page = page_input - 1
+                st.session_state.current_page = page
+            with page_cols[1]:
+                st.markdown(f"<div style='padding-top: 8px; font-size: 14px; color: #666;'>/ {total_pages}</div>", unsafe_allow_html=True)
+        else:
+            page = 0
+    
+    # 排序
+    if sort_by == "风险分(低到高)":
+        filtered_stocks.sort(key=lambda x: x['risk_score'])
+    elif sort_by == "风险分(高到低)":
+        filtered_stocks.sort(key=lambda x: x['risk_score'], reverse=True)
+    elif sort_by == "信号分(高到低)":
+        filtered_stocks.sort(key=lambda x: x['signal_score'], reverse=True)
+    elif sort_by == "信号分(低到高)":
+        filtered_stocks.sort(key=lambda x: x['signal_score'])
 
-    if total_pages > 1:
-        page = st.number_input("页码", 1, total_pages, 1) - 1
-    else:
-        page = 0
+    # 显示股票列表
+    if not filtered_stocks:
+        st.markdown('<div class="empty-state">没有符合条件的股票</div>', unsafe_allow_html=True)
+        return
 
     start_idx = page * page_size
-    end_idx = min(start_idx + page_size, len(grouped_stocks))
-    page_stocks = grouped_stocks[start_idx:end_idx]
+    end_idx = min(start_idx + page_size, len(filtered_stocks))
+    page_stocks = filtered_stocks[start_idx:end_idx]
 
-    # 渲染股票卡片（包含多个信号）
-    for idx, stock_group in enumerate(page_stocks):
-        symbol = stock_group['symbol']
-        stock_name = stock_group['name']
-        signals = stock_group['signals']
-        total_score = stock_group['total_score']
-        periods = stock_group['periods']
-        signal_types = stock_group['types']
+    # 列表头部
+    header_cols = st.columns([2, 1, 1, 1, 0.5])
+    with header_cols[0]:
+        st.markdown("**股票**")
+    with header_cols[1]:
+        st.markdown("**价格/涨跌**")
+    with header_cols[2]:
+        st.markdown("**信号分**")
+    with header_cols[3]:
+        st.markdown("**风险分**")
+    with header_cols[4]:
+        st.markdown("**详情**")
 
-        # 确定主导信号类型（左侧/右侧）
-        dominant_type = 'right' if 'right' in signal_types else 'left'
-        signal_type_class = f"signal-{dominant_type}"
+    st.markdown("<hr style='margin: 0; border-color: #e9ecef;'>", unsafe_allow_html=True)
 
-        # 获取最新数据日期
-        latest_data_date = load_stock_latest_date(symbol) or '未知'
+    # 使用 fragment 优化展开/折叠性能 - 将当前页数据存入 session_state
+    st.session_state['_current_page_stocks'] = page_stocks
+    st.session_state['_current_page_info'] = {'page': page, 'total_pages': total_pages, 'total': len(filtered_stocks)}
+    _render_stock_rows()
 
-        # 获取扫描时使用的实时数据时间（信号数据里的价格时间）
-        price_fetch_time = data.get('price_fetch_time')
 
-        # 显示价格时间（优先使用信号扫描时的价格时间）
-        if price_fetch_time:
-            time_display = f"⏱️ {price_fetch_time}"
-            time_color = "#ff6b6b"  # 红色表示盘中
-            time_tooltip = "价格最新时间"
+@st.fragment
+def _render_stock_rows():
+    """渲染股票行（使用 fragment 优化展开/折叠性能，点击按钮只刷新此部分）"""
+    page_stocks = st.session_state.get('_current_page_stocks', [])
+    page_info = st.session_state.get('_current_page_info', {'page': 0, 'total_pages': 1, 'total': 0})
+
+    # 股票行（带折叠详情）
+    for stock in page_stocks:
+        symbol = stock['symbol']
+        name = stock['name']
+        signal_score = stock['signal_score']
+        risk_score = stock['risk_score']
+        signals = stock.get('signals', [])
+        risk_explanations = stock.get('risk_explanations', [])
+
+        latest_signal = signals[0] if signals else {}
+        close_price = latest_signal.get('close_price', 0)
+        change_pct = latest_signal.get('change_pct', 0) if latest_signal else 0
+
+        # 涨跌幅颜色
+        if change_pct > 0:
+            change_color = "#ff4757"
+            change_str = f"+{change_pct:.2f}%"
+        elif change_pct < 0:
+            change_color = "#2ed573"
+            change_str = f"{change_pct:.2f}%"
         else:
-            time_display = f"📅 {latest_data_date}"
-            time_color = "#888"  # 灰色表示历史
-            time_tooltip = "历史数据日期"
+            change_color = "#888"
+            change_str = "0.00%"
 
-        # 周期标签
-        period_tags = []
-        period_colors = {'daily': '#3498db', 'weekly': '#9b59b6', 'monthly': '#e74c3c'}
-        for p in sorted(periods):
-            p_name = {'daily': '日', 'weekly': '周', 'monthly': '月'}.get(p, p)
-            p_color = period_colors.get(p, '#666')
-            period_tags.append(f'<span style="background: {p_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 5px;">{p_name}</span>')
-        period_html = ''.join(period_tags)
+        # 分数样式
+        if signal_score >= 60:
+            sig_color = "#27ae60"
+        elif signal_score >= 40:
+            sig_color = "#f39c12"
+        else:
+            sig_color = "#e74c3c"
 
-        # 多周期共振标识
-        resonance_badge = ""
-        if len(periods) >= 2:
-            resonance_badge = '<span style="background: linear-gradient(135deg, #ff6b6b, #feca57); color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 8px;">🔥 多周期共振</span>'
+        if risk_score < 40:
+            risk_color = "#27ae60"
+        elif risk_score < 70:
+            risk_color = "#f39c12"
+        else:
+            risk_color = "#e74c3c"
 
-        # 使用容器卡片
-        with st.container():
-            col1, col2 = st.columns([6, 1])
+        # 生成唯一 key
+        stock_key = symbol.replace(".", "_")
+        expand_key = f"expand_{stock_key}"
 
-            with col1:
-                # 获取涨跌幅
-                change_pct = stock_group.get('change_pct', 0)
-                if change_pct > 0:
-                    change_str = f"+{change_pct:.2f}%"
-                    change_color = "#ff4757"  # 红色表示上涨
-                elif change_pct < 0:
-                    change_str = f"{change_pct:.2f}%"
-                    change_color = "#2ed573"  # 绿色表示下跌
+        # 初始化展开状态
+        if expand_key not in st.session_state:
+            st.session_state[expand_key] = False
+
+        # 显示股票行
+        cols = st.columns([2, 1, 1, 1, 0.5])
+
+        with cols[0]:
+            # 股票名称点击跳转
+            st.markdown(f"""
+            <div style="line-height: 1.2;">
+                <a href="/stock_chart?symbol={symbol}" target="_self"
+                   style="text-decoration: none; color: #333; font-weight: 600;">
+                    {name}
+                </a>
+                <div style="font-size: 11px; color: #888; line-height: 1.2;">{symbol}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with cols[1]:
+            st.markdown(f"""
+            <div style="font-size: 14px; color: #333;">¥{close_price:.2f}</div>
+            <div style="font-size: 12px; color: {change_color};">{change_str}</div>
+            """, unsafe_allow_html=True)
+
+        with cols[2]:
+            st.markdown(f"""
+            <div style="display: inline-block; background: {sig_color}; color: white;
+                        padding: 3px 10px; border-radius: 4px; font-weight: 600; font-size: 13px;">
+                {signal_score}
+            </div>
+            """, unsafe_allow_html=True)
+
+        with cols[3]:
+            st.markdown(f"""
+            <div style="display: inline-block; background: {risk_color}; color: white;
+                        padding: 3px 10px; border-radius: 4px; font-weight: 600; font-size: 13px;">
+                {risk_score}
+            </div>
+            """, unsafe_allow_html=True)
+
+        with cols[4]:
+            # 展开/折叠按钮
+            btn_label = "▼" if st.session_state[expand_key] else "▶"
+            if st.button(btn_label, key=f"btn_{stock_key}", help="展开/折叠详情"):
+                st.session_state[expand_key] = not st.session_state[expand_key]
+                st.rerun()
+
+        # 展开时显示详情 - 使用与列表行相同的列宽比例对齐
+        if st.session_state[expand_key]:
+            # 使用 [2, 1, 1, 0.5] 比例，信号详情对齐信号分列，风险评估对齐风险分列
+            expand_cols = st.columns([2, 1, 1, 0.5])
+
+            # 添加展开区域的内边距容器
+            st.markdown("<div style='padding: 10px 0 15px 0;'>", unsafe_allow_html=True)
+
+            with expand_cols[0]:
+                pass  # 股票列下方留空，保持对齐
+
+            with expand_cols[1]:
+                st.markdown("<div style='font-size: 13px; font-weight: 600; color: #333; margin-bottom: 8px;'>📈 信号详情</div>", unsafe_allow_html=True)
+                if signals:
+                    for sig in signals:
+                        sig_type = sig.get('signal_type', 'left')
+                        period = sig.get('period', 'daily')
+                        sig_name = sig.get('signal_name', '')
+                        sig_score = sig.get('score', 0)
+                        type_emoji = "📈" if sig_type == 'right' else "📉"
+                        type_text = "右侧" if sig_type == 'right' else "左侧"
+                        period_name = {'daily': '日线', 'weekly': '周线', 'monthly': '月线'}.get(period, period)
+
+                        # 分数颜色
+                        if sig_score >= 70:
+                            score_color = "#27ae60"
+                        elif sig_score >= 50:
+                            score_color = "#f39c12"
+                        else:
+                            score_color = "#e74c3c"
+
+                        st.markdown(f"""
+                        <div style="font-size: 12px; padding: 3px 0;">
+                            {type_emoji} [{type_text}] {sig_name} ({period_name})
+                            <span style="color: {score_color}; font-weight: 600;">{sig_score}分</span>
+                        </div>
+                        """, unsafe_allow_html=True)
                 else:
-                    change_str = "0.00%"
-                    change_color = "#888"  # 灰色表示平盘
+                    st.markdown("<div style='font-size: 12px; color: #888;'>无买入信号</div>", unsafe_allow_html=True)
 
-                # 按钮背景色根据涨跌变化，百分比在按钮内
-                if change_pct > 0:
-                    btn_bg = "linear-gradient(135deg, #ff6b6b 0%, #ff8e8e 100%)"  # 红色渐变（上涨）
-                elif change_pct < 0:
-                    btn_bg = "linear-gradient(135deg, #2ed573 0%, #7bed9f 100%)"  # 绿色渐变（下跌）
+            with expand_cols[2]:
+                st.markdown("<div style='font-size: 13px; font-weight: 600; color: #333; margin-bottom: 8px;'>⚠️ 风险评估</div>", unsafe_allow_html=True)
+                if risk_explanations:
+                    for exp in risk_explanations[:5]:  # 最多显示5条
+                        st.markdown(f"<div style='font-size: 11px; color: #666; padding: 2px 0;'>{exp}</div>", unsafe_allow_html=True)
                 else:
-                    btn_bg = "linear-gradient(135deg, #95a5a6 0%, #bdc3c7 100%)"  # 灰色渐变（平盘）
+                    st.markdown("<div style='font-size: 12px; color: #888;'>暂无风险评估</div>", unsafe_allow_html=True)
 
-                # 一行显示：左侧是按钮（带百分比和颜色），右侧是日期
-                line_col, date_col = st.columns([3, 1])
-                with line_col:
-                    # 使用HTML自定义按钮（背景色根据涨跌变化），跳转到图表页面
-                    btn_html = f"""
-                    <a href="/stock_chart?symbol={symbol}" target="_self" style="
-                        background: {btn_bg};
-                        color: white;
-                        padding: 10px 20px;
-                        border-radius: 10px;
-                        font-size: 16px;
-                        font-weight: 600;
-                        text-decoration: none;
-                        display: inline-flex;
-                        align-items: center;
-                        gap: 10px;
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-                        transition: all 0.3s;
-                    " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'"
-                    onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.15)'">
-                        📈 {stock_name} ({symbol}) <span style="background: rgba(255,255,255,0.25); padding: 2px 8px; border-radius: 4px; font-size: 14px;">{change_str}</span>
-                    </a>
-                    """
-                    st.markdown(btn_html, unsafe_allow_html=True)
+            # 关闭内边距容器
+            st.markdown("</div>", unsafe_allow_html=True)
 
-                with date_col:
-                    # 价格时间右对齐（优先显示盘中时间）
-                    st.markdown(f'<div style="text-align: right; font-size: 11px; color: {time_color}; margin-top: 8px;"><span style="font-size: 10px; opacity: 0.7;">{time_tooltip}</span>: {time_display}</div>', unsafe_allow_html=True)
-
-                # 周期标签和共振标识
-                st.markdown(f'<div style="margin: 5px 0;">{period_html}{resonance_badge}</div>', unsafe_allow_html=True)
-
-                # 使用模块化信号卡片显示所有信号
-                for sig in sorted(signals, key=lambda x: ({'daily': 0, 'weekly': 1, 'monthly': 2}.get(x.get('period', 'daily'), 0), -x.get('score', 0))):
-                    st.markdown(render_signal_card(sig, idx), unsafe_allow_html=True)
-
-            with col2:
-                # 总评分徽章（使用新颜色体系）
-                score_bg = get_score_color(total_score)
-                score_color = "white" if total_score >= 75 else "#333"
-
-                # 信号数量标签颜色
-                signal_count = stock_group.get('signal_count', len(signals))
-                if signal_count <= 4:
-                    count_color = "#27ae60"  # 绿色 - 适中
-                    count_label = "适中"
-                elif signal_count <= 6:
-                    count_color = "#f39c12"  # 橙色 - 偏多
-                    count_label = "偏多"
-                else:
-                    count_color = "#e74c3c"  # 红色 - 过多
-                    count_label = "过多"
-
-                # 质量集中度
-                quality_conc = stock_group.get('quality_concentration', 0)
-                quality_pct = int(quality_conc * 100)
-
-                # 维度覆盖率（核心指标）
-                dim_coverage = stock_group.get('dimension_coverage', 0)
-                dim_pct = int(dim_coverage * 100)
-                dim_details = stock_group.get('dimension_details', {})
-
-                # 维度详情文本
-                dim_text = []
-                if dim_details.get('directions'):
-                    dirs = dim_details['directions']
-                    if len(dirs) >= 2:
-                        dim_text.append("双侧")
-                    else:
-                        dim_text.append(dirs[0][:1].upper())
-                if dim_details.get('periods'):
-                    periods = dim_details['periods']
-                    if len(periods) >= 2:
-                        dim_text.append(f"{len(periods)}周期")
-                if dim_details.get('indicators'):
-                    n_indicators = len(dim_details['indicators'])
-                    if n_indicators >= 2:
-                        dim_text.append(f"{n_indicators}指标")
-
-                dim_badge = " | ".join(dim_text) if dim_text else "单维度"
-
-                # 维度覆盖率颜色
-                if dim_pct >= 75:
-                    dim_color = "#27ae60"  # 绿色 - 高覆盖
-                elif dim_pct >= 50:
-                    dim_color = "#f39c12"  # 橙色 - 中等
-                else:
-                    dim_color = "#e74c3c"  # 红色 - 低覆盖
-
-                st.markdown(f"""
-                <div style="
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                ">
-                    <div style="
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        width: 50px;
-                        height: 50px;
-                        border-radius: 50%;
-                        background: {score_bg};
-                        color: {score_color};
-                        font-weight: bold;
-                        font-size: 16px;
-                    ">{total_score}</div>
-                    <div style="font-size: 11px; color: #888; margin-top: 5px;">{get_score_label(total_score)}</div>
-                    <div style="font-size: 10px; color: {dim_color}; margin-top: 4px; font-weight: 600;">
-                        维度覆盖: {dim_pct}% [{dim_badge}]
-                    </div>
-                    <div style="font-size: 10px; color: {count_color}; margin-top: 2px; font-weight: 500;">
-                        {signal_count}个信号({count_label})
-                    </div>
-                    <div style="font-size: 10px; color: #666; margin-top: 2px;">
-                        质量集中度: {quality_pct}%
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        st.markdown("---")
-
-    # 分页信息
-    if total_pages > 1:
-        st.caption(f"显示第 {start_idx+1}-{end_idx} 只{asset_name}，共 {len(grouped_stocks)} 只，总信号数 {len(filtered_signals)} 个")
-
-    # 底部说明
-    st.markdown("---")
-    with st.expander("📊 信号类型说明"):
-        st.markdown("""
-        ### 左侧信号（抄底/反转）
-        | 信号名称 | 说明 | 适用场景 |
-        |---------|------|---------|
-        | MACD底背离 | 价格创新低但MACD未创新低 | 中长期底部 |
-        | KDJ底背离 | 价格创新低但KDJ未创新低 | 短期反弹 |
-        | 超跌反弹 | 股价大幅偏离MA60，出现企稳K线 | 超跌修复 |
-        | 缩量十字星 | 下跌后出现缩量十字星 | 企稳信号 |
-        | 长下影线 | 出现长下影线，下方有支撑 | 支撑确认 |
-
-        ### 右侧信号（追涨/确认）
-        | 信号名称 | 说明 | 适用场景 |
-        |---------|------|---------|
-        | MA5金叉MA10 | 短期均线上穿 | 短线转强 |
-        | MA5金叉MA20 | 短期上穿中期均线 | 趋势转强 |
-        | MACD金叉 | DIF上穿DEA | 动量增强 |
-        | KDJ金叉 | K线上穿D线 | 短期动能 |
-        | 量价突破 | 放量上涨突破 | 资金入场 |
-        | 均线多头排列 | MA5>MA10>MA20 | 趋势良好 |
-        | 突破平台 | 放量突破整理平台 | 主升浪 |
-        """)
+    # 分页控件
+    page_info = st.session_state.get('_current_page_info', {'page': 0, 'total_pages': 1, 'total': 0})
+    if page_info['total_pages'] > 1:
+        st.markdown(f"""
+        <div style="text-align: center; padding: 20px 0; color: #666; font-size: 13px;">
+            第 {page_info['page'] + 1} / {page_info['total_pages']} 页 · 共 {page_info['total']} 条
+        </div>
+        """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

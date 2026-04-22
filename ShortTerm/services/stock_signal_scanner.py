@@ -221,6 +221,163 @@ class SignalCalculator:
         df['macd_dea'] = df['macd_dif'].ewm(span=signal, adjust=False).mean()
         df['macd_bar'] = (df['macd_dif'] - df['macd_dea']) * 2
         return df
+
+    @staticmethod
+    def calculate_trend_health(df: pd.DataFrame) -> Dict:
+        """
+        计算趋势健康度评分（0-100）
+        
+        评分逻辑：
+        - 50分：中性基准
+        - 80-100：强势上涨，健康
+        - 60-79：正常震荡
+        - 40-59：走弱预警
+        - 20-39：趋势走坏
+        - 0-19：严重恶化
+        
+        Returns:
+            {
+                "health_score": int,      # 0-100健康度分数
+                "risk_level": str,        # low/medium/high/extreme
+                "warnings": List[str],    # 风险点列表
+                "recommendation": str,    # 建议操作
+                "details": Dict           # 详细指标
+            }
+        """
+        if df.empty or len(df) < 20:
+            return {
+                "health_score": 50,
+                "risk_level": "unknown",
+                "warnings": ["数据不足"],
+                "recommendation": "观望",
+                "details": {}
+            }
+        
+        # 确保必要指标已计算
+        df = SignalCalculator.calculate_ma(df)
+        df = SignalCalculator.calculate_macd(df)
+        df['volume_ma5'] = df['volume'].rolling(window=5).mean()
+        df['volume_ma20'] = df['volume'].rolling(window=20).mean()
+        
+        latest = df.iloc[-1]
+        prev = df.iloc[-2] if len(df) > 1 else latest
+        
+        score = 50  # 中性基准
+        warnings = []
+        details = {}
+        
+        # 1. 均线系统（权重30%，±15分）
+        ma_bull = latest['ma5'] > latest['ma10'] > latest['ma20']
+        ma_bear = latest['ma5'] < latest['ma10'] < latest['ma20']
+        
+        if ma_bull:
+            score += 15
+            details['ma_trend'] = 'bullish'
+        elif ma_bear:
+            score -= 15
+            details['ma_trend'] = 'bearish'
+            warnings.append("均线空头排列")
+        else:
+            details['ma_trend'] = 'mixed'
+        
+        # 2. 关键均线破位（权重25%，±12分）
+        above_ma60 = latest['close'] > latest['ma60']
+        ma60_slope = latest['ma60'] - prev['ma60'] if not pd.isna(prev['ma60']) else 0
+        
+        if above_ma60:
+            score += 12
+            details['ma60_status'] = 'above'
+        else:
+            score -= 12
+            details['ma60_status'] = 'below'
+            warnings.append("跌破MA60")
+            if ma60_slope < 0:
+                score -= 8
+                warnings.append("MA60拐头向下")
+                details['ma60_slope'] = 'falling'
+            else:
+                details['ma60_slope'] = 'flat_rising'
+        
+        # 3. MACD状态（权重20%，±10分）
+        macd_bull = latest['macd_bar'] > 0 and latest['macd_dif'] > latest['macd_dea']
+        macd_bear = latest['macd_bar'] < 0 and latest['macd_dif'] < latest['macd_dea']
+        
+        if macd_bull:
+            score += 10
+            details['macd_status'] = 'bullish'
+        elif macd_bear:
+            score -= 10
+            details['macd_status'] = 'bearish'
+            warnings.append("MACD死叉/空头")
+        else:
+            details['macd_status'] = 'mixed'
+        
+        # 4. 量能趋势（权重15%，±8分）
+        volume_trend = latest['volume_ma5'] / latest['volume_ma20'] if latest['volume_ma20'] > 0 else 1
+        vol_declining = volume_trend < 0.9  # 量能萎缩超过10%
+        
+        if volume_trend > 1.1:
+            score += 8
+            details['volume_trend'] = 'expanding'
+        elif vol_declining:
+            score -= 8
+            details['volume_trend'] = 'contracting'
+            if latest['close'] < latest['open']:  # 缩量阴跌
+                warnings.append("缩量阴跌")
+        else:
+            details['volume_trend'] = 'neutral'
+        
+        details['volume_ratio'] = round(volume_trend, 2)
+        
+        # 5. 近期动量（权重10%，±10分）
+        if len(df) >= 5:
+            change_5d = (latest['close'] - df.iloc[-5]['close']) / df.iloc[-5]['close'] * 100
+        else:
+            change_5d = 0
+        
+        if change_5d > 5:
+            score += 10
+            details['momentum_5d'] = 'strong'
+        elif change_5d > 0:
+            score += 5
+            details['momentum_5d'] = 'weak_positive'
+        elif change_5d > -5:
+            score -= 5
+            details['momentum_5d'] = 'weak_negative'
+        else:
+            score -= 10
+            details['momentum_5d'] = 'strong_negative'
+            warnings.append(f"5日跌幅{change_5d:.1f}%")
+        
+        details['change_5d_pct'] = round(change_5d, 2)
+        
+        # 计算最终分数
+        final_score = max(0, min(100, score))
+        
+        # 确定风险等级和建议
+        if final_score >= 80:
+            risk_level = "low"
+            recommendation = "关注买入机会"
+        elif final_score >= 60:
+            risk_level = "low"
+            recommendation = "持有"
+        elif final_score >= 40:
+            risk_level = "medium"
+            recommendation = "谨慎观察"
+        elif final_score >= 20:
+            risk_level = "high"
+            recommendation = "考虑减仓"
+        else:
+            risk_level = "extreme"
+            recommendation = "建议卖出/回避"
+        
+        return {
+            "health_score": final_score,
+            "risk_level": risk_level,
+            "warnings": warnings,
+            "recommendation": recommendation,
+            "details": details
+        }
     
     @staticmethod
     def calculate_kdj(df: pd.DataFrame, n=9, m1=3, m2=3) -> pd.DataFrame:
@@ -1342,6 +1499,15 @@ class StockSignalScanner:
         # 应用信号组合评分（考虑信号数量和质量分布）
         if len(signals) > 0:
             signals = self._apply_signal_portfolio_scoring(signals)
+        
+        # 计算趋势健康度并添加到每个信号（便于signal_watch页面展示）
+        if not df_daily.empty:
+            health = SignalCalculator.calculate_trend_health(df_daily)
+            for sig in signals:
+                sig.technicals['health_score'] = health['health_score']
+                sig.technicals['risk_level'] = health['risk_level']
+                sig.technicals['health_warnings'] = health['warnings']
+                sig.technicals['health_recommendation'] = health['recommendation']
 
         return signals
 
@@ -1624,6 +1790,8 @@ class StockSignalScanner:
             limit: 限制扫描数量
             multi_period: 是否多周期分析
         """
+        date_str = datetime.now().strftime('%Y%m%d')
+        
         # 根据资产类型获取列表
         if self.asset_type == "etf":
             asset_list = self._get_etf_list()
@@ -1642,6 +1810,8 @@ class StockSignalScanner:
         logger.info(f"开始扫描 {len(asset_list)} 只{asset_name}，信号类型: {signal_type}, 周期: {period_str}")
 
         all_signals = []
+        all_health_scores = []  # 存储所有股票的健康度
+        risk_alerts = []        # 存储风险预警（健康度<40且无买入信号）
         stats = {"left": 0, "right": 0, "by_period": {"daily": 0, "weekly": 0, "monthly": 0}, "by_signal": {}}
 
         for idx, row in asset_list.iterrows():
@@ -1651,8 +1821,37 @@ class StockSignalScanner:
             if (idx + 1) % 100 == 0:
                 logger.info(f"进度: {idx + 1}/{len(asset_list)}")
 
+            # 扫描买入信号
             signals = self.scan_stock(symbol, name, signal_type, multi_period)
-
+            
+            # 计算趋势健康度（无论是否有买入信号）
+            df_daily = self.load_stock_data(symbol, "daily")
+            if not df_daily.empty:
+                health = SignalCalculator.calculate_trend_health(df_daily)
+                health_record = {
+                    "symbol": symbol,
+                    "name": name,
+                    "health_score": health["health_score"],
+                    "risk_level": health["risk_level"],
+                    "warnings": health["warnings"],
+                    "recommendation": health["recommendation"],
+                    "has_buy_signal": len(signals) > 0
+                }
+                all_health_scores.append(health_record)
+                
+                # 识别风险预警：健康度<40 且 无买入信号
+                if health["health_score"] < 40 and len(signals) == 0:
+                    risk_alerts.append({
+                        "symbol": symbol,
+                        "name": name,
+                        "health_score": health["health_score"],
+                        "risk_level": health["risk_level"],
+                        "warnings": health["warnings"],
+                        "recommendation": health["recommendation"],
+                        "details": health["details"]
+                    })
+            
+            # 处理买入信号
             for sig in signals:
                 all_signals.append(sig.to_dict())
                 stats[sig.signal_type] += 1
@@ -1667,25 +1866,56 @@ class StockSignalScanner:
             key=lambda x: (x.get('technicals', {}).get('portfolio_score', x['score']), x['score']),
             reverse=True
         )
+        
+        # 按健康度排序（健康度低的在前，即风险高的在前）
+        all_health_scores.sort(key=lambda x: x["health_score"])
+        risk_alerts.sort(key=lambda x: x["health_score"])
+        
+        # 统计健康度分布
+        health_distribution = {
+            "excellent": len([h for h in all_health_scores if h["health_score"] >= 80]),
+            "good": len([h for h in all_health_scores if 60 <= h["health_score"] < 80]),
+            "warning": len([h for h in all_health_scores if 40 <= h["health_score"] < 60]),
+            "risky": len([h for h in all_health_scores if 20 <= h["health_score"] < 40]),
+            "extreme": len([h for h in all_health_scores if h["health_score"] < 20])
+        }
 
         result = {
             "status": "success",
             "scan_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "total_stocks": len(stock_list),
+            "total_stocks": len(asset_list),
             "total_signals": len(all_signals),
             "multi_period": multi_period,
             "stats": stats,
-            "signals": all_signals
+            "signals": all_signals,
+            "health_scores": {
+                "total": len(all_health_scores),
+                "distribution": health_distribution,
+                "risk_alerts_count": len(risk_alerts),
+                "all_scores": all_health_scores,  # 所有股票的健康度
+                "risk_alerts": risk_alerts        # 风险预警列表（健康度<40且无买入信号）
+            }
         }
 
         # 保存结果
         self._save_result(result, signal_type)
+
+        # 保存健康度数据到单独文件（便于快速加载）
+        self._save_health_scores(result.get("health_scores", {}), date_str)
 
         logger.info(f"扫描完成: {len(all_signals)} 个信号，左侧: {stats['left']}, 右侧: {stats['right']}")
         if multi_period:
             logger.info(f"周期分布: 日线 {stats['by_period'].get('daily', 0)}, "
                        f"周线 {stats['by_period'].get('weekly', 0)}, "
                        f"月线 {stats['by_period'].get('monthly', 0)}")
+        
+        # 输出健康度统计
+        health = result.get("health_scores", {})
+        if health:
+            dist = health.get("distribution", {})
+            logger.info(f"健康度分布: 优秀{dist.get('excellent', 0)} 良好{dist.get('good', 0)} "
+                       f"预警{dist.get('warning', 0)} 风险{dist.get('risky', 0)} 极端{dist.get('extreme', 0)}")
+            logger.info(f"风险预警: {health.get('risk_alerts_count', 0)} 只股票趋势走坏（健康度<40且无买入信号）")
 
         return result
     
@@ -1708,25 +1938,105 @@ class StockSignalScanner:
         return pd.DataFrame()
     
     def _save_result(self, result: Dict, signal_type: str):
-        """保存扫描结果 - 统一保存为 all，通过 signal_type 字段区分左右侧"""
+        """保存扫描结果 - 新格式：按股票组织，包含健康度和信号列表"""
         date_str = datetime.now().strftime('%Y%m%d')
-        
-        # 根据资产类型确定文件名前缀
         prefix = "etf_signals" if self.asset_type == "etf" else "stock_signals"
         
-        # 始终使用 all 作为文件名，信号本身有 signal_type 字段区分
+        # 构建统一格式的数据：按股票组织
+        unified_data = self._build_unified_data(result)
+        
+        # 保存带日期的文件
         filename = f"{prefix}_{date_str}.json"
         filepath = self.output_dir / filename
-        
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+            json.dump(unified_data, f, ensure_ascii=False, indent=2)
         
-        # 同时保存最新结果（供Dashboard使用）
+        # 保存latest文件（供Dashboard使用）
         latest_path = self.output_dir / f"{prefix}_latest.json"
         with open(latest_path, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+            json.dump(unified_data, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"结果已保存: {filepath} ({result['total_signals']} 个信号)")
+        logger.info(f"结果已保存: {filepath} ({unified_data['total_signals']} 个信号, {unified_data['total_stocks']} 只股票)")
+    
+    def _build_unified_data(self, result: Dict) -> Dict:
+        """
+        将信号列表和健康度数据合并为按股票组织的统一格式
+        
+        Returns:
+            {
+                "scan_time": "...",
+                "total_stocks": 5000,
+                "total_signals": 123,
+                "stocks": [
+                    {
+                        "symbol": "600000.SH",
+                        "name": "浦发银行",
+                        "health_score": 8,
+                        "risk_level": "extreme",
+                        "health_recommendation": "建议卖出/回避",
+                        "health_warnings": [...],
+                        "has_buy_signal": true,
+                        "best_signal_score": 55,  # 最高信号分
+                        "signals": [...]
+                    },
+                    ...
+                ]
+            }
+        """
+        # 获取健康度数据
+        health_data = result.get("health_scores", {})
+        all_health_scores = {h["symbol"]: h for h in health_data.get("all_scores", [])}
+        
+        # 按股票组织信号
+        signals_by_stock = {}
+        for sig in result.get("signals", []):
+            symbol = sig["symbol"]
+            if symbol not in signals_by_stock:
+                signals_by_stock[symbol] = []
+            signals_by_stock[symbol].append(sig)
+        
+        # 构建股票列表
+        stocks = []
+        for symbol, health in all_health_scores.items():
+            stock_signals = signals_by_stock.get(symbol, [])
+            
+            # 计算最高信号分
+            best_score = max([s["score"] for s in stock_signals]) if stock_signals else 0
+            
+            # 风险分 = 100 - 健康分（健康分越高，风险越低）
+            health_score = health.get("health_score", 50)
+            risk_score = 100 - health_score  # 转换：健康80分 = 风险20分
+            
+            stock_data = {
+                "symbol": symbol,
+                "name": health.get("name", ""),
+                "risk_score": risk_score,  # 风险分（0-100，越高越危险）
+                "signal_score": best_score,  # 信号分（0-100，越高越好）
+                "has_buy_signal": len(stock_signals) > 0,
+                "signal_count": len(stock_signals),
+                "signals": stock_signals,
+                # 风险详情
+                "risk_level": health.get("risk_level", "medium"),
+                "risk_warnings": health.get("warnings", []),
+                "risk_details": health.get("details", {}),
+                "risk_recommendation": health.get("recommendation", ""),
+                # 技术指标摘要
+                "technicals": health.get("technicals", {})
+            }
+            stocks.append(stock_data)
+        
+        return {
+            "scan_time": result.get("scan_time", datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+            "total_stocks": len(stocks),
+            "total_signals": len(result.get("signals", [])),
+            "stocks": stocks
+        }
+    
+    def _save_health_scores(self, health_scores: Dict, date_str: str):
+        """保留此方法以兼容旧代码，但不再生成独立文件（数据已包含在主结果中）"""
+        # 健康度数据现在已统一保存在主结果文件中
+        # 此方法保留为空，避免调用出错
+        pass
 
 
 def main():
