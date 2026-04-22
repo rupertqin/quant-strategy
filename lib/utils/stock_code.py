@@ -472,10 +472,29 @@ def _get_index_codes():
 
 
 def is_index(symbol: str) -> bool:
-    """判断代码是否为指数（基于 official_indices.csv）"""
+    """
+    判断代码是否为指数（结合后缀判断）
+    
+    注意代码重名问题：
+    - 000001.SH = 上证指数（指数）
+    - 000001.SZ = 平安银行（股票）
+    - 必须结合后缀判断！
+    
+    硬编码规则：
+    - 399xxx.SZ = 深证指数（如399001.SZ深证成指、399006.SZ创业板指）
+    
+    查表确认：
+    - 其他代码查 official_indices.csv
+    """
     code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
     if not code.isdigit():
         return False
+    
+    # 硬编码规则：399xxx.SZ 一定是深证指数
+    if symbol.endswith('.SZ') and code.startswith('399'):
+        return True
+    
+    # 其他情况查表确认
     return code in _get_index_codes()
 
 

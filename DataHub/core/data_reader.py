@@ -37,24 +37,45 @@ def is_etf(symbol: str) -> bool:
 
 def is_index(symbol: str) -> bool:
     """
-    判断代码是否为指数
+    判断代码是否为指数（结合后缀判断）
     
     指数代码规则:
-    - 上海指数: 000001(上证指数), 000300(沪深300) 等，以000开头
-    - 深圳指数: 399001(深证成指), 399006(创业板指) 等，以399开头
+    - 上海指数: 000001.SH(上证指数), 000300.SH(沪深300) 等
+    - 深圳指数: 399001.SZ(深证成指), 399006.SZ(创业板指) 等
     
-    从 official_indices.csv 读取指数代码列表
+    注意：代码重名问题！
+    - 000001.SH = 上证指数（指数）
+    - 000001.SZ = 平安银行（股票）
+    
+    因此必须结合后缀判断，不能只看6位代码。
+    
+    硬编码规则（无需查表）：
+    - 以 399 开头 + .SZ 后缀 = 深证指数
+    
+    查表确认（official_indices.csv）：
+    - 以 000 开头 + .SH 后缀 = 可能是上证指数
     """
     code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
     
     if not code.isdigit():
         return False
     
+    # 硬编码规则：399xxx.SZ 一定是深证指数（深证成指、创业板指等）
+    if symbol.endswith('.SZ') and code.startswith('399'):
+        return True
+    
+    # 其他情况查表确认（如 000001.SH 上证指数、000300.SH 沪深300等）
     return code in _get_index_codes()
 
 
 # 缓存指数代码集合
 _index_codes_cache = None
+
+
+def clear_index_cache():
+    """清除指数代码缓存（用于调试或文件更新后）"""
+    global _index_codes_cache
+    _index_codes_cache = None
 
 
 def _get_index_codes():
