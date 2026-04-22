@@ -225,6 +225,42 @@ def load_stock_signals(symbol: str) -> list:
         return []
 
 
+@st.cache_data(ttl=300)
+def load_stock_risk_info(symbol: str) -> dict:
+    """加载指定股票的风险信息（用于只有风险信号的股票）"""
+    import json
+    from pathlib import Path
+
+    BASE_DIR = Path(__file__).parent.parent.parent
+    signals_file = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
+
+    if not signals_file.exists():
+        return {}
+
+    try:
+        with open(signals_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        if data.get("status") != "success":
+            return {}
+
+        # 从 stocks 字段中查找股票信息
+        stocks = data.get("stocks", [])
+        for stock in stocks:
+            if stock.get('symbol') == symbol:
+                return {
+                    'has_buy_signal': stock.get('has_buy_signal', False),
+                    'risk_score': stock.get('risk_score', 50),
+                    'risk_warnings': stock.get('risk_warnings', []),
+                    'risk_explanations': stock.get('risk_explanations', []),
+                    'health_score': stock.get('health_score', 50),
+                    'risk_level': stock.get('risk_level', 'medium')
+                }
+        return {}
+    except Exception:
+        return {}
+
+
 def resample_to_weekly(df: pd.DataFrame) -> pd.DataFrame:
     """将日线数据重采样为周线数据"""
     df = df.copy()
@@ -1260,6 +1296,8 @@ def main():
 
     # ============= 信号数据加载 =============
     stock_signals = load_stock_signals(symbol)
+    risk_info = load_stock_risk_info(symbol)
+    has_buy_signal = len(stock_signals) > 0 or risk_info.get('has_buy_signal', False)
 
     # 计算组合评分和风险分（用于信号折叠区域显示）
     portfolio_score = 0
@@ -1275,6 +1313,11 @@ def main():
         best_signal = max(stock_signals, key=lambda x: x.get("score", 0))
         tech = best_signal.get("technicals", {})
         risk_score, risk_explanations = calculate_risk_score(tech, stock_signals)
+    elif risk_info:
+        # 只有风险信号的股票
+        risk_score = risk_info.get('risk_score', 50)
+        risk_explanations = risk_info.get('risk_warnings', risk_info.get('risk_explanations', []))
+        score_label = "风险预警"
 
     # ============= 头部信息区 =============
     st.markdown(f"""
@@ -1318,7 +1361,10 @@ def main():
     """, unsafe_allow_html=True)
 
     # ============= 信号展示区域 (折叠式，包含技术指标) =============
-    if stock_signals:
+    # 显示条件：有买入信号 或 有风险信号（风险分>=60）
+    show_signal_section = stock_signals or risk_score >= 60
+    
+    if show_signal_section:
         signal_count = len(stock_signals)
         
         # 创建自定义折叠区域，评分在标题右侧
@@ -1353,7 +1399,16 @@ def main():
             # 使用组件渲染信号和风险详情（左右布局）
             sig_col, risk_col = st.columns(2)
             with sig_col:
-                render_signal_list(stock_signals)
+                if stock_signals:
+                    render_signal_list(stock_signals)
+                else:
+                    # 只有风险信号的股票
+                    st.markdown("""
+                    <div style="padding: 20px; background: #fdf2f2; border-radius: 8px; border-left: 4px solid #e74c3c;">
+                        <div style="font-size: 16px; font-weight: 600; color: #e74c3c; margin-bottom: 8px;">⚠️ 风险预警</div>
+                        <div style="font-size: 13px; color: #666;">该股票当前无买入信号，但检测到风险信号，建议关注。</div>
+                    </div>
+                    """, unsafe_allow_html=True)
             with risk_col:
                 render_risk_assessment(risk_score, risk_explanations)
 

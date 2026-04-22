@@ -111,7 +111,6 @@ import logging
 import pandas as pd
 import baostock as bs
 import socket
-from datetime import datetime
 from typing import List, Optional, Dict
 
 # 设置全局 socket 超时（防止网络请求无限等待）
@@ -120,6 +119,7 @@ import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
+from datetime import datetime, timedelta
 
 from DataHub.config import CRAWLER_REQUEST_DELAY, STORAGE_DIR, RAW_PRICE_DIR, RAW_ADJUST_FACTOR_DIR, RAW_ETF_PRICE_DIR, RAW_INDEX_PRICE_DIR, RAW_INDEX_INTRADAY_DIR
 
@@ -336,14 +336,14 @@ class HistorySyncService:
         Returns:
             DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
         """
-        # ETF 优先使用 baostock，失败再尝试 Yahoo
+        # ETF 优先使用 Yahoo Finance（国内访问baostock不稳定）
         if asset_type == "etf":
-            df = self._fetch_etf_history_from_baostock(symbol, start_date, end_date)
+            df = self._fetch_etf_history_from_yfinance(symbol, start_date, end_date)
             if df is not None and not df.empty:
                 return df
-            # 回退到 Yahoo
-            logger.warning(f"{symbol} baostock 失败，尝试 Yahoo Finance...")
-            return self._fetch_etf_history_from_yfinance(symbol, start_date, end_date)
+            # 回退到 baostock
+            logger.warning(f"{symbol} Yahoo Finance 失败，尝试 baostock...")
+            return self._fetch_etf_history_from_baostock(symbol, start_date, end_date)
 
         # 指数使用 baostock/akshare 获取
         if asset_type == "index":
@@ -1642,7 +1642,7 @@ class HistorySyncService:
             同步结果统计
         """
         import akshare as ak
-        from datetime import datetime
+        from datetime import datetime, timedelta
 
         today = datetime.now()
         today_str = today.strftime('%Y%m%d')
@@ -1811,7 +1811,7 @@ class HistorySyncService:
             except Exception as e:
                 return {'status': 'failed', 'error': str(e)}
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             future_to_symbol = {
                 executor.submit(_sync_single, symbol): symbol
                 for symbol in symbols
@@ -1978,7 +1978,7 @@ class HistorySyncService:
         symbols: List[str] = None,
         incremental: bool = True,
         skip_existing: bool = False,
-        max_workers: int = 3,
+        max_workers: int = 1,
         start_date: str = None,
         end_date: str = None,
         asset_type: str = "stock"
@@ -2306,7 +2306,7 @@ def main():
     parser.add_argument('--limit', type=int, help='限制股票数量（测试用）')
     parser.add_argument('--sync-factors', action='store_true', help='只同步复权因子（不下载价格数据）')
     parser.add_argument('--sync-index-intraday', action='store_true', help='同步指数分时数据（1分钟线）')
-    parser.add_argument('--workers', type=int, default=3, help='并发线程数（默认3，建议3-5）')
+    parser.add_argument('--workers', type=int, default=1, help='并发线程数（默认1，避免py-mini-racer内存冲突；如需加速可设为3-5）')
     parser.add_argument('--no-logout', action='store_true', help='不执行baostock登出（用于并行执行时不影响其他进程）')
     parser.add_argument('--include-bj', action='store_true', help='包含北交所股票（默认跳过，因数据源不稳定）')
     parser.add_argument('--today', action='store_true', help='同步当天数据（极速模式）：使用 stock_zh_a_spot 获取全市场当日数据并入库，同时更新复权因子')
@@ -2396,7 +2396,7 @@ def main():
         # 同步指数分时数据
         from DataHub.core.data_client import UnifiedDataClient
         from DataHub.core.data_reader import save_index_intraday
-        from datetime import datetime
+        from datetime import datetime, timedelta
 
         print("\n" + "="*60)
         print("同步指数分时数据（1分钟线）")
@@ -2478,7 +2478,7 @@ def main():
 
     elif args.today:
         # 同步当天数据（极速模式）
-        from datetime import datetime
+        from datetime import datetime, timedelta
         today_str = datetime.now().strftime('%Y%m%d')
         print("\n" + "="*60)
         print(f"执行当天数据同步: {today_str}")

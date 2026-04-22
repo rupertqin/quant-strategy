@@ -442,25 +442,60 @@ def normalize_code(code: str) -> Optional[str]:
     return StockCodeUtil.normalize(code)
 
 
+# 缓存指数代码集合（从 official_indices.csv 读取）
+_index_codes_cache = None
+
+
+def _get_index_codes():
+    """从 official_indices.csv 读取所有指数代码"""
+    global _index_codes_cache
+
+    if _index_codes_cache is not None:
+        return _index_codes_cache
+
+    _index_codes_cache = set()
+    csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+
+    if csv_path.exists():
+        try:
+            import csv
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    code = row.get('code', '').strip()
+                    if code:
+                        _index_codes_cache.add(code)
+        except Exception:
+            pass
+
+    return _index_codes_cache
+
+
+def is_index(symbol: str) -> bool:
+    """判断代码是否为指数（基于 official_indices.csv）"""
+    code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
+    if not code.isdigit():
+        return False
+    return code in _get_index_codes()
+
+
 def detect_asset_type(symbol: str, default: str = "stock") -> str:
     """
     根据代码自动检测资产类型（ETF/股票/指数）
-    
+
     ETF 代码前缀：
     - 上海：510, 511, 512, 513, 515, 516, 517, 518, 519, 560, 561, 562, 563, 564, 588(科创)
     - 深圳：15xxxx, 16xxxx
-    
-    指数代码：
-    - 上海：000001, 000002, 000016, 000300 等（以000开头的6位代码）
-    - 深圳：399001, 399006 等（以399开头的6位代码）
-    
+
+    指数代码：基于 official_indices.csv 中的配置
+
     Args:
         symbol: 股票/ETF/指数代码，支持带后缀格式如 '510300.SH'
         default: 默认资产类型，如果无法识别则返回此值
-        
+
     Returns:
         'stock', 'etf', 'index'
-        
+
     Examples:
         >>> detect_asset_type('600519.SH')
         'stock'
@@ -473,17 +508,12 @@ def detect_asset_type(symbol: str, default: str = "stock") -> str:
     """
     # 去除后缀
     code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
-    
+
     if not code.isdigit():
         return default
-    
-    # 指数代码规则：
-    # - 上海指数：000000-000999 范围内的6位代码
-    # - 深圳指数：399000-399999, 970xxx, 980xxx 等指数系列
-    if (code.startswith('000') and len(code) == 6) or \
-       (code.startswith('399') and len(code) == 6) or \
-       (code.startswith('970') and len(code) == 6) or \
-       (code.startswith('980') and len(code) == 6):
+
+    # 优先检查指数（基于 official_indices.csv）
+    if is_index(symbol):
         return 'index'
     
     # ETF 代码规则（完整前缀列表，按交易所官方规则）

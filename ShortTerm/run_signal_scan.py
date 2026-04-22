@@ -36,6 +36,24 @@ import time
 from datetime import datetime
 import pandas as pd
 import json
+import numpy as np
+
+
+def convert_to_serializable(obj):
+    """将 numpy 类型转换为 JSON 可序列化的 Python 原生类型"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_to_serializable(item) for item in obj)
+    return obj
 
 
 @dataclass
@@ -310,13 +328,16 @@ def save_scan_result(result: Dict, asset_type: str, project_root: Path) -> Path:
     config = get_asset_config(asset_type)
     output_dir = project_root / "storage" / "outputs" / "signals"
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     date_str = datetime.now().strftime('%Y%m%d')
-    
+
+    # 转换 numpy 类型为 Python 原生类型
+    result = convert_to_serializable(result)
+
     # 带日期的文件名
     filename = f"{config.filename_prefix}_signals_intraday_{date_str}.json"
     filepath = output_dir / filename
-    
+
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     
@@ -591,7 +612,7 @@ def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None,
             }
         }
     else:
-        # 全市场模式
+        # 全市场模式（scan_all 内部已使用 etf_basic_info.csv 获取ETF列表）
         return scanner.scan_all('all', limit, multi_period)
 
 
@@ -634,36 +655,44 @@ def run_combined_scan(args, include_index: bool = True):
         print(f"💾 指数: index_signals_latest.json")
 
 
-def scan_asset_type_intraday(realtime_df: pd.DataFrame, asset_type: str, 
+def scan_asset_type_intraday(realtime_df: pd.DataFrame, asset_type: str,
                               multi_period: bool, limit: Optional[int] = None) -> Tuple[List, List[str]]:
     """
     扫描单一资产类型的盘中信号
-    
+
     Args:
         realtime_df: 实时数据DataFrame
         asset_type: 资产类型 'stock' / 'etf' / 'index'
         multi_period: 是否多周期分析
         limit: 扫描数量限制
-        
+
     Returns:
         (signals, symbols): (信号列表, 扫描的代码列表)
     """
     config = get_asset_config(asset_type)
     scanner = StockSignalScanner(asset_type=asset_type)
     symbols = extract_symbols_from_realtime(realtime_df, asset_type, limit)
-    
+
+    # ETF只扫描 etf_basic_info.csv 中列出的（避免同步全市场ETF历史数据）
+    if asset_type == 'etf':
+        etf_csv = project_root / "storage" / "etf_basic_info.csv"
+        if etf_csv.exists():
+            import pandas as pd
+            etf_list = pd.read_csv(etf_csv)['symbol'].tolist()
+            symbols = [s for s in symbols if s in etf_list]
+
     if limit:
         print(f"   扫描前 {limit} 只{config.name}...")
     else:
         suffix = "（已排除北交所）" if asset_type == 'stock' else ""
         print(f"   扫描全市场 {len(symbols)} 只{config.name}{suffix}...")
-    
+
     signals = []
     for symbol in symbols:
         sigs = scan_intraday_signals(scanner, symbol, realtime_df, multi_period)
         if sigs:
             signals.extend(sigs)
-    
+
     return signals, symbols
 
 
@@ -735,7 +764,7 @@ def run_all_intraday_scan(args, include_index: bool = True):
     return 0
 
 
-def save_all_intraday_results(result: Dict, all_signals: List, 
+def save_all_intraday_results(result: Dict, all_signals: List,
                                stock_df: Optional[pd.DataFrame], etf_df: Optional[pd.DataFrame],
                                stock_time: str, etf_time: str, multi_period: bool, limit: Optional[int],
                                index_df: Optional[pd.DataFrame] = None, index_time: str = ""):
@@ -743,12 +772,15 @@ def save_all_intraday_results(result: Dict, all_signals: List,
     output_dir = project_root / "storage" / "outputs" / "signals"
     output_dir.mkdir(parents=True, exist_ok=True)
     date_str = datetime.now().strftime('%Y%m%d')
-    
+
+    # 转换 numpy 类型为 Python 原生类型
+    result = convert_to_serializable(result)
+
     # 保存合并文件
     filepath = output_dir / f"all_signals_intraday_{date_str}.json"
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    
+
     latest_path = output_dir / "all_signals_latest.json"
     with open(latest_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)

@@ -111,8 +111,13 @@ all_signals = signals_data.get('signals', [])
 # 过滤股票池信号
 pool_signals = filter_pool_signals(all_signals, pool_stocks)
 
-# 按股票分组
+# 按股票分组（包括有买入信号的和只有风险信号的股票）
 signals_by_stock = {}
+
+# 先从信号数据中获取所有股票池相关的股票
+pool_set = set(pool_stocks)
+
+# 1. 处理有买入信号的股票
 for sig in pool_signals:
     symbol = sig['symbol']
     if symbol not in signals_by_stock:
@@ -120,17 +125,37 @@ for sig in pool_signals:
             'name': sig.get('name', get_stock_name(symbol)),
             'signals': [],
             'periods': set(),
-            'total_score': 0
+            'total_score': 0,
+            'risk_score': 0,
+            'risk_explanations': [],
+            'has_buy_signal': True
         }
     signals_by_stock[symbol]['signals'].append(sig)
     signals_by_stock[symbol]['periods'].add(sig.get('period', 'daily'))
 
+# 2. 从 signals_data 中获取股票池内只有风险信号的股票（无买入信号）
+all_stocks_data = signals_data.get('stocks', [])
+for stock in all_stocks_data:
+    symbol = stock.get('symbol')
+    if symbol in pool_set and symbol not in signals_by_stock:
+        # 这只股票只有风险信号，没有买入信号
+        signals_by_stock[symbol] = {
+            'name': stock.get('name', get_stock_name(symbol)),
+            'signals': [],
+            'periods': set(),
+            'total_score': 0,
+            'risk_score': stock.get('risk_score', 100 - stock.get('health_score', 50)),
+            'risk_explanations': stock.get('risk_warnings', stock.get('risk_explanations', [])),
+            'has_buy_signal': False
+        }
+
 # 计算总分和风险分（复用公共函数）
 for symbol, data in signals_by_stock.items():
-    signal_score, risk_score, risk_explanations = calculate_stock_metrics(data['signals'])
-    data['total_score'] = signal_score
-    data['risk_score'] = risk_score
-    data['risk_explanations'] = risk_explanations
+    if data['has_buy_signal']:
+        signal_score, risk_score, risk_explanations = calculate_stock_metrics(data['signals'])
+        data['total_score'] = signal_score
+        data['risk_score'] = risk_score
+        data['risk_explanations'] = risk_explanations
 
 # 侧边栏
 with st.sidebar:
@@ -140,6 +165,14 @@ with st.sidebar:
     st.subheader("筛选")
     filter_signal_type = st.selectbox("信号类型", ["全部", "左侧信号", "右侧信号"])
     filter_strength = st.selectbox("信号强度", ["全部", "强", "中", "弱"])
+    
+    # 新增：显示范围筛选
+    st.subheader("显示范围")
+    filter_display = st.radio(
+        "",
+        ["全部（买入信号+风险信号）", "仅买入信号", "仅风险信号"],
+        index=0
+    )
     
     st.divider()
     st.caption(f"""
@@ -190,11 +223,12 @@ with col3:
     """, unsafe_allow_html=True)
 
 with col4:
-    right_count = sum(1 for s in pool_signals if s.get('signal_type') == 'right')
+    # 统计只有风险信号的股票（无买入信号但风险分>=60）
+    risk_only_count = sum(1 for s in signals_by_stock.values() if not s.get('has_buy_signal', True))
     st.markdown(f"""
-    <div class="stats-card">
-        <div class="stats-number">{right_count}</div>
-        <div class="stats-label">右侧信号</div>
+    <div class="stats-card" style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);">
+        <div class="stats-number">{risk_only_count}</div>
+        <div class="stats-label">风险预警</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -207,29 +241,46 @@ st.subheader(f"📈 股票池信号 ({len(signals_by_stock)} / {len(pool_stocks)
 filtered_stocks = []
 for symbol, data in signals_by_stock.items():
     signals = data['signals']
+    has_buy_signal = data.get('has_buy_signal', len(signals) > 0)
     
-    # 信号类型筛选
-    if filter_signal_type != "全部":
+    # 根据显示范围筛选
+    if filter_display == "仅买入信号" and not has_buy_signal:
+        continue
+    if filter_display == "仅风险信号" and has_buy_signal:
+        continue
+    
+    # 信号类型筛选（仅对有买入信号的股票有效）
+    if filter_signal_type != "全部" and has_buy_signal:
         target_type = 'left' if filter_signal_type == "左侧信号" else 'right'
         signals = [s for s in signals if s.get('signal_type') == target_type]
     
-    # 强度筛选
-    if filter_strength != "全部":
+    # 强度筛选（仅对有买入信号的股票有效）
+    if filter_strength != "全部" and has_buy_signal:
         strength_map = {"强": "strong", "中": "medium", "弱": "weak"}
         target_strength = strength_map.get(filter_strength)
         signals = [s for s in signals if s.get('strength') == target_strength]
     
-    if signals:
-        # 计算该股票的指标
-        signal_score, risk_score, risk_explanations = calculate_stock_metrics(signals)
+    # 显示条件：有买入信号 或 有高风险（风险分>=60）
+    risk_score = data.get('risk_score', 0)
+    if has_buy_signal or risk_score >= 60:
+        if has_buy_signal:
+            # 计算该股票的指标
+            signal_score, risk_score_calc, risk_explanations = calculate_stock_metrics(signals)
+        else:
+            # 只有风险信号的股票
+            signal_score = 0
+            risk_score_calc = risk_score
+            risk_explanations = data.get('risk_explanations', [])
+        
         filtered_stocks.append({
             'symbol': symbol,
             'name': data['name'],
             'signals': signals,
             'periods': set(s.get('period', 'daily') for s in signals),
             'total_score': signal_score,
-            'risk_score': risk_score,
-            'risk_explanations': risk_explanations
+            'risk_score': risk_score_calc,
+            'risk_explanations': risk_explanations,
+            'has_buy_signal': has_buy_signal
         })
 
 # 按总评分排序
@@ -258,11 +309,23 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
     total_score = stock_data['total_score']
     risk_score = stock_data['risk_score']
     risk_explanations = stock_data['risk_explanations']
+    has_buy_signal = stock_data.get('has_buy_signal', len(signals) > 0)
     
-    # 获取最新价格和涨跌幅（从第一个信号）
-    first_sig = signals[0]
-    close_price = first_sig.get('close_price', 0)
-    change_pct = first_sig.get('change_pct', 0)
+    # 获取最新价格和涨跌幅（从第一个信号，如果没有信号则从其他数据源获取）
+    if signals:
+        first_sig = signals[0]
+        close_price = first_sig.get('close_price', 0)
+        change_pct = first_sig.get('change_pct', 0)
+    else:
+        # 只有风险信号的股票，尝试从 signals_data 获取价格
+        close_price = 0
+        change_pct = 0
+        for s in signals_data.get('stocks', []):
+            if s.get('symbol') == symbol:
+                tech = s.get('technicals', {})
+                close_price = tech.get('close', 0)
+                change_pct = tech.get('change_pct', 0)
+                break
     
     # 构建显示
     col1, col2 = st.columns([6, 1])
@@ -271,11 +334,16 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
         # 股票名称和价格
         name_col, price_col = st.columns([3, 1])
         with name_col:
+            # 根据信号类型选择图标和按钮样式
+            icon = "📈" if has_buy_signal else "⚠️"
+            btn_type = "primary" if has_buy_signal else "secondary"
+            btn_help = f"点击跳转到 {symbol} K线图" + (" (有买入信号)" if has_buy_signal else " (风险预警)")
+            
             if st.button(
-                f"📈 {stock_name} ({symbol})",
+                f"{icon} {stock_name} ({symbol})",
                 key=f"pool_btn_{symbol}_{idx}",
-                help=f"点击跳转到 {symbol} K线图",
-                type="primary"
+                help=btn_help,
+                type=btn_type
             ):
                 st.session_state['selected_stock'] = symbol
                 st.session_state['selected_name'] = stock_name
@@ -299,20 +367,24 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
             </div>
             ''', unsafe_allow_html=True)
         
-        # 周期标签
-        period_colors = {'daily': '#3498db', 'weekly': '#9b59b6', 'monthly': '#e74c3c'}
-        period_names = {'daily': '日', 'weekly': '周', 'monthly': '月'}
-        period_tags = []
-        for p in sorted(periods):
-            color = period_colors.get(p, '#666')
-            name = period_names.get(p, p)
-            period_tags.append(f'<span style="background: {color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 5px;">{name}</span>')
-        
-        # 多周期共振标识
-        if len(periods) >= 2:
-            period_tags.append('<span style="background: linear-gradient(135deg, #ff6b6b, #feca57); color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🔥 多周期共振</span>')
-        
-        st.markdown(f'<div style="margin: 5px 0;">{"".join(period_tags)}</div>', unsafe_allow_html=True)
+        # 周期标签或风险预警标签
+        if has_buy_signal:
+            period_colors = {'daily': '#3498db', 'weekly': '#9b59b6', 'monthly': '#e74c3c'}
+            period_names = {'daily': '日', 'weekly': '周', 'monthly': '月'}
+            period_tags = []
+            for p in sorted(periods):
+                color = period_colors.get(p, '#666')
+                name = period_names.get(p, p)
+                period_tags.append(f'<span style="background: {color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 5px;">{name}</span>')
+            
+            # 多周期共振标识
+            if len(periods) >= 2:
+                period_tags.append('<span style="background: linear-gradient(135deg, #ff6b6b, #feca57); color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🔥 多周期共振</span>')
+            
+            st.markdown(f'<div style="margin: 5px 0;">{"".join(period_tags)}</div>', unsafe_allow_html=True)
+        else:
+            # 只有风险信号的股票显示风险预警标签
+            st.markdown(f'<div style="margin: 5px 0;"><span style="background: #e74c3c; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">⚠️ 风险预警</span></div>', unsafe_allow_html=True)
         
         # 使用折叠区域显示信号和风险详情（与signal_watch页面一致）
         from Dashboard.utils.scoring import get_score_label
@@ -328,9 +400,15 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
                 render_risk_assessment(risk_score, risk_explanations)
     
     with col2:
-        # 信号评分
-        score_bg = "#ff6b6b" if total_score >= 80 else "#feca57" if total_score >= 60 else "#dfe6e9"
-        score_color = "white" if total_score >= 60 else "#333"
+        # 信号评分（只有风险信号的股票显示为"-")
+        if has_buy_signal:
+            score_bg = "#ff6b6b" if total_score >= 80 else "#feca57" if total_score >= 60 else "#dfe6e9"
+            score_color = "white" if total_score >= 60 else "#333"
+            score_display = str(total_score)
+        else:
+            score_bg = "#95a5a6"  # 灰色表示无信号
+            score_color = "white"
+            score_display = "-"
 
         # 风险分颜色和标签
         risk_bg = get_risk_color_css(risk_score)
@@ -338,7 +416,7 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
 
         st.markdown(f'''
         <div style="background: {score_bg}; color: {score_color}; padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 8px;">
-            <div style="font-size: 20px; font-weight: bold;">{total_score}</div>
+            <div style="font-size: 20px; font-weight: bold;">{score_display}</div>
             <div style="font-size: 11px;">信号分</div>
         </div>
         <div style="background: {risk_bg}; color: white; padding: 10px; border-radius: 10px; text-align: center;">

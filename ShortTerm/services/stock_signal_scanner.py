@@ -138,7 +138,23 @@ class StockSignal:
     technicals: Dict                 # 技术指标详情
     
     def to_dict(self) -> dict:
-        return asdict(self)
+        """转换为字典，自动处理 numpy 类型"""
+        import numpy as np
+
+        def convert_value(v):
+            if isinstance(v, np.integer):
+                return int(v)
+            elif isinstance(v, np.floating):
+                return float(v)
+            elif isinstance(v, np.ndarray):
+                return v.tolist()
+            elif isinstance(v, dict):
+                return {k: convert_value(val) for k, val in v.items()}
+            elif isinstance(v, list):
+                return [convert_value(item) for item in v]
+            return v
+
+        return {k: convert_value(v) for k, v in asdict(self).items()}
 
 
 class SignalCalculator:
