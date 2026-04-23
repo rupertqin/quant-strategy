@@ -255,9 +255,11 @@ with tcol4:
 
 # 第二行：指数表现与图表
 st.markdown("**主要指数表现**")
-if index_performance:
-    idx_cols = st.columns(len(index_performance))
-    for idx_col, (name, idx_data) in zip(idx_cols, index_performance.items()):
+# 过滤掉深证成指
+filtered_index_performance = {k: v for k, v in index_performance.items() if k != '深证成指'}
+if filtered_index_performance:
+    idx_cols = st.columns(len(filtered_index_performance))
+    for idx_col, (name, idx_data) in zip(idx_cols, filtered_index_performance.items()):
         with idx_col:
             change = idx_data.get('change_pct', 0)
             trend = idx_data.get('trend', 'NEUTRAL')
@@ -433,7 +435,6 @@ st.markdown("### 📈 指数走势")
 # 指数名称到代码的映射（用于跳转链接）
 INDEX_CODE_MAP = {
     '上证指数': '000001.SH',
-    '深证成指': '399001.SZ',
     '创业板指': '399006.SZ',
     '沪深300': '000300.SH',
     '上证50': '000016.SH',
@@ -441,12 +442,15 @@ INDEX_CODE_MAP = {
     '中证1000': '000852.SH',
 }
 
-if index_history:
+# 过滤掉深证成指
+filtered_index_history = {k: v for k, v in index_history.items() if k != '深证成指'}
+
+if filtered_index_history:
     # 创建2x2的图表布局
     chart_cols = st.columns(2)
     col_idx = 0
 
-    for name, hist_data in index_history.items():
+    for name, hist_data in filtered_index_history.items():
         with chart_cols[col_idx % 2]:
             # 获取指数代码用于跳转链接
             index_code = INDEX_CODE_MAP.get(name, '')
@@ -486,7 +490,7 @@ if index_history:
                 st.components.v1.html(chart_html, height=280, scrolling=False)
 
                 # 获取该指数的极值点数据
-                idx_data = index_performance.get(name, {})
+                idx_data = filtered_index_performance.get(name, {})
                 elliott = idx_data.get('elliott_wave', {})
                 structure = elliott.get('structure', {})
                 peaks = structure.get('recent_peaks', [])
@@ -602,8 +606,8 @@ st.markdown("### 📈 技术分析")
 main_index = None
 main_index_name = None
 for name in ['沪深300', '上证指数']:
-    if name in index_performance:
-        idx_data = index_performance[name]
+    if name in filtered_index_performance:
+        idx_data = filtered_index_performance[name]
         if 'dow_theory' in idx_data:
             main_index = idx_data
             main_index_name = name
@@ -613,7 +617,7 @@ if main_index and 'dow_theory' in main_index:
     # ===== 所有指数的道氏理论概览表格 =====
     st.markdown("**📊 道氏理论概览**")
     dow_data = []
-    for name, data in index_performance.items():
+    for name, data in filtered_index_performance.items():
         if name == 'inter_index_validation':
             continue
         dow = data.get('dow_theory', {})
@@ -636,7 +640,7 @@ if main_index and 'dow_theory' in main_index:
     # ===== 所有指数的波浪理论概览表格 =====
     st.markdown("**🌊 波浪理论概览**")
     wave_data = []
-    for name, data in index_performance.items():
+    for name, data in filtered_index_performance.items():
         if name == 'inter_index_validation':
             continue
         wave = data.get('elliott_wave', {})
@@ -654,9 +658,9 @@ if main_index and 'dow_theory' in main_index:
 
         # 显示各指数的斐波那契回调位
         st.markdown("**斐波那契回调位参考**")
-        fib_cols = st.columns(len(index_performance))
+        fib_cols = st.columns(len(filtered_index_performance))
         col_idx = 0
-        for name, data in index_performance.items():
+        for name, data in filtered_index_performance.items():
             if name == 'inter_index_validation':
                 continue
             with fib_cols[col_idx]:

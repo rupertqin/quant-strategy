@@ -677,6 +677,103 @@ class MarketRegime:
             logger.debug(f"获取指数历史数据失败 {code}: {e}")
             return pd.DataFrame()
 
+    def _get_index_history_from_local(self, index_name: str, days: int = 90) -> pd.DataFrame:
+        """
+        基于本地个股数据计算指数历史数据（备选方案）
+        
+        遵循项目规则8.2：基于个股数据计算指数，而非直接调用指数接口
+        
+        Args:
+            index_name: 指数名称（如'沪深300'、'上证指数'等）
+            days: 获取天数
+            
+        Returns:
+            DataFrame with columns: date, open, high, low, close, volume
+        """
+        try:
+            from DataHub.core.index_calculator import IndexCalculator
+            from DataHub.core.data_reader import load_stock_prices
+            import pandas as pd
+            from pathlib import Path
+            
+            logger.info(f"使用 IndexCalculator 从本地数据计算 {index_name}")
+            
+            # 初始化计算器
+            calc = IndexCalculator()
+            
+            # 获取指数定义
+            from DataHub.core.index_calculator import IndexDefinition
+            rule = IndexDefinition.get_rule(index_name)
+            if not rule:
+                logger.warning(f"未知的指数: {index_name}")
+                return pd.DataFrame()
+            
+            # 获取成分股列表
+            stock_basic_path = Path(__file__).parent.parent.parent / "storage" / "stock_basic_info.csv"
+            if not stock_basic_path.exists():
+                logger.warning(f"股票基础信息文件不存在: {stock_basic_path}")
+                return pd.DataFrame()
+            
+            stocks_df = pd.read_csv(stock_basic_path)
+            constituents_df = calc.filter_constituents(stocks_df, index_name)
+            
+            if constituents_df.empty:
+                logger.warning(f"{index_name}: 没有成分股数据")
+                return pd.DataFrame()
+            
+            constituent_symbols = constituents_df['symbol'].tolist()
+            logger.info(f"{index_name}: 找到 {len(constituent_symbols)} 只成分股")
+            
+            # 加载成分股历史价格数据
+            all_prices = {}
+            for symbol in constituent_symbols[:50]:  # 限制数量以提高速度
+                try:
+                    df = load_stock_prices(symbol, adjust='qfq')
+                    if not df.empty and len(df) >= days:
+                        all_prices[symbol] = df.set_index('trade_date')['close']
+                except Exception as e:
+                    logger.debug(f"加载 {symbol} 价格数据失败: {e}")
+                    continue
+            
+            if len(all_prices) < 10:
+                logger.warning(f"{index_name}: 有效成分股数量不足 ({len(all_prices)})")
+                return pd.DataFrame()
+            
+            # 合并价格数据
+            price_df = pd.DataFrame(all_prices)
+            price_df = price_df.dropna(how='all', axis=1)
+            
+            if price_df.empty:
+                logger.warning(f"{index_name}: 没有有效的价格数据")
+                return pd.DataFrame()
+            
+            # 计算指数点位
+            index_value = calc.calculate_index_value(price_df, index_name)
+            
+            if index_value.empty:
+                logger.warning(f"{index_name}: 指数计算结果为空")
+                return pd.DataFrame()
+            
+            # 转换为标准格式
+            result_df = pd.DataFrame({
+                'date': index_value.index,
+                'close': index_value.values,
+                'open': index_value.values,  # 简化处理，使用close作为open/high/low
+                'high': index_value.values,
+                'low': index_value.values,
+                'volume': 0  # 指数没有成交量
+            })
+            
+            # 取最近days天
+            result_df = result_df.tail(days).reset_index(drop=True)
+            
+            logger.info(f"从本地数据计算 {index_name} 成功，共 {len(result_df)} 条")
+            return result_df
+            
+        except Exception as e:
+            logger.error(f"从本地数据计算指数失败 {index_name}: {e}")
+            return pd.DataFrame()
+
     def _dow_theory_analysis(self, df: pd.DataFrame) -> dict:
         """
         道氏理论分析
@@ -975,11 +1072,16 @@ class MarketRegime:
             except Exception as e:
                 logger.debug(f"历史数据接口失败: {e}")
 
-        # 添加道氏理论和波浪理论分析
+        # 添加道氏理论和波浪理论分析（本地数据优先）
         for name, (em_code, _) in indices.items():
             if name in result:
-                # 获取历史数据进行技术分析
-                hist_df = self._get_index_history(em_code, days=90)
+                # 首选：从本地数据计算指数（遵循规则8.2）
+                hist_df = self._get_index_history_from_local(name, days=90)
+                
+                # 如果本地数据失败，尝试外部接口作为备选
+                if hist_df.empty:
+                    logger.info(f"本地数据计算 {name} 失败，尝试外部接口...")
+                    hist_df = self._get_index_history(em_code, days=90)
 
                 if not hist_df.empty:
                     # 道氏理论分析
@@ -991,16 +1093,38 @@ class MarketRegime:
                     result[name]['dow_theory'] = {'note': '无法获取历史数据'}
                     result[name]['elliott_wave'] = {'note': '无法获取历史数据'}
 
-        # 填充缺失的指数
+        # 填充缺失的指数（首选本地数据计算）
         for name in indices.keys():
             if name not in result:
-                result[name] = {
-                    'change': 0,
-                    'trend': 'NEUTRAL',
-                    'close': 0,
-                    'dow_theory': {'note': '数据缺失'},
-                    'elliott_wave': {'note': '数据缺失'}
-                }
+                # 首选：从本地数据计算
+                hist_df = self._get_index_history_from_local(name, days=90)
+                
+                # 如果本地数据失败，尝试外部接口
+                if hist_df.empty:
+                    em_code = indices[name][0]
+                    logger.info(f"本地数据计算 {name} 失败，尝试外部接口...")
+                    hist_df = self._get_index_history(em_code, days=90)
+                
+                if not hist_df.empty and len(hist_df) >= 2:
+                    latest = hist_df.iloc[-1]
+                    prev = hist_df.iloc[-2]
+                    change_pct = (latest['close'] - prev['close']) / prev['close'] * 100 if prev['close'] > 0 else 0
+                    
+                    result[name] = {
+                        'change': round(change_pct, 2),
+                        'trend': 'UP' if change_pct > 0 else 'DOWN' if change_pct < 0 else 'NEUTRAL',
+                        'close': latest['close'],
+                        'dow_theory': self._dow_theory_analysis(hist_df),
+                        'elliott_wave': self._elliott_wave_analysis(hist_df)
+                    }
+                else:
+                    result[name] = {
+                        'change': 0,
+                        'trend': 'NEUTRAL',
+                        'close': 0,
+                        'dow_theory': {'note': '数据缺失'},
+                        'elliott_wave': {'note': '数据缺失'}
+                    }
 
         # 添加跨指数验证（道氏理论原则）
         result['inter_index_validation'] = self._validate_across_indices(result)

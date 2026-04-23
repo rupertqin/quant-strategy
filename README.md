@@ -54,12 +54,12 @@ quant-strategy/
 
 **上帝的归上帝，凯撒的归凯撒**
 
-| 组件     | 职责                            | 技术栈               |
-| -------- | ------------------------------- | -------------------- |
+| 组件     | 职责                             | 技术栈               |
+| -------- | -------------------------------- | -------------------- |
 | DataHub  | 统一数据管理，akshare + baostock | akshare, baostock    |
-| 长线策略 | 均值-方差优化，计算最优资产配置 | scipy, numpy, pandas |
-| 短线策略 | 双模块：今日技术面 + 股票池监控   | pandas, numpy        |
-| 看板     | 整合展示，信号汇总              | streamlit, plotly    |
+| 长线策略 | 均值-方差优化，计算最优资产配置  | scipy, numpy, pandas |
+| 短线策略 | 双模块：今日技术面 + 股票池监控  | pandas, numpy        |
+| 看板     | 整合展示，信号汇总               | streamlit, plotly    |
 
 ## ShortTerm 短线策略 (双模块)
 
@@ -68,12 +68,14 @@ quant-strategy/
 **功能**: 全市场涨停板扫描、板块热度分析
 
 **指标**:
+
 - 每日涨停家数统计
 - 板块热度排名
 - 市场状态判断 (汇率/北向资金/黄金)
 - 事件研究回测
 
 **运行**:
+
 ```bash
 cd ShortTerm
 python run_today_technical.py
@@ -84,6 +86,7 @@ python run_today_technical.py
 **功能**: 监控 LongTerm 股票池的短线技术指标
 
 **指标**:
+
 - **均线系统**: MA5, MA10, MA20, MA60(周线)
 - **价格**: 最新价、涨跌幅、涨跌额
 - **量能**: 成交量、量比(vol_ratio)
@@ -100,6 +103,7 @@ python run_today_technical.py
 | HOLD | 其他 | 持有观望 |
 
 **运行**:
+
 ```bash
 # 今日技术面扫描（涨停、板块热度）
 python ShortTerm/run_today_technical.py
@@ -109,6 +113,7 @@ python ShortTerm/run_signal_scan.py
 ```
 
 **输出文件**:
+
 ```
 storage/outputs/shortterm/pool_watch/
 ├── pool_watch_YYYYMMDD.json      # 完整报告
@@ -120,14 +125,17 @@ storage/outputs/shortterm/pool_watch/
 **功能**: 全市场个股技术面信号扫描，生成左侧（抄底/反转）和右侧（追涨/确认）信号
 
 **左侧信号**（抄底/反转）:
+
 - MACD底背离、KDJ底背离
 - 超跌反弹、缩量十字星、长下影线
 
 **右侧信号**（追涨/确认）:
+
 - MA5/MA10/MA20金叉、MACD金叉、KDJ金叉
 - 量价突破、均线多头排列、突破平台
 
 **多周期分析**（日线/周线/月线共振）:
+
 - 日线信号：基础信号（默认）
 - 周线信号：信号名称前缀"周线"，评分+10
 - 月线信号：信号名称前缀"月线"，评分+15
@@ -137,6 +145,7 @@ storage/outputs/shortterm/pool_watch/
 检测单根均线（MA10/MA20/MA60）是否趋于水平直线。均线走平意味着价格长期围绕某个中枢稳定波动，这个"走平"的价格位置就是强支撑/阻力位。
 
 显示格式：`MAxx@价格`
+
 - 🔴红色：强烈走平（分数≥0.90）- 长期稳定中枢
 - 🟡黄色：较走平（分数≥0.80）- 中期稳定区间
 - 🔵蓝色：走平（分数≥0.75）- 短期参考位
@@ -144,11 +153,11 @@ storage/outputs/shortterm/pool_watch/
 **📊 均线粘合指标**（新增）:
 检测多根均线是否纠缠在一起。均线粘合意味着市场在选择方向，一旦突破往往有大行情。
 
-| 标记 | 含义 | 分数 |
-|------|------|------|
+| 标记   | 含义     | 分数  |
+| ------ | -------- | ----- |
 | 🔴MAxx | 强烈粘合 | ≥0.90 |
-| 🟡MAxx | 较平缓 | ≥0.80 |
-| 🟢MAxx | 平缓 | ≥0.70 |
+| 🟡MAxx | 较平缓   | ≥0.80 |
+| 🟢MAxx | 平缓     | ≥0.70 |
 
 **模块化设计**:
 指标格式化逻辑封装在 `Dashboard/utils/formatters.py`，供信号列表和个股图表页面共用：
@@ -163,6 +172,7 @@ from utils.formatters import (
 ```
 
 **运行**:
+
 ```bash
 # 扫描全部信号（全量扫描，默认多周期）
 python ShortTerm/run_signal_scan.py
@@ -184,6 +194,7 @@ python ShortTerm/run_signal_scan.py --no-multi-period
 ```
 
 **输出文件**:
+
 ```
 storage/outputs/signals/
 ├── stock_signals_all_latest.json      # 最新全部信号
@@ -193,6 +204,7 @@ storage/outputs/signals/
 ```
 
 **查看结果**:
+
 ```bash
 # 启动 Dashboard 查看信号列表
 streamlit run Dashboard/app.py
@@ -236,6 +248,7 @@ storage/
 从 baostock/akshare 获取所有A股公司基本信息，保存为CSV。用于Dashboard显示股票中文名称。
 
 **构建数据库（不定期执行）**：
+
 ```bash
 # 直接运行模块
 python -m DataHub.run_build_stock_db
@@ -245,6 +258,7 @@ python -m DataHub.run_build_stock_db --force
 ```
 
 **查询数据库**：
+
 ```bash
 # 查看数据库信息
 python -m DataHub.run_build_stock_db --info
@@ -255,6 +269,7 @@ python -m DataHub.run_build_stock_db --search 600519
 ```
 
 **在代码中使用**：
+
 ```python
 from lib.utils import get_stock_name
 
@@ -267,6 +282,7 @@ display = format_stock('600519.SH')  # 返回 '600519.SH(贵州茅台)'
 ```
 
 **数据库文件**：`storage/stock_basic_info.csv`
+
 - 数据来源：baostock（优先）/ akshare（备用）
 - 股票数量：约5000+只A股
 - 更新频率：建议季度/半年更新一次
@@ -375,21 +391,22 @@ python DataHub/scripts/migrate_data.py
 
 ## 输出文件
 
-| 目录                         | 输出文件                      | 说明                |
-| ---------------------------- | ----------------------------- | ------------------- |
-| storage/outputs/longterm/    | weights/output_weights.csv    | 最优权重配置        |
-| storage/outputs/longterm/    | reports/portfolio_report.md   | 绩效报告 (Markdown) |
-| storage/outputs/longterm/    | reports/portfolio_report.html | 绩效报告 (HTML)     |
-| storage/outputs/longterm/    | reports/charts/*.png          | 图表                |
-| storage/outputs/shortterm/services/ | signals/daily_signals.json | 每日热点信号 |
-| storage/outputs/shortterm/services/ | history/sector_heat_history.csv | 热度历史 |
-| storage/outputs/shortterm/pool_watch/ ⭐ | pool_watch_YYYYMMDD.json | 股票池监控报告 |
-| storage/outputs/shortterm/pool_watch/ ⭐ | pool_ranking_YYYYMMDD.csv | 股票池排名 |
-| Dashboard                    | -                             | 实时看板            |
+| 目录                                     | 输出文件                        | 说明                |
+| ---------------------------------------- | ------------------------------- | ------------------- |
+| storage/outputs/longterm/                | weights/output_weights.csv      | 最优权重配置        |
+| storage/outputs/longterm/                | reports/portfolio_report.md     | 绩效报告 (Markdown) |
+| storage/outputs/longterm/                | reports/portfolio_report.html   | 绩效报告 (HTML)     |
+| storage/outputs/longterm/                | reports/charts/\*.png           | 图表                |
+| storage/outputs/shortterm/services/      | signals/daily_signals.json      | 每日热点信号        |
+| storage/outputs/shortterm/services/      | history/sector_heat_history.csv | 热度历史            |
+| storage/outputs/shortterm/pool_watch/ ⭐ | pool_watch_YYYYMMDD.json        | 股票池监控报告      |
+| storage/outputs/shortterm/pool_watch/ ⭐ | pool_ranking_YYYYMMDD.csv       | 股票池排名          |
+| Dashboard                                | -                               | 实时看板            |
 
 ## 版本历史
 
 ### v2.0 (2026-04-02)
+
 - **重构**: ShortTerm 拆分为双模块
   - `services`: 原涨停扫描功能
   - `pool_watch`: 新增股票池短线监控
@@ -404,3 +421,13 @@ python DataHub/scripts/migrate_data.py
 - 本系统仅供学习研究，不构成投资建议
 - 短线策略风险较高，请谨慎使用
 - 建议先回测验证，再实盘操作
+
+### 常用命令
+
+```
+# 实时数据服务与短线信号扫描
+python DataHub/services/realtime_service.py && python ShortTerm/run_signal_scan.py && python ShortTerm/run_today_technical.py
+
+# 每日数据入库
+python DataHub/services/history_sync.py --today && python DataHub/services/history_sync.py --daily --symbol etf  --workers 1 && python DataHub/services/history_sync.py --daily --symbol index --workers 1
+```

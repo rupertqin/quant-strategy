@@ -382,7 +382,7 @@ def main():
     """, unsafe_allow_html=True)
 
     # 分页设置
-    page_size = 20
+    page_size = 50
     total_pages = (len(filtered_stocks) + page_size - 1) // page_size
     
     # 初始化页码到 session_state
