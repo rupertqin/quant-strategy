@@ -987,8 +987,10 @@ class MarketRegime:
     def get_index_performance(self) -> dict:
         """
         获取主要指数表现（结合道氏理论和波浪理论）
+        从本地数据读取，遵循项目规则8.2
+        
         Returns: {
-            '沪深300': {
+            '指数名称': {
                 'change': 涨跌幅,
                 'trend': 趋势,
                 'dow_theory': {...},      # 道氏理论分析
@@ -997,137 +999,63 @@ class MarketRegime:
             ...
         }
         """
-        indices = {
-            '沪深300': ('000300', 'sh000300'),
-            '中证1000': ('000852', 'sh000852'),
-            '创业板': ('399006', 'sz399006'),
-            '上证指数': ('000001', 'sh000001')
-        }
-
+        from lib.utils.stock_code import StockCodeUtil
+        
+        # 从 official_indices.csv 读取主要指数列表
+        core_indices = StockCodeUtil.get_core_indices()
+        if not core_indices:
+            raise RuntimeError("无法读取 storage/official_indices.csv，请确保文件存在且格式正确")
+        
         result = {}
-
-        # 方法1: 尝试使用新浪实时行情接口（更可靠）
-        try:
-            import akshare as ak
-            spot_df = ak.stock_zh_index_spot_sina()
-
-            for name, (em_code, sina_code) in indices.items():
-                try:
-                    # 新浪接口使用 sh/sz 前缀
-                    idx_row = spot_df[spot_df['代码'] == sina_code]
-                    if not idx_row.empty:
-                        row = idx_row.iloc[0]
-                        change_pct = float(row.get('涨跌幅', 0))
-                        close = float(row.get('最新价', 0))
-                        # 根据涨跌幅判断趋势
-                        trend = 'UP' if change_pct > 0 else 'DOWN' if change_pct < 0 else 'NEUTRAL'
-
-                        result[name] = {
-                            'change': round(change_pct, 2),
-                            'trend': trend,
-                            'close': close
-                        }
-                        logger.debug(f"获取指数 {name}: {change_pct:+.2f}%")
-                except Exception as e:
-                    logger.debug(f"新浪接口获取 {name} 失败: {e}")
-        except Exception as e:
-            logger.debug(f"新浪实时行情接口失败: {e}")
-
-        # 方法2: 使用历史数据接口（备用）
-        if len(result) < len(indices):
+        
+        # 从本地数据计算所有指数
+        for symbol, name in core_indices.items():
             try:
-                import akshare as ak
-                from datetime import datetime, timedelta
-
-                end_date = datetime.now()
-                start_date = end_date - timedelta(days=30)
-                start_str = start_date.strftime('%Y%m%d')
-                end_str = end_date.strftime('%Y%m%d')
-
-                for name, (em_code, _) in indices.items():
-                    if name in result:
-                        continue
-                    try:
-                        df = ak.index_zh_a_hist(symbol=em_code, period="daily", start_date=start_str, end_date=end_str)
-
-                        if not df.empty and len(df) >= 2:
-                            latest = df.iloc[-1]
-                            prev = df.iloc[-2]
-                            change_pct = (latest['收盘'] - prev['收盘']) / prev['收盘'] * 100 if prev['收盘'] > 0 else 0
-
-                            if len(df) >= 5:
-                                ma5 = df['收盘'].tail(5).mean()
-                                trend = 'UP' if latest['收盘'] > ma5 else 'DOWN'
-                            else:
-                                trend = 'NEUTRAL'
-
-                            result[name] = {
-                                'change': round(change_pct, 2),
-                                'trend': trend,
-                                'close': latest['收盘']
-                            }
-                    except Exception as e:
-                        logger.debug(f"历史数据获取 {name} 失败: {e}")
-
-            except Exception as e:
-                logger.debug(f"历史数据接口失败: {e}")
-
-        # 添加道氏理论和波浪理论分析（本地数据优先）
-        for name, (em_code, _) in indices.items():
-            if name in result:
-                # 首选：从本地数据计算指数（遵循规则8.2）
+                # 从本地数据计算指数（遵循规则8.2）
                 hist_df = self._get_index_history_from_local(name, days=90)
-                
-                # 如果本地数据失败，尝试外部接口作为备选
-                if hist_df.empty:
-                    logger.info(f"本地数据计算 {name} 失败，尝试外部接口...")
-                    hist_df = self._get_index_history(em_code, days=90)
-
-                if not hist_df.empty:
-                    # 道氏理论分析
-                    result[name]['dow_theory'] = self._dow_theory_analysis(hist_df)
-
-                    # 波浪理论分析
-                    result[name]['elliott_wave'] = self._elliott_wave_analysis(hist_df)
-                else:
-                    result[name]['dow_theory'] = {'note': '无法获取历史数据'}
-                    result[name]['elliott_wave'] = {'note': '无法获取历史数据'}
-
-        # 填充缺失的指数（首选本地数据计算）
-        for name in indices.keys():
-            if name not in result:
-                # 首选：从本地数据计算
-                hist_df = self._get_index_history_from_local(name, days=90)
-                
-                # 如果本地数据失败，尝试外部接口
-                if hist_df.empty:
-                    em_code = indices[name][0]
-                    logger.info(f"本地数据计算 {name} 失败，尝试外部接口...")
-                    hist_df = self._get_index_history(em_code, days=90)
                 
                 if not hist_df.empty and len(hist_df) >= 2:
                     latest = hist_df.iloc[-1]
                     prev = hist_df.iloc[-2]
                     change_pct = (latest['close'] - prev['close']) / prev['close'] * 100 if prev['close'] > 0 else 0
                     
+                    # 判断趋势
+                    if len(hist_df) >= 20:
+                        ma20 = hist_df['close'].rolling(20).mean().iloc[-1]
+                        trend = 'UP' if latest['close'] > ma20 else 'DOWN'
+                    else:
+                        trend = 'NEUTRAL'
+                    
                     result[name] = {
                         'change': round(change_pct, 2),
-                        'trend': 'UP' if change_pct > 0 else 'DOWN' if change_pct < 0 else 'NEUTRAL',
+                        'trend': trend,
                         'close': latest['close'],
                         'dow_theory': self._dow_theory_analysis(hist_df),
                         'elliott_wave': self._elliott_wave_analysis(hist_df)
                     }
+                    logger.debug(f"本地数据获取指数 {name}: {change_pct:+.2f}%")
                 else:
+                    logger.warning(f"本地数据获取 {name} 失败: 数据不足")
                     result[name] = {
                         'change': 0,
                         'trend': 'NEUTRAL',
                         'close': 0,
-                        'dow_theory': {'note': '数据缺失'},
-                        'elliott_wave': {'note': '数据缺失'}
+                        'dow_theory': {'note': '本地数据不足'},
+                        'elliott_wave': {'note': '本地数据不足'}
                     }
+            except Exception as e:
+                logger.warning(f"处理指数 {name} 失败: {e}")
+                result[name] = {
+                    'change': 0,
+                    'trend': 'NEUTRAL',
+                    'close': 0,
+                    'dow_theory': {'note': f'处理失败: {str(e)}'},
+                    'elliott_wave': {'note': f'处理失败: {str(e)}'}
+                }
 
         # 添加跨指数验证（道氏理论原则）
-        result['inter_index_validation'] = self._validate_across_indices(result)
+        if result:
+            result['inter_index_validation'] = self._validate_across_indices(result)
 
         return result
 

@@ -41,6 +41,7 @@ class StockCodeUtil:
     }
     
     _index_codes_sh: Optional[Set[str]] = None
+    _core_indices: Optional[dict] = None
     
     @classmethod
     def _get_index_codes_sh(cls) -> Set[str]:
@@ -64,6 +65,35 @@ class StockCodeUtil:
                 pass
         
         return cls._index_codes_sh
+    
+    @classmethod
+    def get_core_indices(cls) -> dict:
+        """
+        从 official_indices.csv 读取主要指数列表
+        
+        Returns:
+            {symbol: name} 字典，如 {'000001.SH': '上证指数', ...}
+        """
+        if cls._core_indices is not None:
+            return cls._core_indices
+        
+        cls._core_indices = {}
+        csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+        
+        if csv_path.exists():
+            try:
+                with open(csv_path, 'r', encoding='utf-8-sig') as f:  # utf-8-sig 自动处理 BOM
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        # 处理可能的 BOM 字符
+                        symbol = row.get('symbol', row.get('\ufeffsymbol', '')).strip()
+                        name = row.get('name', '').strip()
+                        if symbol and name:
+                            cls._core_indices[symbol] = name
+            except Exception as e:
+                print(f"读取 official_indices.csv 失败: {e}")
+        
+        return cls._core_indices
     
     @classmethod
     def extract(cls, code_str: str) -> Optional[str]:
