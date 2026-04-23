@@ -1812,6 +1812,9 @@ class StockSignalScanner:
         if self.asset_type == "etf":
             asset_list = self._get_etf_list()
             asset_name = "ETF"
+        elif self.asset_type == "index":
+            asset_list = self._get_index_list()
+            asset_name = "指数"
         else:
             asset_list = self._get_stock_list()
             asset_name = "股票"
@@ -1952,11 +1955,27 @@ class StockSignalScanner:
             df = pd.read_csv(etf_csv)
             return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
         return pd.DataFrame()
+
+    def _get_index_list(self) -> pd.DataFrame:
+        """获取指数列表（从 official_indices.csv）"""
+        index_csv = Path(project_root) / "storage" / "official_indices.csv"
+        if index_csv.exists():
+            df = pd.read_csv(index_csv)
+            # 确保列名正确（处理BOM）
+            if 'symbol' not in df.columns and '\ufeffsymbol' in df.columns:
+                df = df.rename(columns={'\ufeffsymbol': 'symbol'})
+            return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
+        return pd.DataFrame()
     
     def _save_result(self, result: Dict, signal_type: str):
         """保存扫描结果 - 新格式：按股票组织，包含健康度和信号列表"""
         date_str = datetime.now().strftime('%Y%m%d')
-        prefix = "etf_signals" if self.asset_type == "etf" else "stock_signals"
+        if self.asset_type == "etf":
+            prefix = "etf_signals"
+        elif self.asset_type == "index":
+            prefix = "index_signals"
+        else:
+            prefix = "stock_signals"
         
         # 构建统一格式的数据：按股票组织
         unified_data = self._build_unified_data(result)

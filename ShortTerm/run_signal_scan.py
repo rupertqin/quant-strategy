@@ -681,6 +681,14 @@ def scan_asset_type_intraday(realtime_df: pd.DataFrame, asset_type: str,
             etf_list = pd.read_csv(etf_csv)['symbol'].tolist()
             symbols = [s for s in symbols if s in etf_list]
 
+    # 指数只扫描 official_indices.csv 中列出的（避免扫描全市场指数）
+    if asset_type == 'index':
+        index_csv = project_root / "storage" / "official_indices.csv"
+        if index_csv.exists():
+            import pandas as pd
+            index_list = pd.read_csv(index_csv)['symbol'].tolist()
+            symbols = [s for s in symbols if s in index_list]
+
     if limit:
         print(f"   扫描前 {limit} 只{config.name}...")
     else:
