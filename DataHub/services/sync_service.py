@@ -3,7 +3,7 @@
 
 提供定时任务和手动触发两种方式同步数据
 
-注意：价格数据统一由 history_sync.py 管理，本模块只做调度入口
+注意：价格数据统一由 DataHub.services.sync 管理，本模块只做调度入口
 """
 
 import sys
@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from DataHub.repositories.stock_repository import StockRepository
+from DataHub.services.sync.sync_manager import SyncManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class DataSyncService:
     
     协调各种爬虫，统一管理和调度数据同步任务
     
-    注意：股票价格数据统一由 HistorySyncService 管理（Parquet格式）
+    注意：股票价格数据统一由 SyncManager 管理（Parquet格式）
     """
     
     def __init__(self, db_path: str = None):
@@ -38,10 +39,7 @@ class DataSyncService:
             db_path: 数据库路径
         """
         self.repository = StockRepository(db_path)
-        
-        # 延迟导入，避免循环依赖
-        from DataHub.services.history_sync import HistorySyncService
-        self.history_sync = HistorySyncService()
+        self.sync_manager = SyncManager(max_workers=1)
         
         self.logger = logging.getLogger(self.__class__.__name__)
     
@@ -55,22 +53,22 @@ class DataSyncService:
         """
         同步股票价格数据
         
-        统一使用 HistorySyncService（Parquet格式），不再重复实现
+        统一使用 SyncManager（Parquet格式），不再重复实现
         
         Args:
             symbols: 股票代码列表，None表示全部
             start_date: 开始日期
             end_date: 结束日期
-            batch_size: 每批处理的股票数量（暂不使用，由history_sync内部处理）
+            batch_size: 每批处理的股票数量（暂不使用，由SyncManager内部处理）
             
         Returns:
             同步结果统计
         """
-        self.logger.info("开始同步股票价格数据（使用HistorySyncService）...")
+        self.logger.info("开始同步股票价格数据（使用SyncManager）...")
         
         # 如果没有指定股票，获取全部
         if symbols is None:
-            symbols = self.history_sync.stock_list['symbol'].tolist()
+            symbols = self.sync_manager._get_stock_list(include_bj=False)
             self.logger.info(f"将同步全部 {len(symbols)} 只股票")
         
         if not symbols:
@@ -82,45 +80,31 @@ class DataSyncService:
         if start_date is None:
             start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
         
-        total_records = 0
-        success_count = 0
-        failed_symbols = []
+        # 使用 SyncManager 底层服务批量同步
+        result = self.sync_manager.stock_sync.sync(
+            symbols=symbols,
+            incremental=True,
+            start_date=start_date,
+            end_date=end_date
+        )
         
-        # 使用 history_sync 逐只同步
-        for symbol in symbols:
-            try:
-                result = self.history_sync.sync_stock(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    incremental=True
-                )
-                
-                if result['status'] == 'success':
-                    total_records += result.get('records', 0)
-                    success_count += 1
-                else:
-                    failed_symbols.append(symbol)
-                    
-            except Exception as e:
-                self.logger.error(f"同步 {symbol} 失败: {e}")
-                failed_symbols.append(symbol)
+        total_records = result.get('success', 0)
+        failed_count = result.get('failed', 0)
+        status = 'success' if failed_count == 0 else 'partial'
         
         # 记录同步日志
-        status = 'success' if not failed_symbols else 'partial'
         self.repository.log_sync(
             'stock_daily_price',
             status,
             total_records,
-            f"成功: {success_count}, 失败: {len(failed_symbols)}"
+            f"成功: {total_records}, 失败: {failed_count}"
         )
         
         result = {
             'status': status,
             'records': total_records,
-            'success': success_count,
-            'failed': len(failed_symbols),
-            'failed_symbols': failed_symbols,
+            'success': total_records,
+            'failed': failed_count,
             'start_date': start_date,
             'end_date': end_date
         }
@@ -132,16 +116,17 @@ class DataSyncService:
         """
         同步最新价格数据（增量更新）
         
-        统一使用 HistorySyncService 的 sync_all 增量模式
+        统一使用 SyncManager 的 sync_daily 增量模式
         """
-        self.logger.info("开始同步最新价格数据（使用HistorySyncService）...")
+        self.logger.info("开始同步最新价格数据（使用SyncManager）...")
         
-        # 调用 history_sync 的增量同步（等价于 --daily）
-        result = self.history_sync.sync_all(
-            symbols=symbols,
-            incremental=True,
-            skip_existing=False
-        )
+        if symbols:
+            result = self.sync_manager.stock_sync.sync(
+                symbols=symbols,
+                incremental=True
+            )
+        else:
+            result = self.sync_manager.sync_daily(asset_type='stock')
         
         return result
     

@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 logger = logging.getLogger(__name__)
 
-# 导入数据读取接口（使用 history_sync 生成的 Parquet）
+# 导入数据读取接口（使用 sync 服务生成的 Parquet）
 from DataHub.core.data_reader import load_stock_prices
 
 try:

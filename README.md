@@ -429,5 +429,5 @@ python DataHub/scripts/migrate_data.py
 python DataHub/services/realtime_service.py && python ShortTerm/run_signal_scan.py && python ShortTerm/run_today_technical.py
 
 # 每日数据入库
-python DataHub/services/history_sync.py --today && python DataHub/services/history_sync.py --daily --symbol etf  --workers 1 && python DataHub/services/history_sync.py --daily --symbol index --workers 1
+python -m DataHub.services.sync --today && python -m DataHub.services.sync --daily --symbol etf --workers 1 && python -m DataHub.services.sync --daily --symbol index --workers 1
 ```

@@ -1260,9 +1260,9 @@ def main():
         from lib.utils.stock_code import detect_asset_type
         asset_type = detect_asset_type(symbol)
         if asset_type == "index":
-            st.info("运行: python DataHub/services/history_sync.py --symbol index")
+            st.info("运行: python -m DataHub.services.sync --daily --symbol index")
         else:
-            st.info("运行: python DataHub/services/history_sync.py --symbol " + symbol)
+            st.info("运行: python -m DataHub.services.sync --symbol " + symbol)
         return
 
     # 最新数据

@@ -2,10 +2,6 @@
 指数计算器单元测试
 """
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta

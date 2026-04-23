@@ -5,12 +5,6 @@ DataHub 数据读取功能测试
 """
 
 import pandas as pd
-from pathlib import Path
-import sys
-
-# 添加项目路径
-BASE_DIR = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(BASE_DIR))
 
 # 可选的pytest
 try:

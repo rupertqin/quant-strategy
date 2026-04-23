@@ -14,8 +14,8 @@
     python DataHub/scripts/asset_manager.py add 510300.SH  # 自动识别为ETF
 
     # 添加恒生指数
-    python DataHub/services/history_sync.py --symbol HSI.HK --override
-    python DataHub/services/history_sync.py --symbol HSTECH.HK --override
+    python -m DataHub.services.sync --symbol HSI.HK --override
+    python -m DataHub.services.sync --symbol HSTECH.HK --override
 
     # 添加资产（手动指定类型）
     python DataHub/scripts/asset_manager.py add 600519.SH --type stock

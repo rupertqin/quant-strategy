@@ -971,6 +971,99 @@ class LimitUpScanner:
 
         return None
 
+    def _check_data_quality(self, date: str) -> dict:
+        """
+        数据质量检查 - 扫描前验证关键数据完整性
+
+        检查项：
+        1. 复权因子更新状态（是否落后超过7天）
+        2. 价格数据最新日期
+
+        Returns:
+            检查结果字典
+        """
+        from DataHub.config import RAW_ADJUST_FACTOR_DIR, RAW_PRICE_DIR
+        from datetime import datetime, timedelta
+
+        print("\n🔍 数据质量检查...")
+        issues = []
+
+        # 1. 检查复权因子更新状态（抽样检查）
+        try:
+            factor_files = list(RAW_ADJUST_FACTOR_DIR.glob("*.parquet"))
+            if factor_files:
+                # 抽样10个文件检查
+                import random
+                sample_files = random.sample(factor_files, min(10, len(factor_files)))
+
+                outdated_count = 0
+                for f in sample_files:
+                    try:
+                        df = pd.read_parquet(f)
+                        if not df.empty and 'trade_date' in df.columns:
+                            latest_date = pd.to_datetime(df['trade_date']).max()
+                            days_diff = (datetime.now() - latest_date).days
+                            if days_diff > 7:
+                                outdated_count += 1
+                    except:
+                        pass
+
+                if outdated_count >= 3:  # 30%以上样本落后
+                    msg = f"⚠️  复权因子可能未及时更新（{outdated_count}/10 样本落后超过7天）"
+                    print(f"  {msg}")
+                    issues.append(msg)
+                else:
+                    print(f"  ✓ 复权因子更新正常（抽样检查通过）")
+            else:
+                print(f"  ⚠️  未找到复权因子数据，可能影响前复权计算精度")
+                issues.append("缺少复权因子数据")
+        except Exception as e:
+            print(f"  ⚠️  复权因子检查失败: {e}")
+
+        # 2. 检查价格数据最新日期
+        try:
+            price_files = list(RAW_PRICE_DIR.glob("*.parquet"))
+            if price_files:
+                # 抽样检查
+                import random
+                sample_files = random.sample(price_files, min(5, len(price_files)))
+
+                date_mismatches = []
+                for f in sample_files:
+                    try:
+                        df = pd.read_parquet(f)
+                        if not df.empty and 'trade_date' in df.columns:
+                            latest_date = pd.to_datetime(df['trade_date']).max().strftime('%Y%m%d')
+                            if latest_date != date:
+                                date_mismatches.append(f.stem)
+                    except:
+                        pass
+
+                if len(date_mismatches) == len(sample_files):
+                    msg = f"⚠️  价格数据可能未更新（样本最新日期非当天）"
+                    print(f"  {msg}")
+                    issues.append(msg)
+                else:
+                    print(f"  ✓ 价格数据日期检查通过")
+            else:
+                print(f"  ❌ 未找到价格数据")
+                issues.append("缺少价格数据")
+        except Exception as e:
+            print(f"  ⚠️  价格数据检查失败: {e}")
+
+        if issues:
+            print(f"\n  ⚠️  发现 {len(issues)} 个数据质量问题:")
+            for issue in issues:
+                print(f"    - {issue}")
+            print(f"\n  💡 建议运行: python -m DataHub.services.sync --today")
+        else:
+            print(f"  ✓ 数据质量检查通过")
+
+        return {
+            'status': 'ok' if not issues else 'warning',
+            'issues': issues
+        }
+
     def generate_daily_signals(self, date: str = None) -> dict:
         """
         生成每日信号 - 宏观+技术面综合分析
@@ -987,6 +1080,9 @@ class LimitUpScanner:
         print(f"\n{'='*50}")
         print(f"扫描日期: {date}")
         print('='*50)
+
+        # ========== 0. 数据质量检查 ==========
+        self._check_data_quality(date)
 
         # ========== 1. 技术面指标采集（优先使用实时数据）==========
         print("\n📊 从实时数据计算技术面指标...")
