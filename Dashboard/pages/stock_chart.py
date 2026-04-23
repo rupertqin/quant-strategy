@@ -27,6 +27,7 @@ BASE_DIR = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from lib.utils import StockCodeUtil, get_stock_name
+from DataHub.config import get_storage_path
 
 # 导入共享格式化工具
 import sys
@@ -558,9 +559,10 @@ def load_stock_data(symbol: str, force_adjust: str = 'qfq') -> pd.DataFrame:
 @st.cache_data
 def get_stock_list() -> pd.DataFrame:
     """获取股票列表（代码+名称），包含股票、ETF、指数"""
-    stock_csv = BASE_DIR / "storage" / "stock_basic_info.csv"
-    etf_csv = BASE_DIR / "storage" / "etf_basic_info.csv"
-    index_csv = BASE_DIR / "storage" / "official_indices.csv"
+    # 使用环境变量配置的 storage 路径
+    stock_csv = get_storage_path("stock_basic_info.csv")
+    etf_csv = get_storage_path("etf_basic_info.csv")
+    index_csv = get_storage_path("official_indices.csv")
 
     stocks = []
 
@@ -1165,10 +1167,10 @@ def main():
         # ========== 资产类型筛选 ==========
         st.subheader("📊 资产类型")
 
-        # 获取各类型资产列表
-        stock_csv = BASE_DIR / "storage" / "stock_basic_info.csv"
-        etf_csv = BASE_DIR / "storage" / "etf_basic_info.csv"
-        index_csv = BASE_DIR / "storage" / "official_indices.csv"
+        # 获取各类型资产列表（使用环境变量配置的 storage 路径）
+        stock_csv = get_storage_path("stock_basic_info.csv")
+        etf_csv = get_storage_path("etf_basic_info.csv")
+        index_csv = get_storage_path("official_indices.csv")
 
         asset_type = st.radio(
             "选择监控对象",
@@ -1232,7 +1234,7 @@ def main():
         ]
 
         for symbol, name in common_assets:
-            if st.button(f"{symbol} {name}", key=f"common_{symbol}", use_container_width=True):
+            if st.button(f"{symbol} {name}", key=f"common_{symbol}", width="stretch"):
                 st.query_params['symbol'] = symbol
                 st.session_state['selected_stock'] = symbol
                 st.session_state['selected_name'] = name
@@ -1424,7 +1426,7 @@ def main():
                 label,
                 key=f"period_{value}",
                 type="secondary" if st.session_state['chart_period'] != value else "primary",
-                use_container_width=True
+                width="stretch"
             ):
                 st.session_state['chart_period'] = value
                 st.rerun()
@@ -1489,7 +1491,7 @@ def main():
 
         st.dataframe(
             df_display_formatted.tail(20),
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 

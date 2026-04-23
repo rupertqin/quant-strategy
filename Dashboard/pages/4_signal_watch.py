@@ -21,6 +21,7 @@ from utils.signal_components import (
 BASE_DIR = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
 from DataHub.core.data_reader import load_stock_latest_date
+from DataHub.config import get_storage_path
 
 # 设置页面
 st.set_page_config(
@@ -246,10 +247,10 @@ def _transform_signals_to_stocks(data: dict) -> list:
 def _load_data_impl(asset_type: str = "stock") -> dict:
     """加载信号数据"""
     prefix = "etf_signals" if asset_type == "etf" else "index_signals" if asset_type == "index" else "stock_signals"
-    filepath = BASE_DIR / "storage" / "outputs" / "signals" / f"{prefix}_latest.json"
+    filepath = get_storage_path("outputs", "signals", f"{prefix}_latest.json")
 
     if not filepath.exists():
-        signals_dir = BASE_DIR / "storage" / "outputs" / "signals"
+        signals_dir = get_storage_path("outputs", "signals")
         if signals_dir.exists():
             files = sorted(signals_dir.glob(f"{prefix}_*.json"))
             date_files = [f for f in files if not f.name.endswith("_latest.json")]

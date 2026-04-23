@@ -13,6 +13,7 @@ build/
 
 # Data storage
 storage/
+DataStorage/
 !.gitkeep
 
 # IDE

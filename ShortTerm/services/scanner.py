@@ -1347,8 +1347,9 @@ class LimitUpScanner:
         }
 
         # 确定输出目录 - 按日期分文件夹，支持分钟级报告
-        # base_dir 是 ShortTerm/, 所以只需要 parent 到项目根目录
-        base_output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "services"
+        # 使用环境变量配置的 storage 路径
+        from DataHub.config import get_storage_path
+        base_output_dir = get_storage_path("outputs", "shortterm", "services")
 
         # 按日期创建子文件夹
         date_folder = base_output_dir / date
@@ -1398,7 +1399,9 @@ class LimitUpScanner:
             '上证指数': '000001'
         }
 
-        csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+        # 使用环境变量配置的 storage 路径
+        from DataHub.config import get_storage_path
+        csv_path = get_storage_path('official_indices.csv')
         if not csv_path.exists():
             return default_indices
 
@@ -1517,8 +1520,9 @@ class LimitUpScanner:
     def save_to_history(self, heat: pd.DataFrame):
         """保存板块热度历史数据"""
         # 统一到 storage/outputs/shortterm/services
-        # base_dir 是 ShortTerm/, 所以只需要 parent 到项目根目录
-        output_dir = Path(self.base_dir).parent / "storage" / "outputs" / "shortterm" / "services"
+        # 使用环境变量配置的 storage 路径
+        from DataHub.config import get_storage_path
+        output_dir = get_storage_path("outputs", "shortterm", "services")
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # 最新历史文件

@@ -1,0 +1,24 @@
+# 数据获取
+akshare>=1.10.0
+baostock>=0.8.8
+yfinance>=0.2.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 数据存储
+pyarrow>=12.0.0
+
+# 配置管理
+python-dotenv>=1.0.0
+
+# Web 应用
+streamlit>=1.28.0
+
+# 可视化
+plotly>=5.18.0
+
+# 其他工具
+requests>=2.31.0
+schedule>=1.2.0

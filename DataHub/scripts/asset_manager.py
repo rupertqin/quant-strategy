@@ -46,36 +46,35 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from lib.utils import detect_asset_type, StockCodeUtil
-from DataHub.config import RAW_PRICE_DIR, RAW_ETF_PRICE_DIR, RAW_INDEX_PRICE_DIR
+from DataHub.config import RAW_PRICE_DIR, RAW_ETF_PRICE_DIR, RAW_INDEX_PRICE_DIR, get_storage_path
 
 
 class AssetManager:
     """资产管理器"""
 
-    # 资产类型配置
-    ASSET_CONFIG = {
-        'stock': {
-            'name': '股票',
-            'csv_file': 'storage/stock_basic_info.csv',
-            'data_dir': RAW_PRICE_DIR,
-            'required_cols': ['symbol', 'code', 'name', 'exchange', 'industry', 'list_date']
-        },
-        'etf': {
-            'name': 'ETF',
-            'csv_file': 'storage/etf_basic_info.csv',
-            'data_dir': RAW_ETF_PRICE_DIR,
-            'required_cols': ['symbol', 'code', 'name', 'exchange', 'etf_type']
-        },
-        'index': {
-            'name': '指数',
-            'csv_file': 'storage/official_indices.csv',
-            'data_dir': RAW_INDEX_PRICE_DIR,
-            'required_cols': ['symbol', 'code', 'name', 'market', 'category']
-        }
-    }
-
     def __init__(self):
         self.project_root = project_root
+        # 资产类型配置（使用环境变量配置的 storage 路径）
+        self.ASSET_CONFIG = {
+            'stock': {
+                'name': '股票',
+                'csv_file': get_storage_path('stock_basic_info.csv'),
+                'data_dir': RAW_PRICE_DIR,
+                'required_cols': ['symbol', 'code', 'name', 'exchange', 'industry', 'list_date']
+            },
+            'etf': {
+                'name': 'ETF',
+                'csv_file': get_storage_path('etf_basic_info.csv'),
+                'data_dir': RAW_ETF_PRICE_DIR,
+                'required_cols': ['symbol', 'code', 'name', 'exchange', 'etf_type']
+            },
+            'index': {
+                'name': '指数',
+                'csv_file': get_storage_path('official_indices.csv'),
+                'data_dir': RAW_INDEX_PRICE_DIR,
+                'required_cols': ['symbol', 'code', 'name', 'market', 'category']
+            }
+        }
 
     def detect_type(self, symbol: str) -> Optional[str]:
         """
@@ -85,7 +84,7 @@ class AssetManager:
             'stock' / 'etf' / 'index' / None
         """
         # 1. 检查是否在指数列表中
-        index_csv = self.project_root / self.ASSET_CONFIG['index']['csv_file']
+        index_csv = self.ASSET_CONFIG['index']['csv_file']
         if index_csv.exists():
             df = pd.read_csv(index_csv)
             if 'symbol' in df.columns:
@@ -96,14 +95,14 @@ class AssetManager:
                     return 'index'
 
         # 2. 检查是否在ETF列表中
-        etf_csv = self.project_root / self.ASSET_CONFIG['etf']['csv_file']
+        etf_csv = self.ASSET_CONFIG['etf']['csv_file']
         if etf_csv.exists():
             df = pd.read_csv(etf_csv)
             if symbol in df['symbol'].values:
                 return 'etf'
 
         # 3. 检查是否在股票列表中
-        stock_csv = self.project_root / self.ASSET_CONFIG['stock']['csv_file']
+        stock_csv = self.ASSET_CONFIG['stock']['csv_file']
         if stock_csv.exists():
             df = pd.read_csv(stock_csv)
             if symbol in df['symbol'].values:
@@ -286,7 +285,7 @@ class AssetManager:
 
     def _add_to_csv(self, symbol: str, asset_type: str, info: dict) -> bool:
         """添加到代码列表CSV"""
-        csv_file = self.project_root / self.ASSET_CONFIG[asset_type]['csv_file']
+        csv_file = self.ASSET_CONFIG[asset_type]['csv_file']
 
         try:
             # 读取现有数据
@@ -319,7 +318,7 @@ class AssetManager:
 
     def _remove_from_csv(self, symbol: str, asset_type: str) -> bool:
         """从代码列表CSV移除"""
-        csv_file = self.project_root / self.ASSET_CONFIG[asset_type]['csv_file']
+        csv_file = self.ASSET_CONFIG[asset_type]['csv_file']
 
         try:
             if not csv_file.exists():
@@ -461,7 +460,7 @@ class AssetManager:
             if t not in self.ASSET_CONFIG:
                 continue
 
-            csv_file = self.project_root / self.ASSET_CONFIG[t]['csv_file']
+            csv_file = self.ASSET_CONFIG[t]['csv_file']
             if not csv_file.exists():
                 continue
 

@@ -23,6 +23,7 @@ from Dashboard.utils.signal_components import (
     calculate_stock_metrics, render_signal_list, render_risk_assessment,
     render_expander_header, get_risk_color_css
 )
+from DataHub.config import get_storage_path
 
 st.set_page_config(
     page_title="股票池监控 - Quant Dashboard",
@@ -63,8 +64,8 @@ def load_stock_pool() -> list:
     except Exception as e:
         st.warning(f"读取 config.yaml 失败: {e}")
     
-    # 回退：尝试 storage/stock_pool.json
-    pool_file = BASE_DIR / "storage" / "stock_pool.json"
+    # 回退：尝试 stock_pool.json
+    pool_file = get_storage_path("stock_pool.json")
     if pool_file.exists():
         with open(pool_file, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -85,7 +86,7 @@ def load_stock_pool() -> list:
 
 def load_signals() -> dict:
     """加载信号数据"""
-    signals_file = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
+    signals_file = get_storage_path("outputs", "signals", "stock_signals_latest.json")
     if not signals_file.exists():
         return {}
     
@@ -169,9 +170,10 @@ with st.sidebar:
     # 新增：显示范围筛选
     st.subheader("显示范围")
     filter_display = st.radio(
-        "",
+        "显示范围",
         ["全部（买入信号+风险信号）", "仅买入信号", "仅风险信号"],
-        index=0
+        index=0,
+        label_visibility="collapsed"
     )
     
     st.divider()

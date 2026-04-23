@@ -15,18 +15,19 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.join(BASE_DIR, "Dashboard"))
 
-# 导入股票代码工具
+# 导入股票代码工具和配置
 from lib.utils import StockCodeUtil, get_stock_name
+from DataHub.config import get_storage_path
 
-# JSON 文件路径
-OUTPUT_DIR = os.path.join(BASE_DIR, "storage", "outputs", "shortterm", "services")
-JSON_FILE = os.path.join(OUTPUT_DIR, "daily_signals.json")
+# JSON 文件路径（使用环境变量配置的 storage 路径）
+OUTPUT_DIR = get_storage_path("outputs", "shortterm", "services")
+JSON_FILE = OUTPUT_DIR / "daily_signals.json"
 
 
 def load_signals_data() -> dict:
     """加载 Scanner 生成的 JSON 数据"""
     try:
-        if os.path.exists(JSON_FILE):
+        if JSON_FILE.exists():
             with open(JSON_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 # 添加文件修改时间
@@ -481,12 +482,12 @@ if filtered_index_history:
                 is_daily = st.session_state[chart_key] == "日线"
                 with segment_cols[0]:
                     btn_type = "primary" if is_daily else "secondary"
-                    if st.button("日线", key=f"{chart_key}_daily", use_container_width=True, type=btn_type):
+                    if st.button("日线", key=f"{chart_key}_daily", width="stretch", type=btn_type):
                         st.session_state[chart_key] = "日线"
                         st.rerun()
                 with segment_cols[1]:
                     btn_type = "primary" if not is_daily else "secondary"
-                    if st.button("分时", key=f"{chart_key}_intraday", use_container_width=True, type=btn_type):
+                    if st.button("分时", key=f"{chart_key}_intraday", width="stretch", type=btn_type):
                         st.session_state[chart_key] = "分时"
                         st.rerun()
 
@@ -642,7 +643,7 @@ if main_index and 'dow_theory' in main_index:
             })
 
     if dow_data:
-        st.dataframe(dow_data, hide_index=True, use_container_width=True)
+        st.dataframe(dow_data, hide_index=True, width="stretch")
 
     # ===== 所有指数的波浪理论概览表格 =====
     st.markdown("**🌊 波浪理论概览**")
@@ -661,7 +662,7 @@ if main_index and 'dow_theory' in main_index:
             })
 
     if wave_data:
-        st.dataframe(wave_data, hide_index=True, use_container_width=True)
+        st.dataframe(wave_data, hide_index=True, width="stretch")
 
         # 显示各指数的斐波那契回调位
         st.markdown("**斐波那契回调位参考**")
@@ -766,7 +767,7 @@ st.markdown("### 📋 涨停信号列表")
 
 if signals:
     df_signals = pd.DataFrame(signals)
-    st.dataframe(df_signals, use_container_width=True)
+    st.dataframe(df_signals, width="stretch")
 else:
     st.info("暂无涨停信号")
 

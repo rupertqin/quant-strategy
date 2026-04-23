@@ -6,8 +6,45 @@ from pathlib import Path
 # Base directory
 BASE_DIR = Path(__file__).parent.parent
 
-# Storage paths
-STORAGE_DIR = BASE_DIR / "storage"
+# 加载 .env 文件（如果存在）
+# 优先从项目根目录加载
+_env_file = BASE_DIR / ".env"
+if _env_file.exists():
+    from dotenv import load_dotenv
+    load_dotenv(_env_file, override=True)
+
+# Storage paths - 支持环境变量配置
+# 使用方式（按优先级排序）：
+# 1. 系统环境变量: export QUANT_STORAGE_DIR=/data/quant-storage
+# 2. .env 文件: QUANT_STORAGE_DIR=/data/quant-storage
+# 3. 默认值: 项目目录下的 storage/
+DEFAULT_STORAGE_DIR = BASE_DIR / "storage"
+_storage_dir = os.environ.get("QUANT_STORAGE_DIR", DEFAULT_STORAGE_DIR)
+STORAGE_DIR = Path(_storage_dir)
+
+# 如果是相对路径，转换为基于 BASE_DIR 的绝对路径
+if not STORAGE_DIR.is_absolute():
+    STORAGE_DIR = BASE_DIR / STORAGE_DIR
+
+
+def get_storage_path(*subpaths) -> Path:
+    """
+    获取 storage 目录下的文件路径
+    
+    Args:
+        *subpaths: 子路径组件，如 'outputs', 'signals', 'data.json'
+    
+    Returns:
+        Path: 完整的文件路径
+    
+    Examples:
+        >>> get_storage_path('outputs', 'signals', 'data.json')
+        Path('/data/quant-storage/outputs/signals/data.json')
+        
+        >>> get_storage_path('stock_basic_info.csv')
+        Path('/data/quant-storage/stock_basic_info.csv')
+    """
+    return STORAGE_DIR.joinpath(*subpaths)
 RAW_STOCKS_DIR = STORAGE_DIR / "raw" / "stocks"
 RAW_PRICE_DIR = RAW_STOCKS_DIR / "price"
 RAW_ADJUST_FACTOR_DIR = RAW_STOCKS_DIR / "adjust_factor"

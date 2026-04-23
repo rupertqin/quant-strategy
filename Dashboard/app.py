@@ -354,7 +354,7 @@ with col_left:
             title="资产配置",
             hole=0.4
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_pie, width="stretch")
 
         # 权重表格 - 显示代码和名称
         display_df = longterm_weights[['symbol', 'weight']].copy()
@@ -365,7 +365,7 @@ with col_left:
         st.subheader("目标权重")
         st.dataframe(
             display_df.style.format({'权重': '{:.2%}'}),
-            use_container_width=True
+            width="stretch"
         )
     else:
         st.info("长线策略未运行，请先运行 LongTerm/run_optimization.py")

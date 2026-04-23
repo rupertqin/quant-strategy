@@ -19,7 +19,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from DataHub.config import RAW_PRICE_DIR
+from DataHub.config import RAW_PRICE_DIR, get_storage_path
 
 import pandas as pd
 import numpy as np
@@ -1357,7 +1357,8 @@ class StockSignalScanner:
         self.asset_type = asset_type
         self.left_detector = LeftSignalDetector()
         self.right_detector = RightSignalDetector()
-        self.output_dir = Path(project_root) / "storage" / "outputs" / "signals"
+        # 使用环境变量配置的 storage 路径
+        self.output_dir = get_storage_path("outputs", "signals")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.price_dir = RAW_PRICE_DIR
     
@@ -1940,17 +1941,19 @@ class StockSignalScanner:
     
     def _get_stock_list(self) -> pd.DataFrame:
         """获取股票列表（排除北交所股票）"""
-        stock_csv = Path(project_root) / "storage" / "stock_basic_info.csv"
+        # 使用环境变量配置的 storage 路径
+        stock_csv = get_storage_path("stock_basic_info.csv")
         if stock_csv.exists():
             df = pd.read_csv(stock_csv)
             # 过滤掉排除的交易所股票
             df = df[df['symbol'].apply(lambda x: not any(x.endswith(f'.{ex}') for ex in EXCLUDED_EXCHANGES))]
             return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
         return pd.DataFrame()
-    
+
     def _get_etf_list(self) -> pd.DataFrame:
         """获取ETF列表"""
-        etf_csv = Path(project_root) / "storage" / "etf_basic_info.csv"
+        # 使用环境变量配置的 storage 路径
+        etf_csv = get_storage_path("etf_basic_info.csv")
         if etf_csv.exists():
             df = pd.read_csv(etf_csv)
             return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
@@ -1958,7 +1961,8 @@ class StockSignalScanner:
 
     def _get_index_list(self) -> pd.DataFrame:
         """获取指数列表（从 official_indices.csv）"""
-        index_csv = Path(project_root) / "storage" / "official_indices.csv"
+        # 使用环境变量配置的 storage 路径
+        index_csv = get_storage_path("official_indices.csv")
         if index_csv.exists():
             df = pd.read_csv(index_csv)
             # 确保列名正确（处理BOM）
