@@ -702,16 +702,21 @@ class HistorySyncService:
         end_date: str
     ) -> Optional[pd.DataFrame]:
         """
-        获取指数历史数据 - 使用新浪
+        获取指数历史数据
 
         Args:
-            symbol: 指数代码，如 '000001.SH', '000300.SH', '399001.SZ'
+            symbol: 指数代码，如 '000001.SH', '000300.SH', '399001.SZ', 'HSI.HK'
             start_date: 开始日期 'YYYYMMDD'
             end_date: 结束日期 'YYYYMMDD'
 
         Returns:
             DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
         """
+        # 港股指数使用 yfinance
+        if symbol.endswith('.HK'):
+            return self._fetch_hk_index_from_yfinance(symbol, start_date, end_date)
+
+        # A股指数使用新浪
         return self._fetch_index_from_sina(symbol, start_date, end_date)
 
     def _fetch_index_from_yfinance(
@@ -809,6 +814,82 @@ class HistorySyncService:
 
         logger.info(f"获取 {symbol} 指数数据: {len(df)} 条 (Yahoo Finance)")
         return df
+
+    def _fetch_hk_index_from_yfinance(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        使用 akshare 获取港股指数数据
+
+        Args:
+            symbol: 港股指数代码，如 'HSI.HK', 'HSTECH.HK'
+            start_date: 开始日期 'YYYYMMDD'
+            end_date: 结束日期 'YYYYMMDD'
+
+        Returns:
+            DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
+        """
+        import akshare as ak
+
+        # 港股指数代码映射 (akshare)
+        HK_INDEX_MAP = {
+            'HSI.HK': 'HSI',           # 恒生指数
+            'HSTECH.HK': 'HSTECH',    # 恒生科技指数
+        }
+
+        ak_symbol = HK_INDEX_MAP.get(symbol)
+        if not ak_symbol:
+            raise Exception(f"未映射的港股指数代码: {symbol}")
+
+        try:
+            # 使用 akshare 获取港股指数历史数据
+            # 港股指数使用 stock_hk_index_daily_sina 接口
+            df = ak.stock_hk_index_daily_sina(symbol=ak_symbol)
+
+            if df is None or df.empty:
+                raise Exception(f"akshare 返回空数据: {ak_symbol}")
+
+            # 添加 symbol 列
+            df['symbol'] = symbol
+
+            # 列名映射 (akshare 港股指数返回的列名)
+            column_map = {
+                'date': 'trade_date',
+                'open': 'open',
+                'high': 'high',
+                'low': 'low',
+                'close': 'close',
+                'volume': 'volume',
+            }
+            df = df.rename(columns=column_map)
+
+            # 统一日期格式
+            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+
+            # 筛选日期范围
+            start_dt = pd.to_datetime(start_date).date()
+            end_dt = pd.to_datetime(end_date).date()
+            df = df[(df['trade_date'] >= start_dt) & (df['trade_date'] <= end_dt)]
+
+            # 计算涨跌幅
+            df['change_pct'] = df['close'].pct_change() * 100
+
+            # 港股指数数据没有 amount
+            df['amount'] = None
+
+            # 选择需要的列
+            keep_cols = ['symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
+            df = df[[c for c in keep_cols if c in df.columns]]
+
+            logger.info(f"获取 {symbol} 港股指数数据: {len(df)} 条 (akshare)")
+            return df
+
+        except Exception as e:
+            logger.error(f"akshare 获取港股指数失败: {e}")
+            return None
 
     def _fetch_index_from_sina(
         self,

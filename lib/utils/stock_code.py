@@ -554,7 +554,13 @@ def detect_asset_type(symbol: str, default: str = "stock") -> str:
         'etf'
         >>> detect_asset_type('000001.SH')
         'index'
+        >>> detect_asset_type('HSI.HK')
+        'index'
     """
+    # 港股指数直接识别为指数
+    if symbol.endswith('.HK'):
+        return 'index'
+
     # 去除后缀
     code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
 

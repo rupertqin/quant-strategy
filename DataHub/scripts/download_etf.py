@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-ETF列表管理器 - 管理ETF基础信息
+ETF下载器 - 下载ETF基础信息
 
 功能：
 1. 从 akshare 获取ETF列表
 2. 生成 etf_basic_info.csv
 
 使用方式:
-    python -m DataHub.scripts.etf_list_manager           # 更新ETF列表
+    python -m DataHub.scripts.download_etf           # 更新ETF列表
 """
 
 import os

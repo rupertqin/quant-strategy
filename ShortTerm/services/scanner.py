@@ -816,6 +816,63 @@ class LimitUpScanner:
                 except Exception:
                     continue
 
+            # 补充港股指数（从本地历史数据计算，因为实时数据接口不支持港股）
+            hk_indices = {k: v for k, v in self.CORE_INDICES.items() if k.endswith('.HK')}
+            for symbol, idx_name in hk_indices.items():
+                if idx_name in result:
+                    continue  # 已存在则跳过
+                try:
+                    file_path = RAW_INDEX_PRICE_DIR / f"{symbol}.parquet"
+                    if not file_path.exists():
+                        continue
+
+                    df = pd.read_parquet(file_path)
+                    if df.empty or len(df) < 2:
+                        continue
+
+                    # 获取最新数据
+                    df = df.sort_values('trade_date')
+                    latest = df.iloc[-1]
+                    prev = df.iloc[-2]
+
+                    close_price = float(latest['close'])
+                    change_pct = float((latest['close'] - prev['close']) / prev['close'] * 100)
+
+                    # 判断趋势
+                    if change_pct > 1:
+                        trend = 'UP'
+                    elif change_pct < -1:
+                        trend = 'DOWN'
+                    else:
+                        trend = 'NEUTRAL'
+
+                    # 计算技术分析指标
+                    dow_theory = {}
+                    elliott_wave = {}
+                    if len(df) >= 60:
+                        tech_df = df.rename(columns={
+                            'trade_date': 'date',
+                            'open': 'open',
+                            'high': 'high',
+                            'low': 'low',
+                            'close': 'close',
+                            'volume': 'volume'
+                        }).copy()
+                        tech_df['date'] = tech_df['date'].astype(str)
+                        dow_theory = self.market_regime._dow_theory_analysis(tech_df)
+                        elliott_wave = self.market_regime._elliott_wave_analysis(tech_df)
+
+                    result[idx_name] = {
+                        'change': change_pct,
+                        'close': close_price,
+                        'trend': trend,
+                        'dow_theory': dow_theory,
+                        'elliott_wave': elliott_wave
+                    }
+                    print(f"    {idx_name}: 从本地历史数据计算 ({change_pct:+.2f}%)")
+                except Exception as hk_e:
+                    logger.debug(f"计算港股指数 {idx_name} 失败: {hk_e}")
+
             # 添加跨指数验证
             if result:
                 result['inter_index_validation'] = self.market_regime._validate_across_indices(result)

@@ -258,24 +258,31 @@ st.markdown("**主要指数表现**")
 # 过滤掉深证成指
 filtered_index_performance = {k: v for k, v in index_performance.items() if k != '深证成指'}
 if filtered_index_performance:
-    idx_cols = st.columns(len(filtered_index_performance))
-    for idx_col, (name, idx_data) in zip(idx_cols, filtered_index_performance.items()):
-        with idx_col:
-            change = idx_data.get('change_pct', 0)
-            trend = idx_data.get('trend', 'NEUTRAL')
-            if change > 0:
-                color_html = '<span style="color:#00C853;font-weight:bold">▲ 上涨</span>'
-                delta_color = "normal"
-            elif change < 0:
-                color_html = '<span style="color:#FF1744;font-weight:bold">▼ 下跌</span>'
-                delta_color = "inverse"
-            else:
-                color_html = '<span style="color:#9E9E9E;font-weight:bold">▶ 平盘</span>'
-                delta_color = "off"
+    # 每行显示4个指数，避免拥挤
+    items = list(filtered_index_performance.items())
+    cols_per_row = 4
 
-            trend_icon = "📈" if trend == "UP" else "📉" if trend == "DOWN" else "➡️"
-            st.markdown(f"**{name}** {color_html}", unsafe_allow_html=True)
-            st.metric(label=f"趋势: {trend_icon}", value=f"{change:+.2f}%", delta_color=delta_color)
+    for i in range(0, len(items), cols_per_row):
+        row_items = items[i:i + cols_per_row]
+        idx_cols = st.columns(cols_per_row)
+
+        for idx_col, (name, idx_data) in zip(idx_cols, row_items):
+            with idx_col:
+                change = idx_data.get('change_pct', 0)
+                trend = idx_data.get('trend', 'NEUTRAL')
+                if change > 0:
+                    color_html = '<span style="color:#00C853;font-weight:bold">▲ 上涨</span>'
+                    delta_color = "normal"
+                elif change < 0:
+                    color_html = '<span style="color:#FF1744;font-weight:bold">▼ 下跌</span>'
+                    delta_color = "inverse"
+                else:
+                    color_html = '<span style="color:#9E9E9E;font-weight:bold">▶ 平盘</span>'
+                    delta_color = "off"
+
+                trend_icon = "📈" if trend == "UP" else "📉" if trend == "DOWN" else "➡️"
+                st.markdown(f"**{name}** {color_html}", unsafe_allow_html=True)
+                st.metric(label=f"趋势: {trend_icon}", value=f"{change:+.2f}%", delta_color=delta_color)
 else:
     st.info("指数数据暂无")
 
