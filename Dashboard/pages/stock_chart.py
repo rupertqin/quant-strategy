@@ -382,13 +382,14 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
     """
     将实时数据合并到历史DataFrame中
 
-    合并策略：
-    - 盘中（< 15:00）：用实时数据更新/添加今天的K线
-    - 盘后（>= 15:00）：如果历史数据已有今天数据，优先用历史数据（更完整）；否则用实时数据补充
+    合并策略（以历史数据最后日期为基准，不再绑定 system today）：
+    - 实时数据日期 == 历史数据最后日期：更新最后一行（盘中快照覆盖）
+    - 实时数据日期 > 历史数据最后日期：追加新行（盘后补充或跨天）
+    - 非交易时段且历史数据已有当天数据：优先历史数据（更完整），不覆盖
 
     Args:
         df: 历史数据DataFrame
-        realtime_data: 实时数据字典，包含open/high/low/close/volume/change_pct等
+        realtime_data: 实时数据字典，包含open/high/low/close/volume/change_pct/timestamp等
         fetch_time_str: 实时数据获取时间字符串，格式 HH:MM
 
     Returns:
@@ -397,34 +398,53 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
     if df.empty or not realtime_data:
         return df
 
-    today = datetime.now().date()
-    current_hour = datetime.now().hour
-    is_post_market = current_hour >= 15  # 盘后（15:00后）
-
     # 确保trade_date是datetime类型
     df['trade_date'] = pd.to_datetime(df['trade_date'])
-
-    # 获取最后一天日期
     last_date = df['trade_date'].iloc[-1].date()
-    has_today_data = last_date == today
 
-    logger.info(f"历史数据最后一天: {last_date}, 今天: {today}, 是否有今天数据: {has_today_data}")
-    logger.info(f"当前时间: {current_hour}:00, 是否盘后: {is_post_market}")
+    # 从实时数据提取真实日期（优先 timestamp，因为 parquet 中 trade_date 可能被删除）
+    rt_date = None
+    ts = realtime_data.get('timestamp')
+    if ts is not None and not pd.isna(ts):
+        try:
+            rt_date = pd.to_datetime(ts).date()
+        except Exception:
+            pass
 
-    # 检查实时数据是否是今天的
-    realtime_date_raw = realtime_data.get('trade_date', today)
-    try:
-        realtime_date = pd.to_datetime(realtime_date_raw).date() if realtime_date_raw else today
-    except:
-        realtime_date = today
+    if rt_date is None:
+        rt_date_raw = realtime_data.get('trade_date')
+        if rt_date_raw:
+            try:
+                rt_date = pd.to_datetime(rt_date_raw).date()
+            except Exception:
+                pass
 
-    if realtime_date != today:
-        logger.warning(f"实时数据日期 {realtime_date} 不是今天 {today}，跳过合并")
+    if rt_date is None:
+        logger.warning("无法从实时数据解析日期，跳过合并")
         return df
 
-    # 盘后且历史数据已有今天数据：跳过（历史日线数据更完整准确）
-    if is_post_market and has_today_data:
-        logger.info("盘后且历史数据已有今天数据，优先使用历史数据，跳过实时数据合并")
+    logger.info(f"历史数据最后日期: {last_date}, 实时数据日期: {rt_date}")
+
+    # 实时数据不新于历史数据最后日期，跳过（冷数据已更完整）
+    if rt_date < last_date:
+        logger.info(f"实时数据日期 {rt_date} 早于历史数据最后日期 {last_date}，跳过合并")
+        return df
+
+    # 非交易时段保护：rt_date == last_date 但不在交易时段，优先历史完整数据
+    # 优先用实时数据采集时间判断，其次用系统时间（保证凌晨跑批/测试也能正确识别盘中数据）
+    def _is_trading_time(time_str: str = None):
+        if time_str:
+            try:
+                parts = time_str.split()[-1].split(':')
+                h, m = int(parts[0]), int(parts[1])
+                return (9, 30) <= (h, m) <= (11, 30) or (13, 0) <= (h, m) <= (15, 0)
+            except Exception:
+                pass
+        h, m = datetime.now().hour, datetime.now().minute
+        return (9, 30) <= (h, m) <= (11, 30) or (13, 0) <= (h, m) <= (15, 0)
+
+    if rt_date == last_date and not _is_trading_time(fetch_time_str):
+        logger.info(f"非交易时段且历史数据已有 {rt_date}，优先使用历史数据，跳过实时合并")
         return df
 
     def _rt_val(key: str, default=0.0):
@@ -449,8 +469,8 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
     # 实时时间只保留 HH:MM，去掉可能包含的日期前缀
     time_str = fetch_time_str.split()[-1] if fetch_time_str else None
 
-    if has_today_data:
-        # 更新今天的数据（盘中用实时数据覆盖）
+    if rt_date == last_date:
+        # 更新已有日期的数据（盘中快照覆盖）
         idx = df.index[-1]
         df.loc[idx, 'close'] = close
         df.loc[idx, 'open'] = open_price
@@ -461,14 +481,13 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
             df.loc[idx, 'amount'] = amount
         if 'change_pct' in df.columns:
             df.loc[idx, 'change_pct'] = change_pct
-        # 记录实时数据时间
         if time_str:
             df.loc[idx, 'realtime_time'] = time_str
-        logger.info(f"更新今天数据: close={close}, volume={volume}")
+        logger.info(f"更新 {rt_date} 数据: close={close}, volume={volume}")
     else:
-        # 添加新行（今天数据缺失，用实时数据补充）
+        # rt_date > last_date，追加新行（盘后或跨天补充）
         new_row = pd.DataFrame([{
-            'trade_date': pd.Timestamp(today),
+            'trade_date': pd.Timestamp(rt_date),
             'open': open_price,
             'high': high,
             'low': low,
@@ -479,7 +498,7 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
             'realtime_time': time_str
         }])
         df = pd.concat([df, new_row], ignore_index=True)
-        logger.info(f"添加今天数据: close={close}, volume={volume}")
+        logger.info(f"添加 {rt_date} 数据: close={close}, volume={volume}")
 
     return df
 
