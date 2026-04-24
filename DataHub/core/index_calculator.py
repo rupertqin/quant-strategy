@@ -98,7 +98,8 @@ class IndexCalculator:
             data_path: 个股数据存储路径
         """
         self.data_path = data_path or RAW_PRICE_DIR
-        self.stock_basic_path = Path(__file__).parent.parent.parent / "storage" / "stock_basic_info.csv"
+        from DataHub.config import get_storage_path
+        self.stock_basic_path = get_storage_path("stock_basic_info.csv")
         
     def filter_constituents(
         self,

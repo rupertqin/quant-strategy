@@ -1,60 +1,39 @@
 """
 Dashboard 数据访问层 - 统一路径和简单函数
+
+实时数据统一从 intraday parquet 读取，不再依赖 JSON。
 """
 
-import json
 import pandas as pd
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-# 统一路径常量
-BASE_DIR = Path(__file__).parent.parent.parent
-REALTIME_DIR = BASE_DIR / "storage" / "raw" / "realtime"
+from DataHub.config import INTRADAY_DIR
+
+
+def _get_intraday_parquet_path(asset_type: str = 'stock') -> Optional[Path]:
+    """获取当天 intraday parquet 文件路径"""
+    today_str = datetime.now().strftime('%Y%m%d')
+    filepath = INTRADAY_DIR / asset_type / f"{today_str}.parquet"
+    return filepath if filepath.exists() else None
 
 
 def get_todays_realtime_file(asset_type: str = None) -> Optional[str]:
-    """获取当天最新的实时数据文件路径
-    
+    """获取当天最新的实时数据文件路径（返回 parquet 路径）
+
     Args:
-        asset_type: 'stock'|'etf'|None，None表示获取任意类型最新文件
-    
-    返回最新数据文件（包括盘中和盘后）
+        asset_type: 'stock'|'etf'|'index'|None，None表示依次尝试 stock/etf/index
     """
-    today = datetime.now().strftime('%Y%m%d')
+    if asset_type:
+        path = _get_intraday_parquet_path(asset_type)
+        return str(path) if path else None
 
-    if not REALTIME_DIR.exists():
-        return None
-
-    # 根据资产类型确定文件前缀
-    if asset_type == 'etf':
-        patterns = [f"etf_realtime_{today}_*.json"]
-    elif asset_type == 'stock':
-        patterns = [f"realtime_{today}_*.json"]
-    elif asset_type == 'index':
-        patterns = [f"index_realtime_{today}_*.json"]
-    else:
-        # 获取所有类型
-        patterns = [f"realtime_{today}_*.json", f"etf_realtime_{today}_*.json", f"index_realtime_{today}_*.json"]
-
-    # 获取今天的所有文件
-    today_files = []
-    for pattern in patterns:
-        for f in REALTIME_DIR.glob(pattern):
-            try:
-                with open(f, 'r', encoding='utf-8') as fp:
-                    data = json.load(fp)
-                fetch_time = data.get('fetch_time', '')
-                if fetch_time:
-                    today_files.append((f, fetch_time))
-            except:
-                continue
-
-    if not today_files:
-        return None
-
-    # 返回最新的数据文件（按时间排序）
-    return str(sorted(today_files, key=lambda x: x[1], reverse=True)[0][0])
+    for at in ['stock', 'etf', 'index']:
+        path = _get_intraday_parquet_path(at)
+        if path:
+            return str(path)
+    return None
 
 
 # 别名保持兼容
@@ -62,38 +41,31 @@ find_todays_realtime_file = get_todays_realtime_file
 
 
 def load_realtime_data(filepath: str = None) -> pd.DataFrame:
-    """加载实时数据为DataFrame
-
-    实时数据文件由 realtime_service.py 生成，列名已经是英文
-    """
+    """加载实时数据为 DataFrame（从 parquet）"""
     if filepath is None:
         filepath = get_todays_realtime_file()
 
     if not filepath or not Path(filepath).exists():
         return pd.DataFrame()
 
-    with open(filepath, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    df = pd.read_parquet(filepath)
 
-    # 实时数据文件结构: {"fetch_time": "...", "data": [...]}
-    stocks = data.get('data', [])
-    df = pd.DataFrame(stocks)
+    # 取每个 symbol 的最新快照（按 timestamp）
+    if 'timestamp' in df.columns and 'symbol' in df.columns:
+        df = df.sort_values('timestamp').groupby('symbol').tail(1).reset_index(drop=True)
 
-    # 确保symbol格式统一（添加后缀 .SH/.SZ）
+    # 确保 symbol 格式统一
     if 'symbol' in df.columns:
         def format_symbol(code):
             code_str = str(code).strip()
             if '.' in code_str:
                 return code_str
-            # 沪市：6开头股票、500/501/510-519/520/530/560-563/588/589 ETF
             if code_str.startswith('6') or code_str.startswith('500') or code_str.startswith('501'):
                 return f"{code_str}.SH"
             if code_str.startswith('51') or code_str.startswith('52') or code_str.startswith('53') or code_str.startswith('56') or code_str.startswith('58') or code_str.startswith('59'):
                 return f"{code_str}.SH"
-            # 深市：0/3开头股票、159/169 ETF
             if code_str.startswith('0') or code_str.startswith('3') or code_str.startswith('159') or code_str.startswith('169'):
                 return f"{code_str}.SZ"
-            # 北交所
             if code_str.startswith('4') or code_str.startswith('8'):
                 return f"{code_str}.BJ"
             return code_str
@@ -102,19 +74,29 @@ def load_realtime_data(filepath: str = None) -> pd.DataFrame:
     return df
 
 
+def _fmt_ts(ts) -> str:
+    """格式化 timestamp 为显示字符串"""
+    if ts is None or (isinstance(ts, float) and pd.isna(ts)):
+        return ""
+    if isinstance(ts, str):
+        return ts
+    try:
+        return ts.strftime('%Y-%m-%d %H:%M')
+    except Exception:
+        return str(ts)
+
+
 def get_realtime_price_time() -> Optional[str]:
-    """获取实时数据的时间（用于显示）"""
+    """获取实时数据的最新时间（用于显示）"""
     filepath = get_todays_realtime_file()
     if not filepath:
         return None
-    
+
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        fetch_time = data.get('fetch_time', '')
-        if fetch_time and len(fetch_time) >= 13:
-            return f"{fetch_time[:4]}-{fetch_time[4:6]}-{fetch_time[6:8]} {fetch_time[9:11]}:{fetch_time[11:13]}"
-    except:
+        df = pd.read_parquet(filepath)
+        if 'timestamp' in df.columns and not df.empty:
+            return _fmt_ts(df['timestamp'].max())
+    except Exception:
         pass
     return None
 
@@ -127,115 +109,136 @@ def has_realtime_data() -> bool:
 def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = False, asset_type: str = None) -> tuple[pd.DataFrame, str]:
     """
     获取最新实时数据（统一入口）
-    
+
     Args:
         force_fetch: 是否强制获取最新数据（True=总是fetch，False=优先用缓存）
         full_format: 时间格式（True=YYYY-MM-DD HH:MM，False=HH:MM）
-        asset_type: 'stock'|'etf'|'index'|None，None表示获取任意类型最新文件
-        
+        asset_type: 'stock'|'etf'|'index'|None
+
     Returns:
         (DataFrame, fetch_time_str)
     """
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    
-    def format_time(fetch_time: str) -> str:
-        """格式化时间字符串"""
-        if not fetch_time or len(fetch_time) < 15:
-            return ""
-        # fetch_time格式: YYYYMMDD_HHMMSS
-        date_part = f"{fetch_time[:4]}-{fetch_time[4:6]}-{fetch_time[6:8]}"
-        time_part = f"{fetch_time[9:11]}:{fetch_time[11:13]}"
-        if full_format:
-            return f"{date_part} {time_part}"
-        return time_part
-    
-    # 根据模式决定获取方式
     if force_fetch:
-        # 强制获取最新（用于信号扫描）
         try:
-            from DataHub.services.realtime_service import get_realtime_service
-            rt_service = get_realtime_service()
-            rt_file = rt_service.fetch_and_save()
-            df = load_realtime_data(rt_file)
-            
-            # 提取时间
-            match = __import__('re').search(r'(?:etf_)?realtime_(\d{8})_(\d{6})\.json', Path(rt_file).name)
-            if match:
-                time_str = f"{match.group(2)[:2]}:{match.group(2)[2:4]}"
-                if full_format:
-                    date_part = f"{match.group(1)[:4]}-{match.group(1)[4:6]}-{match.group(1)[6:8]}"
-                    return df, f"{date_part} {time_str}"
-                return df, time_str
-            
-            return df, ""
+            from DataHub.services.realtime_service import RealtimeDataService
+            rt_service = RealtimeDataService()
+            if asset_type == 'etf':
+                df = rt_service.fetch_etf_realtime_data()
+            elif asset_type == 'index':
+                df = rt_service.fetch_index_realtime_data()
+            else:
+                df = rt_service.fetch_realtime_data()
+            rt_service.save_intraday_parquet(df, asset_type=asset_type or 'stock')
+
+            # 取最新快照返回
+            if 'timestamp' in df.columns and 'symbol' in df.columns:
+                df = df.sort_values('timestamp').groupby('symbol').tail(1).reset_index(drop=True)
+            latest_time = df['timestamp'].iloc[0] if 'timestamp' in df.columns and not df.empty else None
+            return df, _fmt_ts(latest_time)
         except Exception:
-            # 获取失败，回退到已有数据
             pass
-    
-    # 使用已有最新数据（用于图表展示）
-    rt_file = get_todays_realtime_file(asset_type=asset_type)
-    if rt_file:
-        df = load_realtime_data(rt_file)
 
-        # 从文件内容读取fetch_time
+    # 使用已有最新数据
+    filepath = get_todays_realtime_file(asset_type=asset_type)
+    if filepath:
+        df = load_realtime_data(filepath)
         try:
-            with open(rt_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            fetch_time = data.get('fetch_time', '')
-            return df, format_time(fetch_time)
-        except:
-            pass
-
-        return df, ""
+            latest_time = df['timestamp'].iloc[0] if 'timestamp' in df.columns and not df.empty else None
+            return df, _fmt_ts(latest_time)
+        except Exception:
+            return df, ""
 
     return pd.DataFrame(), ""
 
 
-def merge_realtime_to_history(hist_df: pd.DataFrame, realtime: pd.Series) -> pd.DataFrame:
+def _rt_val(realtime: pd.Series, key: str, fallback_key: str = 'close') -> float:
+    """安全读取实时数据字段，None/NaN 时回退"""
+    import pandas as pd
+    val = realtime.get(key)
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        val = realtime.get(fallback_key, 0)
+    return float(val)
+
+
+def merge_realtime_to_history(hist_df: pd.DataFrame, realtime: pd.Series, adjust: str = "qfq") -> pd.DataFrame:
     """
     将实时数据合并到历史K线（内存中）
 
+    冷热数据时间线规则：
+    - 热数据日期 <= 冷数据最后日期：丢弃热数据（冷数据已归档或更新）
+    - 热数据日期 > 冷数据最后日期：追加新行（前复权转换后）
+
     Args:
-        hist_df: 历史日线数据
-        realtime: 实时行情Series
+        hist_df: 历史日线数据（默认前复权）
+        realtime: 实时行情Series（通常不复权）
+        adjust: 历史数据复权方式，默认 "qfq"
 
     Returns:
         合并后的DataFrame
     """
     from datetime import datetime
 
+    if hist_df.empty:
+        return hist_df
+
     # 确保 trade_date 列是 datetime 类型
     hist_df['trade_date'] = pd.to_datetime(hist_df['trade_date'])
 
-    today = datetime.now()
-    today_date = today.date()
+    # 从实时数据提取实际日期（优先 timestamp，其次 trade_date/date）
+    rt_date = None
+    ts = realtime.get('timestamp')
+    if ts is not None and not pd.isna(ts):
+        rt_date = pd.to_datetime(ts).date()
+    else:
+        for key in ('trade_date', 'date'):
+            val = realtime.get(key)
+            if val is not None and not pd.isna(val):
+                rt_date = pd.to_datetime(val).date()
+                break
+    if rt_date is None:
+        rt_date = datetime.now().date()
 
-    # 获取最后一天日期
+    # 冷数据最后一天日期
     last_date = hist_df['trade_date'].iloc[-1]
     if isinstance(last_date, pd.Timestamp):
         last_date = last_date.date()
 
-    # 如果历史数据已有今天数据，更新它；否则追加新行
-    if not hist_df.empty and last_date == today_date:
-        idx = hist_df.index[-1]
-        hist_df.loc[idx, 'close'] = float(realtime['close'])
-        hist_df.loc[idx, 'high'] = max(float(hist_df.loc[idx, 'high']), float(realtime.get('high', realtime['close'])))
-        hist_df.loc[idx, 'low'] = min(float(hist_df.loc[idx, 'low']), float(realtime.get('low', realtime['close'])))
-        hist_df.loc[idx, 'volume'] = float(realtime['volume'])
-        hist_df.loc[idx, 'amount'] = float(realtime.get('amount', 0))
-        hist_df.loc[idx, 'change_pct'] = float(realtime['change_pct'])
-    else:
-        new_row = pd.DataFrame([{
-            'trade_date': today,
-            'open': float(realtime.get('open', realtime['close'])),
-            'high': float(realtime.get('high', realtime['close'])),
-            'low': float(realtime.get('low', realtime['close'])),
-            'close': float(realtime['close']),
-            'volume': float(realtime['volume']),
-            'amount': float(realtime.get('amount', 0)),
-            'change_pct': float(realtime['change_pct']),
-            'symbol': realtime.get('symbol', '')
-        }])
-        hist_df = pd.concat([hist_df, new_row], ignore_index=True)
+    # 热数据不比冷数据新（同一天或更旧），不合并
+    if rt_date <= last_date:
+        return hist_df
+
+    close = _rt_val(realtime, 'close')
+    change_pct = _rt_val(realtime, 'change_pct', 'close')
+    open_price = _rt_val(realtime, 'open', 'close')
+    high = _rt_val(realtime, 'high', 'close')
+    low = _rt_val(realtime, 'low', 'close')
+
+    # 前复权转换：实时数据通常为不复权价格，需转换到与历史数据一致的价格体系
+    if adjust == "qfq":
+        try:
+            prev_close = float(hist_df.iloc[-1]['close'])
+            if prev_close > 0 and close > 0:
+                qfq_close = prev_close * (1 + change_pct / 100)
+                ratio = qfq_close / close
+                open_price = open_price * ratio
+                high = high * ratio
+                low = low * ratio
+                close = qfq_close
+        except Exception:
+            pass  # 转换失败时保持原始价格
+
+    # 追加新行（热数据比冷数据新）
+    new_row = pd.DataFrame([{
+        'trade_date': pd.Timestamp(rt_date),
+        'open': open_price,
+        'high': high,
+        'low': low,
+        'close': close,
+        'volume': _rt_val(realtime, 'volume', 'close'),
+        'amount': _rt_val(realtime, 'amount', 'close'),
+        'change_pct': change_pct,
+        'symbol': realtime.get('symbol', '')
+    }])
+    hist_df = pd.concat([hist_df, new_row], ignore_index=True)
 
     return hist_df

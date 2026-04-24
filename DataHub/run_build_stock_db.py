@@ -28,8 +28,8 @@ class StockDatabaseBuilder:
     
     def __init__(self):
         """初始化构建器"""
-        self.base_dir = Path(__file__).parent.parent
-        self.storage_dir = self.base_dir / "storage"
+        from DataHub.config import get_storage_path
+        self.storage_dir = get_storage_path()
         self.csv_path = self.storage_dir / "stock_basic_info.csv"
         self.etf_csv_path = self.storage_dir / "etf_basic_info.csv"
         

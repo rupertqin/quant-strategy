@@ -24,6 +24,7 @@ class MarketRegime:
     """市场状态判断 - 宏观+技术综合版"""
 
     def __init__(self, config_path: str = None):
+        from DataHub.config import get_storage_path
         if config_path is None:
             current_dir = os.path.dirname(__file__)
             parent_dir = os.path.dirname(current_dir)
@@ -33,6 +34,8 @@ class MarketRegime:
 
         self.config = self._load_config(config_path) if os.path.exists(config_path) else {}
         self.cache_dir = self.config.get('cache', {}).get('dir', 'cache')
+        if not os.path.isabs(self.cache_dir):
+            self.cache_dir = str(get_storage_path(self.cache_dir))
         os.makedirs(self.cache_dir, exist_ok=True)
 
         self.data_client = UnifiedDataClient()
@@ -709,7 +712,8 @@ class MarketRegime:
                 return pd.DataFrame()
             
             # 获取成分股列表
-            stock_basic_path = Path(__file__).parent.parent.parent / "storage" / "stock_basic_info.csv"
+            from DataHub.config import get_storage_path
+            stock_basic_path = get_storage_path("stock_basic_info.csv")
             if not stock_basic_path.exists():
                 logger.warning(f"股票基础信息文件不存在: {stock_basic_path}")
                 return pd.DataFrame()
@@ -773,6 +777,36 @@ class MarketRegime:
         except Exception as e:
             logger.error(f"从本地数据计算指数失败 {index_name}: {e}")
             return pd.DataFrame()
+
+    @staticmethod
+    def resample_ohlcv(df: pd.DataFrame, period: str = 'weekly') -> pd.DataFrame:
+        """
+        将日线 OHLCV 数据重采样为周线或月线
+
+        Args:
+            df: 日线 DataFrame，必须包含 date/open/high/low/close/volume 列
+            period: 'weekly' 或 'monthly'
+
+        Returns:
+            重采样后的 DataFrame（列名与输入保持一致，date 为字符串）
+        """
+        if df.empty or 'date' not in df.columns:
+            return pd.DataFrame()
+
+        df = df.copy()
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.set_index('date').sort_index()
+
+        rule = 'W-FRI' if period == 'weekly' else 'ME'
+        agg_spec = {}
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col in df.columns:
+                agg_spec[col] = 'first' if col == 'open' else ('max' if col == 'high' else ('min' if col == 'low' else ('last' if col == 'close' else 'sum')))
+
+        resampled = df.resample(rule).agg(agg_spec).dropna()
+        resampled = resampled.reset_index()
+        resampled['date'] = resampled['date'].astype(str)
+        return resampled
 
     def _dow_theory_analysis(self, df: pd.DataFrame) -> dict:
         """
@@ -1004,7 +1038,7 @@ class MarketRegime:
         # 从 official_indices.csv 读取主要指数列表
         core_indices = StockCodeUtil.get_core_indices()
         if not core_indices:
-            raise RuntimeError("无法读取 storage/official_indices.csv，请确保文件存在且格式正确")
+            raise RuntimeError("无法读取 official_indices.csv，请确保文件存在且格式正确")
         
         result = {}
         
@@ -1070,11 +1104,17 @@ class MarketRegime:
         if len(index_names) < 2:
             return {'validation': 'INSUFFICIENT_DATA', 'note': '指数数据不足'}
 
-        # 统计各主要趋势方向
+        # 统计各主要趋势方向（优先读取日线分析）
         primary_trends = []
         for name in index_names:
-            if 'dow_theory' in indices_data[name]:
-                trend = indices_data[name]['dow_theory'].get('primary_trend', 'UNKNOWN')
+            data = indices_data[name]
+            dow = {}
+            if 'analysis' in data and 'daily' in data['analysis']:
+                dow = data['analysis']['daily'].get('dow_theory', {})
+            elif 'dow_theory' in data:
+                dow = data['dow_theory']  # 兼容旧格式
+            if dow:
+                trend = dow.get('primary_trend', 'UNKNOWN')
                 primary_trends.append((name, trend))
 
         # 判断是否一致

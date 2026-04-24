@@ -20,8 +20,8 @@ from lib.utils import StockCodeUtil, get_stock_name
 from DataHub.config import get_storage_path
 
 # JSON 文件路径（使用环境变量配置的 storage 路径）
-OUTPUT_DIR = get_storage_path("outputs", "shortterm", "services")
-JSON_FILE = OUTPUT_DIR / "daily_signals.json"
+OUTPUT_DIR = get_storage_path("outputs", "shortterm", "technical_overview")
+JSON_FILE = OUTPUT_DIR / "latest.json"
 
 
 def load_signals_data() -> dict:
@@ -104,7 +104,9 @@ zt_count = zt_sentiment.get('zt_count', data.get('zt_count', 0))
 dt_count = dt_sentiment.get('dt_count', data.get('dt_count', 0))
 
 # 从JSON获取指数历史数据（由后台脚本生成）
-index_history = data.get('index_history', {})
+index_history_daily = data.get('index_history', {})
+index_history_weekly = data.get('index_history_weekly', {})
+index_history_monthly = data.get('index_history_monthly', {})
 
 # ============= 页面标题 =============
 market_close_time = data.get('market_close_time', date)
@@ -437,9 +439,6 @@ def create_index_chart_html(hist_data: list, name: str, is_intraday: bool = Fals
     return html
 
 
-# 指数图表展示
-st.markdown("### 📈 指数走势")
-
 # 指数名称到代码的映射（用于跳转链接）
 INDEX_CODE_MAP = {
     '上证指数': '000001.SH',
@@ -451,311 +450,195 @@ INDEX_CODE_MAP = {
 }
 
 # 过滤掉深证成指
-filtered_index_history = {k: v for k, v in index_history.items() if k != '深证成指'}
+filtered_index_history = {k: v for k, v in index_history_daily.items() if k != '深证成指'}
 
-if filtered_index_history:
-    # 创建2x2的图表布局
-    chart_cols = st.columns(2)
-    col_idx = 0
-
-    for name, hist_data in filtered_index_history.items():
-        with chart_cols[col_idx % 2]:
-            # 获取指数代码用于跳转链接
-            index_code = INDEX_CODE_MAP.get(name, '')
-
-            # 标题行：名称 + 切换按钮
-            title_cols = st.columns([3, 2])
-            with title_cols[0]:
-                # 可点击的标题链接
-                if index_code:
-                    st.markdown(f"**[{name}](/stock_chart?symbol={index_code})**", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"**{name}**")
-            with title_cols[1]:
-                # 每个图表独立的切换按钮
-                chart_key = f"chart_type_{name}"
-                if chart_key not in st.session_state:
-                    st.session_state[chart_key] = "日线"
-
-                # 使用 segments 风格的按钮
-                segment_cols = st.columns(2)
-                is_daily = st.session_state[chart_key] == "日线"
-                with segment_cols[0]:
-                    btn_type = "primary" if is_daily else "secondary"
-                    if st.button("日线", key=f"{chart_key}_daily", width="stretch", type=btn_type):
-                        st.session_state[chart_key] = "日线"
-                        st.rerun()
-                with segment_cols[1]:
-                    btn_type = "primary" if not is_daily else "secondary"
-                    if st.button("分时", key=f"{chart_key}_intraday", width="stretch", type=btn_type):
-                        st.session_state[chart_key] = "分时"
-                        st.rerun()
-
-            # 根据当前选择的类型显示图表
-            if st.session_state[chart_key] == "日线":
-                # 日线图表 - 使用 Lightweight Charts
-                chart_html = create_index_chart_html(hist_data, name, is_intraday=False)
-                st.components.v1.html(chart_html, height=280, scrolling=False)
-
-                # 获取该指数的极值点数据
-                idx_data = filtered_index_performance.get(name, {})
-                elliott = idx_data.get('elliott_wave', {})
-                structure = elliott.get('structure', {})
-                peaks = structure.get('recent_peaks', [])
-                troughs = structure.get('recent_troughs', [])
-
-                # 显示关键点位信息
-                if peaks or troughs:
-                    info_cols = st.columns(2)
-                    with info_cols[0]:
-                        if peaks:
-                            latest_peak = peaks[-1]
-                            st.caption(f"📈 最近峰值: {latest_peak[1]:.2f} ({latest_peak[0]})")
-                    with info_cols[1]:
-                        if troughs:
-                            latest_trough = troughs[-1]
-                            st.caption(f"📉 最近谷值: {latest_trough[1]:.2f} ({latest_trough[0]})")
-
-            else:  # 分时图表
-                intraday_data = data.get('index_intraday', {}).get(name, [])
-                if intraday_data:
-                    chart_html = create_index_chart_html(intraday_data, name, is_intraday=True)
-                    st.components.v1.html(chart_html, height=280, scrolling=False)
-
-                    # 显示当日统计
-                    intraday_df = pd.DataFrame(intraday_data)
-                    if not intraday_df.empty and 'price' in intraday_df.columns:
-                        day_high = intraday_df['price'].max() if 'high' not in intraday_df.columns else intraday_df['high'].max()
-                        day_low = intraday_df['price'].min() if 'low' not in intraday_df.columns else intraday_df['low'].min()
-                        latest_price = intraday_df['price'].iloc[-1]
-                        st.caption(f"📊 最新: {latest_price:.2f} | 最高: {day_high:.2f} | 最低: {day_low:.2f}")
-                else:
-                    st.caption(f"{name} 暂无分时数据")
-
-        col_idx += 1
-        if col_idx == 2:  # 每行2个图表
-            chart_cols = st.columns(2)
-else:
-    st.info("暂无指数历史数据，请在后台脚本中生成（ShortTerm/run_today_technical.py）")
-
-st.divider()
-
-# ============= 主要内容 =============
-st.subheader("📅 扫描结果")
-
-# ========== 上部: 热点板块 ==========
-st.markdown("### 🔥 热点板块")
-
-if hot_sectors:
-    # 使用2列布局展示热点板块卡片
-    sector_cols = st.columns(2)
-    for idx, sector in enumerate(hot_sectors[:10]):
-        with sector_cols[idx % 2]:
-            with st.container():
-                # 构建个股列表显示（代码+名称，按需映射）
-                stock_codes = sector.get('stocks', [])
-                if stock_codes:
-                    # 格式: 代码(名称), 代码(名称)...
-                    stocks_text = ", ".join([f"{code}({get_stock_name(code)})" for code in stock_codes[:5]])
-                    if len(stock_codes) > 5:
-                        stocks_text += f" 等{len(stock_codes)}只"
-                else:
-                    stocks_text = "暂无个股数据"
-
-                # 获取龙头股名称（按需映射）
-                lead_code = sector.get('lead_stock_code', '')
-                lead_name = get_stock_name(lead_code) if lead_code else '-'
-
-                st.markdown(f"""
-                <div class="hot-sector-card">
-                    <h4>{sector.get('sector', '未知')}</h4>
-                    <p>涨停 {sector.get('zt_count', 0)} 家 | 龙头: {lead_code}({lead_name})</p>
-                    <p style="font-size: 0.85em; opacity: 0.9;">{stocks_text}</p>
-                </div>
-                """, unsafe_allow_html=True)
-else:
-    st.info("暂无热点板块数据")
-
-st.divider()
-
-# ========== 下部: 操作建议 & 技术分析 ==========
-st.markdown("### 📊 操作建议")
-
-regime_type = data.get('regime', 'NEUTRAL')
-if regime_type == 'AGGRESSIVE':
-    action = "积极进攻"
-    emoji = "🔥"
-    color = "#ff6b6b"
-    desc = "市场强势，可积极参与"
-elif regime_type == 'DEFENSIVE':
-    action = "防御避险"
-    emoji = "🛡️"
-    color = "#48dbfb"
-    desc = "市场弱势，注意风险"
-else:
-    action = "观望等待"
-    emoji = "⏳"
-    color = "#feca57"
-    desc = "市场震荡，谨慎操作"
-
-st.markdown(f"""
-<div class="signal-card">
-    {emoji} <strong>当前策略</strong>
-    <span style="color: {color}; font-weight: bold;">{action}</span>
-    <br>
-    <small>{desc}</small>
-</div>
-""", unsafe_allow_html=True)
-
-# ============= 道氏理论与波浪理论分析 =============
-st.markdown("### 📈 技术分析")
-
-# 获取主要指数的技术分析数据
+# 获取主要指数的技术分析数据（优先沪深300，其次上证）
 main_index = None
 main_index_name = None
 for name in ['沪深300', '上证指数']:
     if name in filtered_index_performance:
         idx_data = filtered_index_performance[name]
-        if 'dow_theory' in idx_data:
+        analysis = idx_data.get('analysis', {})
+        if analysis and 'daily' in analysis and 'dow_theory' in analysis['daily']:
             main_index = idx_data
             main_index_name = name
             break
 
-if main_index and 'dow_theory' in main_index:
-    # ===== 所有指数的道氏理论概览表格 =====
-    st.markdown("**📊 道氏理论概览**")
-    dow_data = []
-    for name, data in filtered_index_performance.items():
-        if name == 'inter_index_validation':
-            continue
-        dow = data.get('dow_theory', {})
-        if dow and 'primary_trend' in dow:
-            trend_emoji = {'BULL': '🟢', 'BEAR': '🔴', 'SIDEWAYS': '🟡', 'UNKNOWN': '⚪'}
-            primary = dow.get('primary_trend', 'UNKNOWN')
-            secondary = dow.get('secondary_trend', 'UNKNOWN')
-            strength = dow.get('trend_strength', {})
-            dow_data.append({
-                '指数': name,
-                '主要趋势': f"{trend_emoji.get(primary, '⚪')} {dow.get('primary_desc', '未知')}",
-                '次要趋势': dow.get('secondary_desc', '未知'),
-                '趋势强度': f"ADX: {strength.get('adx', 0)} ({strength.get('strength', 'weak')})",
-                '区间位置': f"{dow.get('position_in_range', 0):.0%}"
-            })
+PERIODS = [('日线', 'daily'), ('周线', 'weekly'), ('月线', 'monthly')]
+trend_emoji = {'BULL': '🟢', 'BEAR': '🔴', 'SIDEWAYS': '🟡', 'UNKNOWN': '⚪'}
 
-    if dow_data:
-        st.dataframe(dow_data, hide_index=True, width="stretch")
+# ============= 页面级三周期 Tab =============
+st.markdown("### 📈 指数走势 & 技术分析")
 
-    # ===== 所有指数的波浪理论概览表格 =====
-    st.markdown("**🌊 波浪理论概览**")
-    wave_data = []
-    for name, data in filtered_index_performance.items():
-        if name == 'inter_index_validation':
-            continue
-        wave = data.get('elliott_wave', {})
-        if wave and 'current_phase' in wave:
-            wave_data.append({
-                '指数': name,
-                '当前阶段': wave.get('current_phase', '未知'),
-                '最近峰值': wave.get('last_peak', '-'),
-                '最近谷值': wave.get('last_trough', '-'),
-                '距峰值': f"{wave.get('current_vs_peak', 0):+.1f}%"
-            })
+tabs = st.tabs([f"📊 {label}" for label, _ in PERIODS])
+for tab, (label, key) in zip(tabs, PERIODS):
+    with tab:
+        # ---------- 指数走势图 ----------
+        if filtered_index_history:
+            chart_cols = st.columns(2)
+            col_idx = 0
+            for name in filtered_index_history.keys():
+                with chart_cols[col_idx % 2]:
+                    index_code = INDEX_CODE_MAP.get(name, '')
+                    if index_code:
+                        st.markdown(f"**[{name}](/stock_chart?symbol={index_code})**", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"**{name}**")
 
-    if wave_data:
-        st.dataframe(wave_data, hide_index=True, width="stretch")
+                    if label == "日线":
+                        hist_data = index_history_daily.get(name, [])
+                    elif label == "周线":
+                        hist_data = index_history_weekly.get(name, [])
+                    else:
+                        hist_data = index_history_monthly.get(name, [])
 
-        # 显示各指数的斐波那契回调位
-        st.markdown("**斐波那契回调位参考**")
-        fib_cols = st.columns(len(filtered_index_performance))
-        col_idx = 0
+                    if hist_data:
+                        chart_html = create_index_chart_html(hist_data, name, is_intraday=False)
+                        st.components.v1.html(chart_html, height=280, scrolling=False)
+                    else:
+                        st.caption(f"{name} 暂无{label}数据")
+
+                    # 极值点信息
+                    idx_data = filtered_index_performance.get(name, {})
+                    analysis = idx_data.get('analysis', {})
+                    period_data = analysis.get(key, {})
+                    elliott = period_data.get('elliott_wave', {})
+                    structure = elliott.get('structure', {})
+                    peaks = structure.get('recent_peaks', [])
+                    troughs = structure.get('recent_troughs', [])
+                    if peaks or troughs:
+                        info_cols = st.columns(2)
+                        with info_cols[0]:
+                            if peaks:
+                                latest_peak = peaks[-1]
+                                st.caption(f"📈 最近峰值: {latest_peak[1]:.2f} ({latest_peak[0]})")
+                        with info_cols[1]:
+                            if troughs:
+                                latest_trough = troughs[-1]
+                                st.caption(f"📉 最近谷值: {latest_trough[1]:.2f} ({latest_trough[0]})")
+                col_idx += 1
+                if col_idx == 2:
+                    chart_cols = st.columns(2)
+        else:
+            st.info("暂无指数历史数据")
+
+        st.divider()
+
+        # ---------- 道氏理论概览 ----------
+        st.markdown(f"**📊 道氏理论概览 ({label})**")
+        dow_data = []
         for name, data in filtered_index_performance.items():
             if name == 'inter_index_validation':
                 continue
-            with fib_cols[col_idx]:
-                wave = data.get('elliott_wave', {})
-                struct = wave.get('structure', {})
-                if struct:
-                    st.caption(f"**{name}**")
-                    fib_382 = struct.get('fib_382')
-                    fib_500 = struct.get('fib_500')
-                    fib_618 = struct.get('fib_618')
-                    if fib_382 and fib_500 and fib_618:
-                        st.write(f"38.2%: {fib_382:.0f}")
-                        st.write(f"50%: {fib_500:.0f}")
-                        st.write(f"61.8%: {fib_618:.0f}")
-                    else:
-                        st.write("数据不完整")
-                else:
-                    st.caption(f"**{name}**")
-                    st.write("无结构数据")
-            col_idx += 1
-
-    # ===== 单个主要指数的详细分析 =====
-    st.divider()
-    st.markdown(f"**{main_index_name} 详细分析**")
-
-    dow = main_index['dow_theory']
-    elliott = main_index.get('elliott_wave', {})
-
-    # 道氏理论详细展示
-    with st.expander("📊 道氏理论详情", expanded=True):
-        primary = dow.get('primary_desc', '未知')
-        secondary = dow.get('secondary_desc', '未知')
-        volume = dow.get('volume_signal', 'neutral')
-
-        trend_color = {'BULL': '🟢', 'BEAR': '🔴', 'SIDEWAYS': '🟡'}
-        primary_trend = dow.get('primary_trend', 'UNKNOWN')
-        st.markdown(f"**主要趋势**: {trend_color.get(primary_trend, '⚪')} {primary}")
-        st.markdown(f"**次要趋势**: {secondary}")
-
-        strength = dow.get('trend_strength', {})
-        adx = strength.get('adx', 0)
-        strength_text = strength.get('strength', 'weak')
-        st.progress(min(adx/100, 1.0), text=f"趋势强度 ADX: {adx} ({strength_text})")
-
-        vol_emoji = {'confirming': '✅', 'warning': '⚠️', 'neutral': '➖'}
-        vol_text = {'confirming': '确认趋势', 'warning': '背离警示', 'neutral': '中性'}
-        st.caption(f"成交量信号: {vol_emoji.get(volume, '➖')} {vol_text.get(volume, '中性')}")
-
-    # 波浪理论详细展示
-    with st.expander("🌊 波浪理论详情"):
-        if elliott and 'current_phase' in elliott:
-            phase = elliott.get('current_phase', '未知')
-            st.markdown(f"**当前阶段**: {phase}")
-
-            structure = elliott.get('structure', {})
-            if structure:
-                volatility = structure.get('volatility_pct', 0)
-                st.caption(f"近期波动率: {volatility:.2f}%")
-
-                fib_382 = structure.get('fib_382')
-                fib_500 = structure.get('fib_500')
-                fib_618 = structure.get('fib_618')
-
-                if fib_382 and fib_500 and fib_618:
-                    st.markdown("**斐波那契回调位**:")
-                    fib_col1, fib_col2, fib_col3 = st.columns(3)
-                    with fib_col1:
-                        st.metric("38.2%", f"{fib_382:.0f}")
-                    with fib_col2:
-                        st.metric("50.0%", f"{fib_500:.0f}")
-                    with fib_col3:
-                        st.metric("61.8%", f"{fib_618:.0f}")
+            analysis = data.get('analysis', {})
+            period_data = analysis.get(key, {})
+            dow = period_data.get('dow_theory', {})
+            if dow and 'primary_trend' in dow:
+                primary = dow.get('primary_trend', 'UNKNOWN')
+                strength = dow.get('trend_strength', {})
+                dow_data.append({
+                    '指数': name,
+                    '主要趋势': f"{trend_emoji.get(primary, '⚪')} {dow.get('primary_desc', '未知')}",
+                    '次要趋势': dow.get('secondary_desc', '未知'),
+                    '趋势强度': f"ADX: {strength.get('adx', 0)} ({strength.get('strength', 'weak')})",
+                    '区间位置': f"{dow.get('position_in_range', 0):.0%}"
+                })
+        if dow_data:
+            st.dataframe(dow_data, hide_index=True, width="stretch")
         else:
-            st.caption("波浪分析数据暂不可用")
+            st.caption("道氏理论数据不足")
 
-    # 跨指数验证
-    inter_validation = tech_indicators.get('inter_index_validation', {})
-    if inter_validation:
-        val_status = inter_validation.get('validation', '')
-        consistency = inter_validation.get('consistency', 0)
-        note = inter_validation.get('note', '')
+        # ---------- 波浪理论概览 ----------
+        st.markdown(f"**🌊 波浪理论概览 ({label})**")
+        wave_data = []
+        for name, data in filtered_index_performance.items():
+            if name == 'inter_index_validation':
+                continue
+            analysis = data.get('analysis', {})
+            period_data = analysis.get(key, {})
+            wave = period_data.get('elliott_wave', {})
+            if wave and 'current_phase' in wave:
+                wave_data.append({
+                    '指数': name,
+                    '当前阶段': wave.get('current_phase', '未知'),
+                    '最近峰值': wave.get('last_peak', '-'),
+                    '最近谷值': wave.get('last_trough', '-'),
+                    '距峰值': f"{wave.get('current_vs_peak', 0):+.1f}%"
+                })
+        if wave_data:
+            st.dataframe(wave_data, hide_index=True, width="stretch")
+        else:
+            st.caption("波浪理论数据不足")
 
-        val_emoji = {'CONFIRMED': '✅', 'PARTIAL': '⚠️', 'DIVERGENCE': '❌'}
-        st.markdown(f"**指数验证**: {val_emoji.get(val_status, '➖')} {note}")
-        st.progress(consistency, text=f"一致性: {consistency*100:.0f}%")
-else:
-    st.caption("技术分析数据加载中...")
+        # ---------- 主要指数详细分析 ----------
+        if main_index:
+            st.divider()
+            st.markdown(f"**{main_index_name} {label} 详细分析**")
+
+            analysis = main_index.get('analysis', {})
+            period_data = analysis.get(key, {})
+            dow = period_data.get('dow_theory', {})
+            elliott = period_data.get('elliott_wave', {})
+
+            if dow and 'primary_trend' in dow:
+                # 道氏理论详情
+                st.markdown("**道氏理论**")
+                primary_trend = dow.get('primary_trend', 'UNKNOWN')
+                st.markdown(f"主要趋势: {trend_emoji.get(primary_trend, '⚪')} {dow.get('primary_desc', '未知')}")
+                st.markdown(f"次要趋势: {dow.get('secondary_desc', '未知')}")
+
+                strength = dow.get('trend_strength', {})
+                adx = strength.get('adx', 0)
+                strength_text = strength.get('strength', 'weak')
+                st.progress(min(adx / 100, 1.0), text=f"趋势强度 ADX: {adx} ({strength_text})")
+
+                volume = dow.get('volume_signal', 'neutral')
+                vol_emoji = {'confirming': '✅', 'warning': '⚠️', 'neutral': '➖'}
+                vol_text = {'confirming': '确认趋势', 'warning': '背离警示', 'neutral': '中性'}
+                st.caption(f"成交量信号: {vol_emoji.get(volume, '➖')} {vol_text.get(volume, '中性')}")
+
+                st.divider()
+
+                # 波浪理论详情
+                st.markdown("**波浪理论**")
+                if elliott and 'current_phase' in elliott:
+                    phase = elliott.get('current_phase', '未知')
+                    st.markdown(f"当前阶段: {phase}")
+
+                    structure = elliott.get('structure', {})
+                    if structure:
+                        volatility = structure.get('volatility_pct', 0)
+                        st.caption(f"波动率: {volatility:.2f}%")
+
+                        fib_382 = structure.get('fib_382')
+                        fib_500 = structure.get('fib_500')
+                        fib_618 = structure.get('fib_618')
+                        if fib_382 and fib_500 and fib_618:
+                            fib_col1, fib_col2, fib_col3 = st.columns(3)
+                            with fib_col1:
+                                st.metric("38.2%", f"{fib_382:.0f}")
+                            with fib_col2:
+                                st.metric("50.0%", f"{fib_500:.0f}")
+                            with fib_col3:
+                                st.metric("61.8%", f"{fib_618:.0f}")
+                else:
+                    st.caption("波浪分析数据暂不可用")
+            else:
+                st.caption(f"{label}分析数据不足")
+        else:
+            st.caption("技术分析数据加载中...")
+
+        # 跨指数验证（只在日线 tab 显示一次）
+        if key == 'daily':
+            inter_validation = tech_indicators.get('inter_index_validation', {})
+            if inter_validation:
+                st.divider()
+                val_status = inter_validation.get('validation', '')
+                consistency = inter_validation.get('consistency', 0)
+                note = inter_validation.get('note', '')
+                val_emoji = {'CONFIRMED': '✅', 'PARTIAL': '⚠️', 'DIVERGENCE': '❌'}
+                st.markdown(f"**指数验证**: {val_emoji.get(val_status, '➖')} {note}")
+                st.progress(consistency, text=f"一致性: {consistency*100:.0f}%")
 
 # 生成时间
 st.caption(f"数据日期: {date}")

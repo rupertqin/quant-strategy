@@ -29,6 +29,7 @@ class EventStudyBacktest:
     """事件研究回测器"""
 
     def __init__(self, config_path: str = None):
+        from DataHub.config import get_storage_path
         # 自动查找 config.yaml
         if config_path is None:
             current_dir = os.path.dirname(__file__)
@@ -40,14 +41,14 @@ class EventStudyBacktest:
 
         # 缓存目录
         cache_config = self.config.get('cache', {}).get('dir', 'cache')
-        self.cache_dir = cache_config if os.path.isabs(cache_config) else os.path.join(self.base_dir, cache_config)
+        self.cache_dir = cache_config if os.path.isabs(cache_config) else str(get_storage_path(cache_config))
         os.makedirs(self.cache_dir, exist_ok=True)
 
         # 图表输出目录
         output_config = self.config.get('output', {})
-        self.charts_dir = output_config.get('charts_dir', '../storage/outputs/shortterm/charts')
+        self.charts_dir = output_config.get('charts_dir', 'outputs/shortterm/charts')
         if not os.path.isabs(self.charts_dir):
-            self.charts_dir = os.path.join(self.base_dir, self.charts_dir)
+            self.charts_dir = str(get_storage_path(self.charts_dir))
         os.makedirs(self.charts_dir, exist_ok=True)
         
         # 初始化 DataHub 客户端

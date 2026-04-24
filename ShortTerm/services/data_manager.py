@@ -22,6 +22,7 @@ class ShortTermDataManager:
     """短线策略数据管理器 - 支持 DataHub"""
 
     def __init__(self, config_path: Optional[str] = None, use_datahub: bool = True):
+        from DataHub.config import get_storage_path
         if config_path is None:
             config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
         self.config_path = config_path
@@ -30,17 +31,17 @@ class ShortTermDataManager:
 
         self.cache_dir = self.config['cache']['dir']
         if not os.path.isabs(self.cache_dir):
-            self.cache_dir = os.path.join(self.base_dir, self.cache_dir)
+            self.cache_dir = str(get_storage_path(self.cache_dir))
         os.makedirs(self.cache_dir, exist_ok=True)
 
         # 输出路径
         output_config = self.config.get('output', {})
-        self.signals_file = output_config.get('signals_file', '../storage/outputs/shortterm/services/daily_signals.json')
-        self.database_file = output_config.get('database_file', '../storage/outputs/shortterm/database/signals.db')
+        self.signals_file = output_config.get('signals_file', 'outputs/shortterm/technical_overview/latest.json')
+        self.database_file = output_config.get('database_file', 'outputs/shortterm/database/signals.db')
         if not os.path.isabs(self.signals_file):
-            self.signals_file = os.path.join(self.base_dir, self.signals_file)
+            self.signals_file = str(get_storage_path(self.signals_file))
         if not os.path.isabs(self.database_file):
-            self.database_file = os.path.join(self.base_dir, self.database_file)
+            self.database_file = str(get_storage_path(self.database_file))
 
         logger.info("ShortTermDataManager initialized")
 

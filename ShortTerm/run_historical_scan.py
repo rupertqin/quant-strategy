@@ -20,6 +20,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 
 from ShortTerm.services.stock_signal_scanner import MultiPeriodScanner
+from DataHub.config import SHORTTERM_SIGNALS_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,10 +41,10 @@ def scan_single_date(date_str: str) -> dict:
         signals = scanner.scan_all(date_str=date_str)
         
         # 保存结果
-        output_dir = Path(project_root) / "storage" / "outputs" / "signals"
+        output_dir = SHORTTERM_SIGNALS_DIR
         output_dir.mkdir(parents=True, exist_ok=True)
-        
-        output_file = output_dir / f"stock_signals_{date_str}.json"
+
+        output_file = output_dir / f"signal_{date_str}.json"
         
         result = {
             "status": "success",
@@ -104,10 +105,10 @@ def main():
     
     # 检查已存在的文件
     if args.skip_existing:
-        output_dir = Path(project_root) / "storage" / "outputs" / "signals"
-        existing_files = set(f.stem.replace("stock_signals_", "") 
-                            for f in output_dir.glob("stock_signals_*.json")
-                            if "intraday" not in f.name and "latest" not in f.name)
+        output_dir = SHORTTERM_SIGNALS_DIR
+        existing_files = set(f.stem.replace("signal_", "")
+                            for f in output_dir.glob("signal_*.json")
+                            if "latest" not in f.name)
         dates = [d for d in dates if d not in existing_files]
         logger.info(f"跳过已存在文件，剩余 {len(dates)} 个交易日需扫描")
     

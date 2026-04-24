@@ -21,8 +21,8 @@ class StorageEngine:
             base_path: Base path for storage directory
         """
         if base_path is None:
-            # Default to DataHub/storage
-            base_path = Path(__file__).parent.parent.parent / "storage"
+            from DataHub.config import get_storage_path
+            base_path = get_storage_path()
 
         self.base_path = Path(base_path)
         self.raw_stocks_dir = self.base_path / "raw" / "stocks"

@@ -86,10 +86,11 @@ def load_stock_pool() -> list:
 
 def load_signals() -> dict:
     """加载信号数据"""
-    signals_file = get_storage_path("outputs", "signals", "stock_signals_latest.json")
+    from DataHub.config import SHORTTERM_SIGNALS_DIR
+    signals_file = SHORTTERM_SIGNALS_DIR / "signal_latest.json"
     if not signals_file.exists():
         return {}
-    
+
     with open(signals_file, 'r', encoding='utf-8') as f:
         return json.load(f)
 
@@ -107,7 +108,19 @@ signals_data = load_signals()
 # 提取元数据
 scan_time = signals_data.get('scan_time', '未知')
 price_fetch_time = signals_data.get('price_fetch_time', '')
+
+# 兼容旧格式：多资产类型时间拼接时只取第一个时间
+if price_fetch_time and ('股票' in price_fetch_time or 'ETF' in price_fetch_time or '指数' in price_fetch_time):
+    import re
+    match = re.search(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}', price_fetch_time)
+    if match:
+        price_fetch_time = match.group(0)
+
+# 兼容格式A（stocks数组）和格式B（顶层signals数组）
 all_signals = signals_data.get('signals', [])
+if not all_signals and 'stocks' in signals_data:
+    for stock in signals_data.get('stocks', []):
+        all_signals.extend(stock.get('signals', []))
 
 # 过滤股票池信号
 pool_signals = filter_pool_signals(all_signals, pool_stocks)
@@ -117,6 +130,10 @@ signals_by_stock = {}
 
 # 先从信号数据中获取所有股票池相关的股票
 pool_set = set(pool_stocks)
+
+# 建立股票数据快速查找表（优先使用 JSON 预存分数）
+all_stocks_data = signals_data.get('stocks', [])
+stock_map = {s['symbol']: s for s in all_stocks_data if s.get('symbol')}
 
 # 1. 处理有买入信号的股票
 for sig in pool_signals:
@@ -135,28 +152,38 @@ for sig in pool_signals:
     signals_by_stock[symbol]['periods'].add(sig.get('period', 'daily'))
 
 # 2. 从 signals_data 中获取股票池内只有风险信号的股票（无买入信号）
-all_stocks_data = signals_data.get('stocks', [])
-for stock in all_stocks_data:
-    symbol = stock.get('symbol')
-    if symbol in pool_set and symbol not in signals_by_stock:
-        # 这只股票只有风险信号，没有买入信号
+for symbol in pool_set:
+    if symbol not in signals_by_stock:
+        stock = stock_map.get(symbol, {})
         signals_by_stock[symbol] = {
             'name': stock.get('name', get_stock_name(symbol)),
             'signals': [],
             'periods': set(),
             'total_score': 0,
-            'risk_score': stock.get('risk_score', 100 - stock.get('health_score', 50)),
-            'risk_explanations': stock.get('risk_warnings', stock.get('risk_explanations', [])),
+            'risk_score': stock.get('risk_score', 50),
+            'risk_explanations': stock.get('risk_explanations', stock.get('risk_warnings', [])),
             'has_buy_signal': False
         }
 
-# 计算总分和风险分（复用公共函数）
+# 3. 计算/填充分数（优先使用 JSON 预存值，与 signal_watch / stock_chart 完全一致）
 for symbol, data in signals_by_stock.items():
+    stock = stock_map.get(symbol, {})
+    signals = data['signals']
+    
     if data['has_buy_signal']:
-        signal_score, risk_score, risk_explanations = calculate_stock_metrics(data['signals'])
-        data['total_score'] = signal_score
-        data['risk_score'] = risk_score
-        data['risk_explanations'] = risk_explanations
+        # 信号分：优先用 JSON 预存，否则实时计算
+        if stock.get('signal_score') is not None:
+            data['total_score'] = stock['signal_score']
+        else:
+            change_pct = signals[0].get('change_pct', 0) if signals else 0
+            data['total_score'] = calculate_stock_score(signals, change_pct)
+        
+        # 风险分：优先用 JSON 预存，否则实时计算
+        if stock.get('risk_score') is not None:
+            data['risk_score'] = stock['risk_score']
+            data['risk_explanations'] = stock.get('risk_explanations', stock.get('risk_warnings', []))
+        else:
+            _, data['risk_score'], data['risk_explanations'] = calculate_stock_metrics(signals)
 
 # 侧边栏
 with st.sidebar:
@@ -176,13 +203,6 @@ with st.sidebar:
         label_visibility="collapsed"
     )
     
-    st.divider()
-    st.caption(f"""
-    股票池: {len(pool_stocks)} 只
-    扫描时间: {scan_time}
-    价格时间: {price_fetch_time or '历史数据'}
-    """)
-
 # ============= 页面标题 =============
 st.title("📊 股票池监控")
 st.caption(f"LongTerm 股票池信号监控 | 扫描: {scan_time} | 价格: {price_fetch_time or '历史数据'}")
@@ -265,14 +285,10 @@ for symbol, data in signals_by_stock.items():
     # 显示条件：有买入信号 或 有高风险（风险分>=60）
     risk_score = data.get('risk_score', 0)
     if has_buy_signal or risk_score >= 60:
-        if has_buy_signal:
-            # 计算该股票的指标
-            signal_score, risk_score_calc, risk_explanations = calculate_stock_metrics(signals)
-        else:
-            # 只有风险信号的股票
-            signal_score = 0
-            risk_score_calc = risk_score
-            risk_explanations = data.get('risk_explanations', [])
+        # 直接使用已计算的分数，不再重复计算
+        signal_score = data['total_score']
+        risk_score_calc = data['risk_score']
+        risk_explanations = data.get('risk_explanations', [])
         
         filtered_stocks.append({
             'symbol': symbol,
@@ -356,16 +372,10 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
             price_color = "#ff6b6b" if change_pct >= 0 else "#2ed573"
             price_display = f"¥{close_price:.2f}" if close_price else "-"
             change_display = f"{change_pct:+.2f}%" if change_pct else "-"
-            
-            # 价格时间提示
-            time_tooltip = "价格最新时间" if price_fetch_time else "历史数据日期"
-            time_str = price_fetch_time or scan_time[:10]
-            
+
             st.markdown(f'''
             <div style="text-align: right; font-size: 11px; margin-top: 8px;">
-                <span style="font-size: 14px; font-weight: bold; color: {price_color};">{price_display} {change_display}</span><br>
-                <span style="color: {price_color}; opacity: 0.8;">⏱️ {time_str}</span><br>
-                <span style="font-size: 10px; opacity: 0.6;">{time_tooltip}</span>
+                <span style="font-size: 14px; font-weight: bold; color: {price_color};">{price_display} {change_display}</span>
             </div>
             ''', unsafe_allow_html=True)
         

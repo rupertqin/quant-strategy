@@ -43,7 +43,8 @@ def load_adjust_factor(symbol: str, base_dir: Path = None) -> Optional[pd.DataFr
         DataFrame with columns: trade_date, adjust_factor
     """
     if base_dir is None:
-        base_dir = Path(__file__).parent.parent.parent / "storage"
+        from DataHub.config import get_storage_path
+        base_dir = get_storage_path()
 
     # 自动判断股票或ETF
     if is_etf(symbol):
@@ -153,7 +154,8 @@ def get_latest_price_qfq(symbol: str, base_dir: Path = None) -> Optional[float]:
         最新前复权收盘价，如果失败返回None
     """
     if base_dir is None:
-        base_dir = Path(__file__).parent.parent.parent / "storage"
+        from DataHub.config import get_storage_path
+        base_dir = get_storage_path()
 
     # 自动判断股票或ETF
     if is_etf(symbol):
@@ -197,7 +199,8 @@ def get_price_at_date_qfq(
         dict with keys: open, high, low, close, volume
     """
     if base_dir is None:
-        base_dir = Path(__file__).parent.parent.parent / "storage"
+        from DataHub.config import get_storage_path
+        base_dir = get_storage_path()
 
     # 自动判断股票或ETF
     if is_etf(symbol):

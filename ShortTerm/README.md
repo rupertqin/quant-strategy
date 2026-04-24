@@ -33,9 +33,9 @@ cache:
 
 # 输出配置
 output:
-  signals_file: "../storage/outputs/shortterm/services/daily_signals.json"
-  history_file: "../storage/outputs/shortterm/history/sector_heat_history.csv"
-  database_file: "../storage/outputs/shortterm/database/signals.db"
+  signals_file: "outputs/shortterm/services/daily_signals.json"
+  history_file: "outputs/shortterm/history/sector_heat_history.csv"
+  database_file: "outputs/shortterm/database/signals.db"
 
 # 分析参数
 analysis:
@@ -56,7 +56,7 @@ analysis:
 
 ## 输出文件
 
-输出统一保存到 `storage/outputs/shortterm/`:
+输出统一保存到量化存储目录下的 `outputs/shortterm/`:
 
 | 文件 | 路径 |
 |------|------|

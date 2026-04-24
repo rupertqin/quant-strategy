@@ -25,12 +25,12 @@ rebalance_freq: "Q"     # 再平衡频率: M/月, Q/季
 
 # 输出配置
 output:
-  weights_file: "../storage/outputs/longterm/weights/output_weights.csv"
-  reports_dir: "../storage/outputs/longterm/reports"
-  charts_dir: "../storage/outputs/longterm/reports/charts"
+  weights_file: "outputs/longterm/weights/output_weights.csv"
+  reports_dir: "outputs/longterm/reports"
+  charts_dir: "outputs/longterm/reports/charts"
 
 # 数据目录
-data_dir: "../storage/outputs/longterm/data"
+data_dir: "outputs/longterm/data"
 
 # 数据源
 data_source:

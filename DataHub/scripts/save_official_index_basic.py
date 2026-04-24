@@ -183,7 +183,8 @@ def process_and_save_indices(output_dir: Path):
 
 def main():
     """主函数"""
-    output_dir = project_root / "storage"
+    from DataHub.config import get_storage_path
+    output_dir = get_storage_path()
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("=" * 60)

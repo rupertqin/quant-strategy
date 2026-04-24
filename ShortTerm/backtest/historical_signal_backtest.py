@@ -182,7 +182,8 @@ class HistoricalSignalBacktest:
     
     def _get_all_stock_codes(self) -> List[str]:
         """获取所有股票代码列表"""
-        price_dir = project_root / "storage" / "raw" / "stocks" / "price"
+        from DataHub.config import get_storage_path
+        price_dir = get_storage_path("raw", "stocks", "price")
         codes = []
         for f in price_dir.glob("*.parquet"):
             # 从文件名提取代码 000001.SZ.parquet -> 000001.SZ
@@ -457,7 +458,8 @@ def main():
         
         # 导出交易记录
         if args.export:
-            output_dir = project_root / "storage" / "outputs" / "backtest"
+            from DataHub.config import get_storage_path
+            output_dir = get_storage_path("outputs", "backtest")
             output_dir.mkdir(parents=True, exist_ok=True)
             
             for period, data in results.items():

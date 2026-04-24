@@ -17,9 +17,7 @@ if _env_file.exists():
 # 使用方式（按优先级排序）：
 # 1. 系统环境变量: export QUANT_STORAGE_DIR=/data/quant-storage
 # 2. .env 文件: QUANT_STORAGE_DIR=/data/quant-storage
-# 3. 默认值: 项目目录下的 storage/
-DEFAULT_STORAGE_DIR = BASE_DIR / "storage"
-_storage_dir = os.environ.get("QUANT_STORAGE_DIR", DEFAULT_STORAGE_DIR)
+_storage_dir = os.environ.get("QUANT_STORAGE_DIR")
 STORAGE_DIR = Path(_storage_dir)
 
 # 如果是相对路径，转换为基于 BASE_DIR 的绝对路径
@@ -30,17 +28,17 @@ if not STORAGE_DIR.is_absolute():
 def get_storage_path(*subpaths) -> Path:
     """
     获取 storage 目录下的文件路径
-    
+
     Args:
         *subpaths: 子路径组件，如 'outputs', 'signals', 'data.json'
-    
+
     Returns:
         Path: 完整的文件路径
-    
+
     Examples:
         >>> get_storage_path('outputs', 'signals', 'data.json')
         Path('/data/quant-storage/outputs/signals/data.json')
-        
+
         >>> get_storage_path('stock_basic_info.csv')
         Path('/data/quant-storage/stock_basic_info.csv')
     """
@@ -56,6 +54,7 @@ RAW_INDEX_PRICE_DIR = RAW_INDEX_DIR / "price"
 RAW_INDEX_INTRADAY_DIR = RAW_INDEX_DIR / "intraday"  # 指数分时数据
 RAW_ZT_POOL_DIR = STORAGE_DIR / "raw" / "zt_pool"
 REALTIME_DIR = STORAGE_DIR / "raw" / "realtime"  # 实时行情数据
+INTRADAY_DIR = REALTIME_DIR  # 分钟级实时数据 parquet 目录（直接放在 realtime 下，不再嵌套 intraday）
 PROCESSED_RETURNS_DIR = STORAGE_DIR / "processed" / "returns"
 DATABASE_DIR = STORAGE_DIR / "database"
 DATABASE_PATH = DATABASE_DIR / "datahub.db"

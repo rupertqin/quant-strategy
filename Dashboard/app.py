@@ -85,10 +85,11 @@ def get_base_dir():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+from DataHub.config import get_storage_path
+
 def load_longterm_data():
     """加载长线数据 - 从 storage/outputs 读取"""
-    base = get_base_dir()
-    weights_file = os.path.join(base, "storage", "outputs", "longterm", "weights", "output_weights.csv")
+    weights_file = get_storage_path("outputs", "longterm", "weights", "output_weights.csv")
 
     if os.path.exists(weights_file):
         return pd.read_csv(weights_file)
@@ -97,8 +98,7 @@ def load_longterm_data():
 
 def load_daily_signals():
     """加载今日技术面信号"""
-    base = get_base_dir()
-    signals_file = os.path.join(base, "storage", "outputs", "shortterm", "services", "signals", "daily_signals.json")
+    signals_file = get_storage_path("outputs", "shortterm", "technical_overview", "latest.json")
 
     if os.path.exists(signals_file):
         with open(signals_file, 'r', encoding='utf-8') as f:
@@ -108,9 +108,8 @@ def load_daily_signals():
 
 def load_pool_watch_summary():
     """加载股票池监控摘要"""
-    base = get_base_dir()
-    report_dir = os.path.join(base, "storage", "outputs", "shortterm", "pool_watch")
-    
+    report_dir = get_storage_path("outputs", "shortterm", "pool_watch")
+
     if os.path.exists(report_dir):
         files = [f for f in os.listdir(report_dir) if f.startswith("pool_watch_") and f.endswith(".json")]
         if files:
@@ -125,8 +124,7 @@ def load_pool_watch_summary():
 def get_market_regime():
     """获取市场状态 - 从JSON文件读取"""
     try:
-        base = get_base_dir()
-        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "services", "daily_signals.json")
+        signals_file = get_storage_path("outputs", "shortterm", "technical_overview", "latest.json")
         if os.path.exists(signals_file):
             with open(signals_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -420,8 +418,7 @@ with col1:
     # 从JSON读取仓位建议
     multiplier = 0.7  # 默认
     try:
-        base = get_base_dir()
-        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "services", "daily_signals.json")
+        signals_file = get_storage_path("outputs", "shortterm", "technical_overview", "latest.json")
         if os.path.exists(signals_file):
             with open(signals_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -450,8 +447,7 @@ with col2:
 
     # 从JSON读取热点板块
     try:
-        base = get_base_dir()
-        signals_file = os.path.join(base, "storage", "outputs", "shortterm", "services", "daily_signals.json")
+        signals_file = get_storage_path("outputs", "shortterm", "technical_overview", "latest.json")
         if os.path.exists(signals_file):
             with open(signals_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)

@@ -36,7 +36,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.formatters import render_signal_card
 from utils.scoring import calculate_stock_score, get_score_label
 from utils.signal_components import (
-    calculate_risk_score, render_signal_list, render_risk_assessment,
+    calculate_risk_score, calculate_stock_metrics,
+    render_signal_list, render_risk_assessment,
     render_expander_header, get_risk_color_emoji
 )
 
@@ -197,12 +198,12 @@ def calculate_kdj(df: pd.DataFrame, n=9, m1=3, m2=3):
 
 @st.cache_data(ttl=300)
 def load_stock_signals(symbol: str) -> list:
-    """加载指定股票的信号数据"""
+    """加载指定股票的信号数据（兼容两种JSON格式）"""
     import json
     from pathlib import Path
 
-    BASE_DIR = Path(__file__).parent.parent.parent
-    signals_file = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
+    from DataHub.config import SHORTTERM_SIGNALS_DIR
+    signals_file = SHORTTERM_SIGNALS_DIR / 'signal_latest.json'
 
     if not signals_file.exists():
         return []
@@ -211,12 +212,17 @@ def load_stock_signals(symbol: str) -> list:
         with open(signals_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
-        if data.get("status") != "success":
-            return []
+        stock_signals = []
 
-        # 筛选当前股票的信号
-        all_signals = data.get("signals", [])
-        stock_signals = [s for s in all_signals if s.get('symbol') == symbol]
+        # 格式A: run_signal_scan.py 生成（status + 顶层 signals 数组）
+        if data.get("status") == "success" and "signals" in data:
+            stock_signals = [s for s in data["signals"] if s.get('symbol') == symbol]
+        # 格式B: stock_signal_scanner.py 生成（stocks 数组嵌套 signals）
+        elif "stocks" in data:
+            for stock in data["stocks"]:
+                if stock.get('symbol') == symbol:
+                    stock_signals = stock.get('signals', [])
+                    break
 
         # 按日期和评分排序
         stock_signals.sort(key=lambda x: (x.get('trigger_date', ''), x.get('score', 0)), reverse=True)
@@ -228,12 +234,12 @@ def load_stock_signals(symbol: str) -> list:
 
 @st.cache_data(ttl=300)
 def load_stock_risk_info(symbol: str) -> dict:
-    """加载指定股票的风险信息（用于只有风险信号的股票）"""
+    """加载指定股票的风险信息（兼容两种JSON格式）"""
     import json
     from pathlib import Path
 
-    BASE_DIR = Path(__file__).parent.parent.parent
-    signals_file = BASE_DIR / "storage" / "outputs" / "signals" / "stock_signals_latest.json"
+    from DataHub.config import SHORTTERM_SIGNALS_DIR
+    signals_file = SHORTTERM_SIGNALS_DIR / 'signal_latest.json'
 
     if not signals_file.exists():
         return {}
@@ -242,21 +248,30 @@ def load_stock_risk_info(symbol: str) -> dict:
         with open(signals_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
-        if data.get("status") != "success":
-            return {}
-
-        # 从 stocks 字段中查找股票信息
-        stocks = data.get("stocks", [])
-        for stock in stocks:
-            if stock.get('symbol') == symbol:
-                return {
-                    'has_buy_signal': stock.get('has_buy_signal', False),
-                    'risk_score': stock.get('risk_score', 50),
-                    'risk_warnings': stock.get('risk_warnings', []),
-                    'risk_explanations': stock.get('risk_explanations', []),
-                    'health_score': stock.get('health_score', 50),
-                    'risk_level': stock.get('risk_level', 'medium')
-                }
+        # 格式A: run_signal_scan.py 生成（status + stocks 数组）
+        if data.get("status") == "success" and "stocks" in data:
+            for stock in data["stocks"]:
+                if stock.get('symbol') == symbol:
+                    return {
+                        'has_buy_signal': stock.get('has_buy_signal', False),
+                        'risk_score': stock.get('risk_score', 50),
+                        'risk_warnings': stock.get('risk_warnings', []),
+                        'risk_explanations': stock.get('risk_explanations', []),
+                        'health_score': stock.get('health_score', 50),
+                        'risk_level': stock.get('risk_level', 'medium')
+                    }
+        # 格式B: stock_signal_scanner.py 生成（stocks 数组嵌套）
+        elif "stocks" in data:
+            for stock in data["stocks"]:
+                if stock.get('symbol') == symbol:
+                    return {
+                        'has_buy_signal': stock.get('has_buy_signal', False),
+                        'risk_score': stock.get('risk_score', 50),
+                        'risk_warnings': stock.get('risk_warnings', []),
+                        'risk_explanations': stock.get('risk_explanations', []),
+                        'health_score': stock.get('health_score', 50),
+                        'risk_level': stock.get('risk_level', 'medium')
+                    }
         return {}
     except Exception:
         return {}
@@ -411,18 +426,27 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
         logger.info("盘后且历史数据已有今天数据，优先使用历史数据，跳过实时数据合并")
         return df
 
+    def _rt_val(key: str, default=0.0):
+        v = realtime_data.get(key)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return default
+        return float(v)
+
     # 提取实时数据值
-    close = float(realtime_data.get('close', 0))
+    close = _rt_val('close', 0)
     if close == 0:
         logger.warning("实时数据 close 为 0，跳过合并")
         return df
 
-    open_price = float(realtime_data.get('open', close))
-    high = float(realtime_data.get('high', close))
-    low = float(realtime_data.get('low', close))
-    volume = float(realtime_data.get('volume', 0))
-    amount = float(realtime_data.get('amount', 0))
-    change_pct = float(realtime_data.get('change_pct', 0))
+    open_price = _rt_val('open', close)
+    high = _rt_val('high', close)
+    low = _rt_val('low', close)
+    volume = _rt_val('volume', 0)
+    amount = _rt_val('amount', 0)
+    change_pct = _rt_val('change_pct', 0)
+
+    # 实时时间只保留 HH:MM，去掉可能包含的日期前缀
+    time_str = fetch_time_str.split()[-1] if fetch_time_str else None
 
     if has_today_data:
         # 更新今天的数据（盘中用实时数据覆盖）
@@ -437,8 +461,8 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
         if 'change_pct' in df.columns:
             df.loc[idx, 'change_pct'] = change_pct
         # 记录实时数据时间
-        if fetch_time_str:
-            df.loc[idx, 'realtime_time'] = fetch_time_str
+        if time_str:
+            df.loc[idx, 'realtime_time'] = time_str
         logger.info(f"更新今天数据: close={close}, volume={volume}")
     else:
         # 添加新行（今天数据缺失，用实时数据补充）
@@ -451,7 +475,7 @@ def merge_realtime_to_df(df: pd.DataFrame, realtime_data: dict, fetch_time_str: 
             'volume': volume,
             'amount': amount,
             'change_pct': change_pct,
-            'realtime_time': fetch_time_str if fetch_time_str else None
+            'realtime_time': time_str
         }])
         df = pd.concat([df, new_row], ignore_index=True)
         logger.info(f"添加今天数据: close={close}, volume={volume}")
@@ -720,7 +744,7 @@ def create_tradingview_chart(df: pd.DataFrame, symbol: str, name: str, show_macd
     <head>
         <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
         <style>
-            body {{ margin: 0; padding: 0; background: #ffffff; width: 100%; height: {total_height}px; }}
+            body {{ margin: 0; padding: 0; background: #ffffff; width: 100%; height: {total_height}px; border-radius: 12px; overflow: hidden; }}
             #chart-container {{ width: 100%; height: 100%; position: relative; }}
             #hover-tooltip {{
                 position: absolute;
@@ -1309,15 +1333,16 @@ def main():
     if stock_signals:
         portfolio_score = calculate_stock_score(stock_signals, change_pct)
         score_label = get_score_label(portfolio_score)
-
-        # 计算风险分
-        best_signal = max(stock_signals, key=lambda x: x.get("score", 0))
-        tech = best_signal.get("technicals", {})
-        risk_score, risk_explanations = calculate_risk_score(tech, stock_signals)
+        # 优先使用 JSON 预存的风险分，确保与 signal_watch 完全一致
+        if risk_info and risk_info.get('risk_score') is not None:
+            risk_score = risk_info['risk_score']
+            risk_explanations = risk_info.get('risk_explanations', risk_info.get('risk_warnings', []))
+        else:
+            _, risk_score, risk_explanations = calculate_stock_metrics(stock_signals, change_pct)
     elif risk_info:
         # 只有风险信号的股票
         risk_score = risk_info.get('risk_score', 50)
-        risk_explanations = risk_info.get('risk_warnings', risk_info.get('risk_explanations', []))
+        risk_explanations = risk_info.get('risk_explanations', risk_info.get('risk_warnings', []))
         score_label = "风险预警"
 
     # ============= 头部信息区 =============
@@ -1461,13 +1486,8 @@ def main():
         return
 
     # ============= 图表区域 =============
-    st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-
-    # 生成并显示图表（移除内部tooltip）
     chart_html = create_tradingview_chart(df_display, symbol, name)
     st.components.v1.html(chart_html, height=700, scrolling=False)
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
     # ============= 数据摘要 =============
     with st.expander("📊 数据详情"):

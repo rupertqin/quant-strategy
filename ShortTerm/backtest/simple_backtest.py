@@ -16,13 +16,15 @@ from typing import List, Dict, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
+from DataHub.config import get_storage_path
+
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 def load_price_data(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     """加载单只股票的历史价格"""
-    file_path = PROJECT_ROOT / "storage" / "raw" / "stocks" / "price" / f"{symbol}.parquet"
+    file_path = get_storage_path("raw", "stocks", "price") / f"{symbol}.parquet"
     if not file_path.exists():
         return pd.DataFrame()
     
@@ -92,7 +94,7 @@ def calculate_signals(df: pd.DataFrame) -> Dict:
 
 def get_all_stocks() -> List[str]:
     """获取所有股票代码"""
-    price_dir = PROJECT_ROOT / "storage" / "raw" / "stocks" / "price"
+    price_dir = get_storage_path("raw", "stocks", "price")
     stocks = [f.stem for f in price_dir.glob("*.parquet")]
     return sorted(stocks)
 
@@ -115,7 +117,7 @@ def run_backtest(start_date: str, end_date: str, top_n: int,
     print(f"日期范围: {start_date} ~ {end_date}")
     
     # 获取交易日期列表
-    sample_file = PROJECT_ROOT / "storage" / "raw" / "stocks" / "price" / "000001.SZ.parquet"
+    sample_file = get_storage_path("raw", "stocks", "price") / "000001.SZ.parquet"
     if not sample_file.exists():
         print("错误: 找不到价格数据")
         return {}
@@ -300,7 +302,7 @@ def main():
     
     # 导出
     if args.export and all_results:
-        output_dir = PROJECT_ROOT / "storage" / "outputs" / "backtest"
+        output_dir = get_storage_path("outputs", "backtest")
         output_dir.mkdir(parents=True, exist_ok=True)
         
         for r in all_results:

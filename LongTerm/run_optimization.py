@@ -25,7 +25,7 @@ def main():
     report.run(metrics)
 
     print("\n下一步操作:")
-    print("1. 手动检查 storage/outputs/longterm/weights/output_weights.csv")
+    print("1. 手动检查 outputs/longterm/weights/output_weights.csv")
     print("2. 根据推荐调整持仓")
     print("3. 运行 Dashboard 看板查看结果")
 

@@ -174,8 +174,14 @@ class SyncManager:
                 failed += 1
         
         logger.info(f"价格数据同步完成: 更新 {updated}, 失败 {failed}")
-        
-        # 4. 同步复权因子（可选，默认不同步）
+
+        # 4. 归档实时数据（删除当天 realtime parquet）
+        from DataHub.services.realtime_service import RealtimeDataService
+        rt_service = RealtimeDataService()
+        rt_service.archive_realtime_data(date_str=today_str)
+        logger.info(f"已归档(删除)实时数据: {today_str}")
+
+        # 5. 同步复权因子（可选，默认不同步）
         factor_result = {'updated': 0, 'skipped': 0, 'failed': 0}
         if sync_factors:
             logger.info("同步复权因子...")
@@ -185,7 +191,7 @@ class SyncManager:
                 result = self.factor_sync.sync(stock_symbols)
                 factor_result['updated'] = result.get('success', 0)
                 factor_result['failed'] = result.get('failed', 0)
-        
+
         return {
             'status': 'success',
             'trade_date': today_str,

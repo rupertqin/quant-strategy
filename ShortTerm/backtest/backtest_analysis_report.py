@@ -29,10 +29,11 @@ def analyze_backtest_results():
     print("- 回测期间: 2026-04-13 至 2026-04-22 (6个交易日)")
     print("- 选股策略: 每日信号分最高的前10只股票")
     print("- 持仓方式: 等权重买入，次日开盘买入，持有期满后卖出")
-    print("- 数据来源: storage/outputs/signals/stock_signals_YYYYMMDD.json")
+    print("- 数据来源: 预生成的每日信号 JSON 文件")
     
+    from DataHub.config import get_storage_path
     for period in [1, 3, 5]:
-        df = pd.read_csv(project_root / f"storage/outputs/backtest/top10_hold{period}d_trades.csv")
+        df = pd.read_csv(get_storage_path("outputs", "backtest") / f"top10_hold{period}d_trades.csv")
         
         print(f"\n{'='*80}")
         print(f"策略: 持有 {period} 天")
@@ -300,7 +301,8 @@ def create_charts(results):
         ax4.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        output_path = project_root / "storage/outputs/backtest/backtest_analysis.png"
+        from DataHub.config import get_storage_path
+        output_path = get_storage_path("outputs", "backtest") / "backtest_analysis.png"
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"\n图表已保存: {output_path}")
         

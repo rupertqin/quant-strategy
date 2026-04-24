@@ -39,8 +39,8 @@ rebalance_freq: "Q"          # 再平衡频率: M/月, Q/季
 
 # 输出配置
 output:
-  weights_file: "../storage/outputs/longterm/weights/output_weights.csv"
-  reports_dir: "../storage/outputs/longterm/reports"
+  weights_file: "outputs/longterm/weights/output_weights.csv"
+  reports_dir: "outputs/longterm/reports"
 
 # 数据源
 data_source:
@@ -63,7 +63,7 @@ data_source:
 
 ## 输出文件
 
-输出统一保存到 `storage/outputs/longterm/` 目录:
+输出统一保存到量化存储目录下的 `outputs/longterm/` 目录:
 
 | 子目录 | 文件 | 说明 |
 |--------|------|------|

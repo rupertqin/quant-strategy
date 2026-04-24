@@ -6,8 +6,20 @@ DataHub Repositories - 数据仓库层
 
 from .base_repository import BaseRepository
 from .stock_repository import StockRepository
+from .parquet_repository import (
+    ParquetDataManager,
+    StockParquetStore,
+    EtfParquetStore,
+    IndexParquetStore,
+    IntradayStore,
+)
 
 __all__ = [
     'BaseRepository',
     'StockRepository',
+    'ParquetDataManager',
+    'StockParquetStore',
+    'EtfParquetStore',
+    'IndexParquetStore',
+    'IntradayStore',
 ]

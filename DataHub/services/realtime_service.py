@@ -14,12 +14,15 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import pandas as pd
-import json
 
 logger = logging.getLogger(__name__)
 
+from DataHub.config import get_storage_path
+
 # 实时数据默认保存目录 (原始数据放入 storage/raw)
-REALTIME_OUTPUT_DIR = Path(project_root) / "storage" / "raw" / "realtime"
+REALTIME_OUTPUT_DIR = get_storage_path("raw", "realtime")
+# 分钟级实时数据 parquet 目录（直接放在 realtime 下，按 asset_type 分子目录）
+INTRADAY_DIR = get_storage_path("raw", "realtime")
 
 
 class RealtimeDataService:
@@ -288,220 +291,117 @@ class RealtimeDataService:
         self.logger.info(f"获取到 {len(df)} 只股票实时数据")
         return df
 
-    def save_realtime_data(self, df: pd.DataFrame) -> str:
+    def save_intraday_parquet(self, df: pd.DataFrame, asset_type: str = 'stock') -> str:
         """
-        保存实时数据到JSON文件
+        保存实时数据到 parquet（增量写入，自动去重）
+
+        文件路径即含日期，列中只保留一个 timestamp 字段，不存 is_realtime。
 
         Args:
-            df: 实时数据DataFrame
+            df: 实时数据 DataFrame
+            asset_type: 资产类型 stock/etf/index
 
         Returns:
             保存的文件路径
         """
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # 生成文件名: realtime_YYYYMMDD_HHMMSS.json
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filepath = self.output_dir / f"realtime_{timestamp}.json"
-
-        # 转换为字典列表
-        records = df.to_dict('records')
-
-        # 处理日期类型
-        for record in records:
-            if 'trade_date' in record and hasattr(record['trade_date'], 'isoformat'):
-                record['trade_date'] = record['trade_date'].isoformat()
-
-        data = {
-            'fetch_time': timestamp,
-            'record_count': len(records),
-            'data': records
-        }
-
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-        self.logger.info(f"实时数据已保存: {filepath}")
-        return str(filepath)
-
-    def fetch_and_save(self, symbols: List[str] = None) -> str:
-        """
-        获取并保存实时数据（一键操作）
-
-        Args:
-            symbols: 指定股票列表，None表示全市场
-
-        Returns:
-            保存的文件路径
-        """
-        df = self.fetch_realtime_data(symbols)
-        return self.save_realtime_data(df)
-
-    def load_realtime_data(self, filepath: str = None) -> pd.DataFrame:
-        """
-        从JSON文件加载实时数据
-
-        Args:
-            filepath: 文件路径，None则自动查找最新的实时数据文件
-
-        Returns:
-            DataFrame with real-time data
-        """
-        if filepath is None:
-            filepath = self.find_latest_file()
-            if filepath is None:
-                raise FileNotFoundError("未找到实时数据文件")
-
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        df = pd.DataFrame(data['data'])
-
-        # 转换日期字符串回date对象
-        if 'trade_date' in df.columns:
-            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
-
-        return df
-
-    def find_latest_file(self) -> Optional[str]:
-        """
-        查找最新的实时数据文件
-
-        Returns:
-            最新文件路径，如果没有则返回None
-        """
-        if not self.output_dir.exists():
-            return None
-
-        files = list(self.output_dir.glob("realtime_*.json"))
-        if not files:
-            return None
-
-        latest = max(files, key=lambda p: p.stat().st_mtime)
-        return str(latest)
-
-    def find_todays_latest_file(self) -> Optional[str]:
-        """
-        查找当天最新的实时数据文件
-
-        优先级：盘后数据(15:00后) > 盘中数据
-        判断依据：文件内容中的 fetch_time
-
-        Returns:
-            当天最新文件路径，如果没有则返回None
-        """
-        if not self.output_dir.exists():
-            return None
+        intraday_dir = INTRADAY_DIR / asset_type
+        intraday_dir.mkdir(parents=True, exist_ok=True)
 
         today_str = datetime.now().strftime('%Y%m%d')
-        files = list(self.output_dir.glob(f"realtime_{today_str}_*.json"))
+        filepath = intraday_dir / f"{today_str}.parquet"
 
-        if not files:
-            return None
+        df_out = df.copy()
 
-        # 从文件内容读取 fetch_time，分离盘后和盘中数据
-        post_market_files = []
-        intraday_files = []
+        # 统一用 timestamp 列（日期+时间），文件名已含日期，列里保留完整时间戳
+        df_out['timestamp'] = pd.Timestamp.now()
 
-        for f in files:
-            try:
-                with open(f, 'r', encoding='utf-8') as file:
-                    data = json.load(file)
-                    fetch_time = data.get('fetch_time', '')
-                    if fetch_time and len(fetch_time) >= 15:
-                        # fetch_time 格式: YYYYMMDD_HHMMSS
-                        hour = int(fetch_time[9:11])
-                        if hour >= 15:
-                            post_market_files.append((f, fetch_time))
-                        else:
-                            intraday_files.append((f, fetch_time))
-                    else:
-                        intraday_files.append((f, fetch_time))
-            except Exception:
-                # 读取失败视为盘中数据
-                intraday_files.append((f, ''))
+        # 删除可能混入的旧列
+        for col in ('is_realtime', 'trade_time', 'trade_date'):
+            if col in df_out.columns:
+                df_out.drop(columns=[col], inplace=True)
 
-        # 优先级：盘后 > 盘中，各自取 fetch_time 最新的
-        if post_market_files:
-            # 盘后数据取 fetch_time 最新的（过滤掉空的）
-            valid_files = [(f, t) for f, t in post_market_files if t]
-            if valid_files:
-                latest = max(valid_files, key=lambda x: x[1])
-                return str(latest[0])
-            else:
-                # 如果没有有效的 fetch_time，返回第一个
-                return str(post_market_files[0][0])
-        elif intraday_files:
-            # 盘中数据取 fetch_time 最新的（过滤掉空的）
-            valid_files = [(f, t) for f, t in intraday_files if t]
-            if valid_files:
-                latest = max(valid_files, key=lambda x: x[1])
-                return str(latest[0])
-            else:
-                # 如果没有有效的 fetch_time，返回第一个
-                return str(intraday_files[0][0])
+        # 确保必要列存在
+        for col in ('open', 'high', 'low', 'volume', 'amount'):
+            if col not in df_out.columns:
+                df_out[col] = None
 
-        return None
+        # 选择标准列
+        keep_cols = [
+            'symbol', 'name', 'timestamp',
+            'open', 'high', 'low', 'close', 'change_pct',
+            'volume', 'amount',
+        ]
+        df_out = df_out[[c for c in keep_cols if c in df_out.columns]]
 
-    def get_todays_realtime_data(self, auto_fetch: bool = True) -> Optional[pd.DataFrame]:
+        # 按日期直接覆盖写入（不读取旧文件，避免旧格式列残留）
+        df_out.to_parquet(filepath, index=False)
+        self.logger.info(
+            f"实时数据已保存: {filepath} ({len(df_out)} 条记录)"
+        )
+        return str(filepath)
+
+    def load_intraday_parquet(
+        self,
+        date_str: str = None,
+        asset_type: str = 'stock',
+        latest_snapshot: bool = True,
+    ) -> Optional[pd.DataFrame]:
         """
-        获取当天的实时数据
-
-        如果当天已有数据，直接返回；如果没有且auto_fetch=True，则自动获取
+        加载实时数据 parquet
 
         Args:
-            auto_fetch: 如果没有当天数据，是否自动获取
+            date_str: 日期 YYYYMMDD，默认今天
+            asset_type: 资产类型 stock/etf/index
+            latest_snapshot: 是否只返回每个 symbol 的最新快照
 
         Returns:
-            实时数据DataFrame，如果没有则返回None
+            DataFrame 或 None
         """
-        # 先尝试加载当天已有数据
-        todays_file = self.find_todays_latest_file()
+        if date_str is None:
+            date_str = datetime.now().strftime('%Y%m%d')
 
-        if todays_file:
-            self.logger.info(f"使用当天已有数据: {Path(todays_file).name}")
-            return self.load_realtime_data(todays_file)
+        filepath = INTRADAY_DIR / asset_type / f"{date_str}.parquet"
+        if not filepath.exists():
+            return None
 
-        # 没有当天数据，自动获取
-        if auto_fetch:
-            self.logger.info("当天无数据，自动获取实时行情...")
-            try:
-                filepath = self.fetch_and_save()
-                return self.load_realtime_data(filepath)
-            except Exception as e:
-                self.logger.error(f"自动获取实时数据失败: {e}")
-                return None
+        df = pd.read_parquet(filepath)
+        if df.empty:
+            return None
 
-        return None
+        if latest_snapshot and 'timestamp' in df.columns:
+            df = df.sort_values('timestamp').groupby('symbol').tail(1)
 
-    def has_post_market_data(self) -> bool:
+        return df.reset_index(drop=True)
+
+    def archive_realtime_data(self, date_str: str = None) -> None:
         """
-        检查是否已有盘后数据（收盘数据）
+        归档实时数据：日终日线同步完成后，删除当天 realtime 文件。
 
-        判断逻辑：检查实时数据文件是否在15:00之后获取
+        因为 realtime 与日线分目录存储，且已不含 is_realtime 标记，
+        归档动作直接删除文件即可。
 
-        Returns:
-            True表示有盘后数据，False表示只有盘中数据
+        Args:
+            date_str: 日期 YYYYMMDD，默认今天
         """
-        filepath = self.find_todays_latest_file()
-        if not filepath:
-            return False
+        if date_str is None:
+            date_str = datetime.now().strftime('%Y%m%d')
 
-        fname = Path(filepath).name
-        try:
-            time_part = fname.replace('realtime_', '').replace('.json', '')
-            if '_' in time_part:
-                _, hhmmss = time_part.split('_')
-                hour = int(hhmmss[:2])
-                return hour >= 15
-        except Exception:
-            pass
-
-        return False
+        for asset_type in ('stock', 'etf', 'index'):
+            filepath = INTRADAY_DIR / asset_type / f"{date_str}.parquet"
+            if filepath.exists():
+                try:
+                    filepath.unlink()
+                    self.logger.info(f"已归档(删除)实时数据: {asset_type}/{date_str}.parquet")
+                except Exception as e:
+                    self.logger.warning(f"归档删除失败 {asset_type}/{date_str}: {e}")
 
     def merge_realtime_to_history(self, hist_df: pd.DataFrame, realtime: pd.Series) -> pd.DataFrame:
         """
         将实时数据合并到历史K线（内存中）
+
+        冷热数据时间线规则：
+        - 热数据日期 <= 冷数据最后日期：丢弃热数据
+        - 热数据日期 > 冷数据最后日期：追加新行
 
         Args:
             hist_df: 历史日线数据
@@ -510,39 +410,48 @@ class RealtimeDataService:
         Returns:
             合并后的DataFrame
         """
+        if hist_df.empty:
+            return hist_df
+
         # 确保 trade_date 列是 datetime 类型
         hist_df['trade_date'] = pd.to_datetime(hist_df['trade_date'])
 
-        today = datetime.now()
-        today_date = today.date()
+        # 从实时数据提取实际日期（优先 timestamp，其次 trade_date/date）
+        rt_date = None
+        ts = realtime.get('timestamp')
+        if ts is not None and not pd.isna(ts):
+            rt_date = pd.to_datetime(ts).date()
+        else:
+            for key in ('trade_date', 'date'):
+                val = realtime.get(key)
+                if val is not None and not pd.isna(val):
+                    rt_date = pd.to_datetime(val).date()
+                    break
+        if rt_date is None:
+            rt_date = datetime.now().date()
 
-        # 获取最后一天日期
+        # 冷数据最后一天日期
         last_date = hist_df['trade_date'].iloc[-1]
         if isinstance(last_date, pd.Timestamp):
             last_date = last_date.date()
 
-        # 如果历史数据已有今天数据，更新它；否则追加新行
-        if not hist_df.empty and last_date == today_date:
-            idx = hist_df.index[-1]
-            hist_df.loc[idx, 'close'] = float(realtime['close'])
-            hist_df.loc[idx, 'high'] = max(float(hist_df.loc[idx, 'high']), float(realtime.get('high', realtime['close'])))
-            hist_df.loc[idx, 'low'] = min(float(hist_df.loc[idx, 'low']), float(realtime.get('low', realtime['close'])))
-            hist_df.loc[idx, 'volume'] = float(realtime['volume'])
-            hist_df.loc[idx, 'amount'] = float(realtime.get('amount', 0))
-            hist_df.loc[idx, 'change_pct'] = float(realtime['change_pct'])
-        else:
-            new_row = pd.DataFrame([{
-                'trade_date': today,
-                'open': float(realtime.get('open', realtime['close'])),
-                'high': float(realtime.get('high', realtime['close'])),
-                'low': float(realtime.get('low', realtime['close'])),
-                'close': float(realtime['close']),
-                'volume': float(realtime['volume']),
-                'amount': float(realtime.get('amount', 0)),
-                'change_pct': float(realtime['change_pct']),
-                'symbol': realtime.get('symbol', '')
-            }])
-            hist_df = pd.concat([hist_df, new_row], ignore_index=True)
+        # 热数据不比冷数据新，不合并
+        if rt_date <= last_date:
+            return hist_df
+
+        # 追加新行
+        new_row = pd.DataFrame([{
+            'trade_date': pd.Timestamp(rt_date),
+            'open': float(realtime.get('open', realtime['close'])),
+            'high': float(realtime.get('high', realtime['close'])),
+            'low': float(realtime.get('low', realtime['close'])),
+            'close': float(realtime['close']),
+            'volume': float(realtime['volume']),
+            'amount': float(realtime.get('amount', 0)),
+            'change_pct': float(realtime['change_pct']),
+            'symbol': realtime.get('symbol', '')
+        }])
+        hist_df = pd.concat([hist_df, new_row], ignore_index=True)
 
         return hist_df
 
@@ -551,20 +460,6 @@ class RealtimeDataService:
 def get_realtime_service() -> RealtimeDataService:
     """获取实时数据服务实例"""
     return RealtimeDataService()
-
-
-def get_todays_realtime_data(auto_fetch: bool = True) -> Optional[pd.DataFrame]:
-    """
-    便捷函数：获取当天实时数据
-
-    Args:
-        auto_fetch: 如果没有当天数据，是否自动获取
-
-    Returns:
-        实时数据DataFrame，如果没有则返回None
-    """
-    service = RealtimeDataService()
-    return service.get_todays_realtime_data(auto_fetch)
 
 
 if __name__ == "__main__":
@@ -593,9 +488,9 @@ if __name__ == "__main__":
         print("=" * 60)
 
         try:
-            # 获取并保存股票实时数据
+            # 获取并保存股票实时数据（分钟级 parquet）
             df = service.fetch_realtime_data()
-            filepath = service.save_realtime_data(df)
+            filepath = service.save_intraday_parquet(df, asset_type='stock')
             print(f"\n✅ 股票实时数据已保存: {filepath}")
 
             # 显示数据统计
@@ -622,28 +517,10 @@ if __name__ == "__main__":
         print("=" * 60)
 
         try:
-            # 获取并保存ETF实时数据
+            # 获取并保存ETF实时数据（分钟级 parquet）
             df = service.fetch_etf_realtime_data()
-            # 修改文件名以区分ETF
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            etf_filepath = service.output_dir / f"etf_realtime_{timestamp}.json"
-
-            # 转换为字典列表
-            records = df.to_dict('records')
-            for record in records:
-                if 'trade_date' in record and hasattr(record['trade_date'], 'isoformat'):
-                    record['trade_date'] = record['trade_date'].isoformat()
-
-            data = {
-                'fetch_time': timestamp,
-                'record_count': len(records),
-                'data': records
-            }
-
-            with open(etf_filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            print(f"\n✅ ETF实时数据已保存: {etf_filepath}")
+            filepath = service.save_intraday_parquet(df, asset_type='etf')
+            print(f"\n✅ ETF实时数据已保存: {filepath}")
 
             # 显示数据统计
             print(f"\n📊 数据统计:")
@@ -669,28 +546,10 @@ if __name__ == "__main__":
         print("=" * 60)
 
         try:
-            # 获取并保存指数实时数据
+            # 获取并保存指数实时数据（分钟级 parquet）
             df = service.fetch_index_realtime_data()
-            # 修改文件名以区分指数
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            index_filepath = service.output_dir / f"index_realtime_{timestamp}.json"
-
-            # 转换为字典列表
-            records = df.to_dict('records')
-            for record in records:
-                if 'trade_date' in record and hasattr(record['trade_date'], 'isoformat'):
-                    record['trade_date'] = record['trade_date'].isoformat()
-
-            data = {
-                'fetch_time': timestamp,
-                'record_count': len(records),
-                'data': records
-            }
-
-            with open(index_filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            print(f"\n✅ 指数实时数据已保存: {index_filepath}")
+            filepath = service.save_intraday_parquet(df, asset_type='index')
+            print(f"\n✅ 指数实时数据已保存: {filepath}")
 
             # 显示数据统计
             print(f"\n📊 数据统计:")

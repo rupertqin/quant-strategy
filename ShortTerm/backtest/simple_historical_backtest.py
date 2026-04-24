@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 def load_price_data(symbol: str) -> pd.DataFrame:
     """直接从Parquet加载价格数据"""
-    filepath = project_root / "storage" / "raw" / "stocks" / "price" / f"{symbol}.parquet"
+    from DataHub.config import get_storage_path
+    filepath = get_storage_path("raw", "stocks", "price") / f"{symbol}.parquet"
     if not filepath.exists():
         return None
     
@@ -100,7 +101,8 @@ def backtest_period(start_date: str, end_date: str, top_n: int = 100,
     """回测指定持有期"""
     
     # 获取所有股票代码
-    price_dir = project_root / "storage" / "raw" / "stocks" / "price"
+    from DataHub.config import get_storage_path
+    price_dir = get_storage_path("raw", "stocks", "price")
     all_stocks = [f.stem for f in price_dir.glob("*.parquet")]
     
     if max_stocks:
@@ -247,7 +249,8 @@ def main():
     print(f"累计收益: {(np.prod(1 + daily/100) - 1)*100:.2f}%")
     
     # 保存结果
-    output_dir = project_root / "storage" / "outputs" / "backtest"
+    from DataHub.config import get_storage_path
+    output_dir = get_storage_path("outputs", "backtest")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / f"simple_top{args.top_n}_hold{args.holding}d.csv"
     df.to_csv(output_file, index=False, encoding='utf-8-sig')

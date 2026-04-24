@@ -19,16 +19,17 @@ class PortfolioOptimizer:
     """组合优化器"""
 
     def __init__(self, config_path: str = "config.yaml"):
+        from DataHub.config import get_storage_path
         self.config_path = config_path
         self.config = self._load_config(config_path)
         self.base_dir = os.path.dirname(config_path)
 
-        # 数据目录: 从配置读取，默认到 storage/processed
-        data_config = self.config.get('data_dir', '../storage/processed')
+        # 数据目录: 从配置读取，默认到 processed
+        data_config = self.config.get('data_dir', 'processed')
         if os.path.isabs(data_config):
             self.data_dir = data_config
         else:
-            self.data_dir = os.path.join(self.base_dir, data_config)
+            self.data_dir = str(get_storage_path(data_config))
 
         self.updater = DataUpdater(config_path)
 
@@ -199,11 +200,12 @@ class PortfolioOptimizer:
         returns_filtered = returns[filtered_symbols]
         weights = self.optimize_portfolio(returns_filtered)
 
-        # 保存结果到 storage/outputs
+        # 保存结果到 outputs/longterm
+        from DataHub.config import get_storage_path
         output_config = self.config.get('output', {})
-        output_path = output_config.get('weights_file', '../storage/outputs/longterm/weights/output_weights.csv')
+        output_path = output_config.get('weights_file', 'outputs/longterm/weights/output_weights.csv')
         if not os.path.isabs(output_path):
-            output_path = os.path.join(os.path.dirname(self.config_path), output_path)
+            output_path = str(get_storage_path(output_path))
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         weights.to_csv(output_path, index=False)
         print(f"    权重已保存至 {output_path}")

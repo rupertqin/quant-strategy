@@ -174,25 +174,25 @@ def get_score_class(score: int) -> str:
     """根据评分获取样式类名（5档分离）"""
     if score >= 95:
         return "score-exceptional"  # 极品（95-100）
-    elif score >= 85:
-        return "score-high"          # 优秀（85-94）
-    elif score >= 75:
-        return "score-good"          # 良好（75-84）
-    elif score >= 60:
-        return "score-medium"        # 一般（60-74）
+    elif score >= 90:
+        return "score-high"          # 优秀（90-94）
+    elif score >= 80:
+        return "score-good"          # 良好（80-89）
+    elif score >= 65:
+        return "score-medium"        # 一般（65-79）
     else:
-        return "score-low"           # 弱（<60）
+        return "score-low"           # 弱（<65）
 
 
 def get_score_color(score: int) -> str:
     """根据评分获取颜色（5档分离）"""
     if score >= 95:
         return "#9b59b6"   # 紫色 - 极品
-    elif score >= 85:
+    elif score >= 90:
         return "#ff6b6b"   # 红色 - 优秀
-    elif score >= 75:
+    elif score >= 80:
         return "#f39c12"   # 橙色 - 良好
-    elif score >= 60:
+    elif score >= 65:
         return "#feca57"   # 黄色 - 一般
     else:
         return "#95a5a6"   # 灰色 - 弱
@@ -202,11 +202,11 @@ def get_score_label(score: int) -> str:
     """获取评分标签文字"""
     if score >= 95:
         return "极品"
-    elif score >= 85:
+    elif score >= 90:
         return "优秀"
-    elif score >= 75:
+    elif score >= 80:
         return "良好"
-    elif score >= 60:
+    elif score >= 65:
         return "一般"
     else:
         return "观察"

@@ -1845,7 +1845,13 @@ class HistorySyncService:
         logger.info(f"价格数据同步完成: 更新 {updated}, 失败 {failed}")
         logger.info("="*60)
 
-        # 4. 同步复权因子（只同步今天有数据的股票）
+        # 4. 归档实时数据（删除当天 realtime parquet）
+        from DataHub.services.realtime_service import RealtimeDataService
+        rt_service = RealtimeDataService()
+        rt_service.archive_realtime_data(date_str=today_str)
+        logger.info(f"已归档(删除)实时数据: {today_str}")
+
+        # 5. 同步复权因子（只同步今天有数据的股票）
         logger.info("\n开始同步复权因子...")
         factor_result = self._sync_factors_for_symbols(list(grouped.groups.keys()))
 

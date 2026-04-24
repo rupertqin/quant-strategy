@@ -28,9 +28,8 @@ class BaseRepository:
             db_path: 数据库文件路径，默认使用项目标准路径
         """
         if db_path is None:
-            # 默认路径: project_root/storage/database/quant.db
-            base_dir = Path(__file__).parent.parent.parent
-            db_path = base_dir / "storage" / "database" / "quant.db"
+            from DataHub.config import get_storage_path
+            db_path = get_storage_path("database", "quant.db")
         
         self.db_path = str(db_path)
         self.logger = logging.getLogger(self.__class__.__name__)

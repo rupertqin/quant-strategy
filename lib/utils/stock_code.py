@@ -50,12 +50,9 @@ class StockCodeUtil:
             return cls._index_codes_sh
         
         cls._index_codes_sh = set()
-        # 使用环境变量配置的 storage 路径
-        try:
-            from DataHub.config import get_storage_path
-            csv_path = get_storage_path('official_indices.csv')
-        except ImportError:
-            csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+        # 使用环境变量配置的存储路径
+        from DataHub.config import get_storage_path
+        csv_path = get_storage_path('official_indices.csv')
         
         if csv_path.exists():
             try:
@@ -83,12 +80,9 @@ class StockCodeUtil:
             return cls._core_indices
         
         cls._core_indices = {}
-        # 使用环境变量配置的 storage 路径
-        try:
-            from DataHub.config import get_storage_path
-            csv_path = get_storage_path('official_indices.csv')
-        except ImportError:
-            csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+        # 使用环境变量配置的存储路径
+        from DataHub.config import get_storage_path
+        csv_path = get_storage_path('official_indices.csv')
         
         if csv_path.exists():
             try:
@@ -338,26 +332,18 @@ class StockCodeUtil:
     def get_name_mapper(cls) -> dict:
         """
         获取全市场代码到名称的映射字典（缓存）
-        从本地 storage/stock_basic_info.csv、etf_basic_info.csv 和 official_indices.csv 读取
+        从本地 stock_basic_info.csv、etf_basic_info.csv 和 official_indices.csv 读取
         
         Returns:
             {code: name} 字典，code为6位纯数字
         """
         import os
         
-        # 使用环境变量配置的 storage 路径
-        try:
-            from DataHub.config import get_storage_path
-            stock_csv = get_storage_path('stock_basic_info.csv')
-            etf_csv = get_storage_path('etf_basic_info.csv')
-            index_csv = get_storage_path('official_indices.csv')
-        except ImportError:
-            # 回退到默认路径
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(os.path.dirname(current_dir))
-            stock_csv = os.path.join(project_root, 'storage', 'stock_basic_info.csv')
-            etf_csv = os.path.join(project_root, 'storage', 'etf_basic_info.csv')
-            index_csv = os.path.join(project_root, 'storage', 'official_indices.csv')
+        # 使用环境变量配置的存储路径
+        from DataHub.config import get_storage_path
+        stock_csv = get_storage_path('stock_basic_info.csv')
+        etf_csv = get_storage_path('etf_basic_info.csv')
+        index_csv = get_storage_path('official_indices.csv')
         
         mapper = {}
         
@@ -500,12 +486,9 @@ def _get_index_codes():
         return _index_codes_cache
 
     _index_codes_cache = set()
-    # 使用环境变量配置的 storage 路径
-    try:
-        from DataHub.config import get_storage_path
-        csv_path = get_storage_path('official_indices.csv')
-    except ImportError:
-        csv_path = Path(__file__).parent.parent.parent / 'storage' / 'official_indices.csv'
+    # 使用环境变量配置的存储路径
+    from DataHub.config import get_storage_path
+    csv_path = get_storage_path('official_indices.csv')
 
     if csv_path.exists():
         try:

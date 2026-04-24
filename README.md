@@ -431,3 +431,10 @@ python DataHub/services/realtime_service.py && python ShortTerm/run_signal_scan.
 # 每日数据入库
 python -m DataHub.services.sync --today && python -m DataHub.services.sync --daily --symbol etf --workers 1 && python -m DataHub.services.sync --daily --symbol index --workers 1
 ```
+
+## TODO
+
+- [ ] 每周日 17:00 再次全量拉取数据 以纠偏
+- [ ] 指数、ETF配置化，且进入代码库
+- [ ] 信号详情带上价格和百分比和日期，不然我怕弄错了时间。
+- [ ] 代码编辑器、UI 做回测工具

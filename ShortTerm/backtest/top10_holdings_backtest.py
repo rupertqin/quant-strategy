@@ -60,23 +60,24 @@ class TopNHoldingsBacktest:
     """TopN信号分股票多持有期回测"""
     
     def __init__(self, signals_dir: Path = None, top_n: int = 100):
-        self.signals_dir = signals_dir or project_root / "storage" / "outputs" / "signals"
+        from DataHub.config import SHORTTERM_SIGNALS_DIR
+        self.signals_dir = signals_dir or SHORTTERM_SIGNALS_DIR
         self.top_n = top_n
         self.daily_results: List[DailyPortfolio] = []
         self.all_trades: List[TradeRecord] = []
-        
+
     def get_available_dates(self, start_date: str = None, end_date: str = None) -> List[str]:
         """获取可用的信号日期列表"""
         dates = []
-        
-        for file in self.signals_dir.glob("stock_signals_*.json"):
-            # 排除 intraday 和 latest 文件
-            if "intraday" in file.name or "latest" in file.name or "all" in file.name:
+
+        for file in self.signals_dir.glob("signal_*.json"):
+            # 排除 latest 文件
+            if "latest" in file.name:
                 continue
-            
+
             # 提取日期
             try:
-                date_str = file.stem.replace("stock_signals_", "")
+                date_str = file.stem.replace("signal_", "")
                 if len(date_str) == 8 and date_str.isdigit():
                     if start_date and date_str < start_date:
                         continue
@@ -85,12 +86,12 @@ class TopNHoldingsBacktest:
                     dates.append(date_str)
             except:
                 continue
-        
+
         return sorted(dates)
-    
+
     def load_signals(self, date_str: str) -> List[Dict]:
         """加载指定日期的信号数据"""
-        filepath = self.signals_dir / f"stock_signals_{date_str}.json"
+        filepath = self.signals_dir / f"signal_{date_str}.json"
         
         if not filepath.exists():
             logger.warning(f"信号文件不存在: {filepath}")
@@ -366,7 +367,8 @@ class TopNHoldingsBacktest:
     def export_trades_to_csv(self, output_dir: Path = None):
         """导出交易记录到CSV"""
         if output_dir is None:
-            output_dir = project_root / "storage" / "outputs" / "backtest"
+            from DataHub.config import get_storage_path
+            output_dir = get_storage_path("outputs", "backtest")
         output_dir.mkdir(parents=True, exist_ok=True)
         
         for period, trades in self.trades_by_period.items():

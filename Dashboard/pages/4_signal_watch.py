@@ -7,7 +7,7 @@
 import streamlit as st
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 导入共享格式化工具
 import sys
@@ -245,14 +245,14 @@ def _transform_signals_to_stocks(data: dict) -> list:
 
 
 def _load_data_impl(asset_type: str = "stock") -> dict:
-    """加载信号数据"""
-    prefix = "etf_signals" if asset_type == "etf" else "index_signals" if asset_type == "index" else "stock_signals"
-    filepath = get_storage_path("outputs", "signals", f"{prefix}_latest.json")
+    """加载信号数据（统一从 signal_latest.json 读取并按资产类型过滤）"""
+    from DataHub.config import SHORTTERM_SIGNALS_DIR
+    from lib.utils import detect_asset_type
+    filepath = SHORTTERM_SIGNALS_DIR / "signal_latest.json"
 
     if not filepath.exists():
-        signals_dir = get_storage_path("outputs", "signals")
-        if signals_dir.exists():
-            files = sorted(signals_dir.glob(f"{prefix}_*.json"))
+        if SHORTTERM_SIGNALS_DIR.exists():
+            files = sorted(SHORTTERM_SIGNALS_DIR.glob("signal_*.json"))
             date_files = [f for f in files if not f.name.endswith("_latest.json")]
             if date_files:
                 filepath = date_files[-1]
@@ -260,10 +260,36 @@ def _load_data_impl(asset_type: str = "stock") -> dict:
     if filepath.exists():
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            # 转换信号格式为股票格式
-            if "signals" in data and "stocks" not in data:
-                data["stocks"] = _transform_signals_to_stocks(data)
-            return data
+
+        # 按资产类型过滤信号
+        if "signals" in data:
+            data["signals"] = [
+                s for s in data["signals"]
+                if detect_asset_type(s.get("symbol", "")) == asset_type
+            ]
+
+        # 转换信号格式为股票格式
+        if "signals" in data and "stocks" not in data:
+            data["stocks"] = _transform_signals_to_stocks(data)
+        elif "stocks" in data:
+            data["stocks"] = [
+                s for s in data["stocks"]
+                if detect_asset_type(s.get("symbol", "")) == asset_type
+            ]
+            for stock in data["stocks"]:
+                if "risk_explanations" not in stock:
+                    warnings = stock.get("risk_warnings", [])
+                    stock["risk_explanations"] = warnings if warnings else ["暂无风险详情"]
+                # 兼容旧数据：如果信号里有 portfolio_score，优先使用
+                signals = stock.get("signals", [])
+                portfolio_scores = [
+                    s.get("technicals", {}).get("portfolio_score")
+                    for s in signals
+                    if s.get("technicals", {}).get("portfolio_score") is not None
+                ]
+                if portfolio_scores:
+                    stock["signal_score"] = round(max(portfolio_scores))
+        return data
 
     asset_name = "ETF" if asset_type == "etf" else "指数" if asset_type == "index" else "股票"
     return {"status": "error", "message": f"暂无{asset_name}数据"}
@@ -480,9 +506,14 @@ def _render_stock_rows():
         signals = stock.get('signals', [])
         risk_explanations = stock.get('risk_explanations', [])
 
+        # 获取最新实时价格：优先使用信号 JSON 中的数据（已合并实时热数据）
+        # 避免重新调用 load_stock_prices（只读冷数据，会导致显示昨日价格）
         latest_signal = signals[0] if signals else {}
         close_price = latest_signal.get('close_price', 0)
         change_pct = latest_signal.get('change_pct', 0) if latest_signal else 0
+        # 兼容旧数据：异常大的值自动修正
+        if abs(change_pct) > 100:
+            change_pct = change_pct / 100
 
         # 涨跌幅颜色
         if change_pct > 0:

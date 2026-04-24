@@ -19,7 +19,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from DataHub.config import RAW_PRICE_DIR, get_storage_path
+from DataHub.config import RAW_PRICE_DIR, get_storage_path, SHORTTERM_SIGNALS_DIR
+from DataHub.core.risk_scorer import calculate_risk_score
 
 import pandas as pd
 import numpy as np
@@ -535,7 +536,7 @@ class LeftSignalDetector:
                 stock_signal = self.vp_adapter.to_stock_signal(
                     vp_signal, symbol, name, period,
                     close_price=latest['close'],
-                    change_pct=latest.get('change_pct', 0) * 100,
+                    change_pct=round(latest.get('change_pct', 0), 2),
                     technicals={
                         "date": trigger_date,
                         "ma20": latest.get('ma20'),
@@ -701,27 +702,27 @@ class LeftSignalDetector:
         - 负面因素扣分（最多-20）
         - 满分100，90+为高置信度，80+为中等，<80为观察
         """
-        score = 30  # 降低基础分
+        score = 20  # 收紧基础分
         
         # 1. 信号类型加分（更严格）
         if "底背离" in signal_name:
-            score += 20  # MACD/KDJ底背离，较强信号
+            score += 15  # MACD/KDJ底背离
         elif "超跌" in signal_name:
-            score += 15
-        elif "十字星" in signal_name:
             score += 10
+        elif "十字星" in signal_name:
+            score += 8
         elif "长下影线" in signal_name:
-            score += 12
+            score += 8
         else:
-            score += 5  # 其他信号基础加分
+            score += 3  # 其他信号基础加分
         
         # 2. 强度加分（更细分）
         if strength == SignalStrength.STRONG.value:
-            score += 20
+            score += 15
         elif strength == SignalStrength.MEDIUM.value:
-            score += 12
+            score += 8
         else:
-            score += 5
+            score += 3
         
         # 3. 技术指标加分（多指标叠加，但有上限）
         tech_bonus = 0
@@ -730,25 +731,25 @@ class LeftSignalDetector:
         kdj_j = latest.get('kdj_j')
         if not pd.isna(kdj_j):
             if kdj_j < 0:
-                tech_bonus += 8
+                tech_bonus += 6
             elif kdj_j < 20:
-                tech_bonus += 4
+                tech_bonus += 3
         
         # MACD柱状体改善（绿柱缩短或红柱增长）
         macd_hist = latest.get('macd_hist')
         if not pd.isna(macd_hist) and macd_hist > 0:
-            tech_bonus += 5
+            tech_bonus += 4
         
         # 成交量配合（底部放量或缩量企稳）
         vol_ratio = latest.get('volume_ratio')
         if not pd.isna(vol_ratio):
             if 0.8 <= vol_ratio <= 1.5:  # 缩量企稳
-                tech_bonus += 4
+                tech_bonus += 3
             elif vol_ratio >= 2.0:  # 底部放量
-                tech_bonus += 6
+                tech_bonus += 4
         
-        # 技术指标加分上限15分
-        score += min(tech_bonus, 15)
+        # 技术指标加分上限收紧到10分
+        score += min(tech_bonus, 10)
         
         # 4. 负面因素扣分（新增）
         penalty = 0
@@ -758,21 +759,21 @@ class LeftSignalDetector:
         ma10 = latest.get('ma10')
         if not pd.isna(ma5) and not pd.isna(ma10):
             if ma5 < ma10 * 0.95:  # MA5明显低于MA10
-                penalty += 8
+                penalty += 10
         
         # 连续下跌扣分
         change_pct = latest.get('change_pct')
         if not pd.isna(change_pct) and change_pct < -7:
-            penalty += 5  # 单日暴跌，可能有利空
+            penalty += 8  # 单日暴跌，可能有利空
         
         # 流动性差扣分
         if not pd.isna(vol_ratio) and vol_ratio < 0.5:
-            penalty += 4  # 极度缩量，流动性差
+            penalty += 5  # 极度缩量，流动性差
         
-        score -= min(penalty, 20)  # 扣分上限20
+        score -= min(penalty, 25)  # 扣分上限25
         
         # 确保分数在合理范围
-        return max(30, min(score, 100))
+        return max(20, min(score, 95))
     
     def _calculate_zt_quality_score(self, latest, prev, prev2, df_history: pd.DataFrame) -> dict:
         """
@@ -1003,7 +1004,7 @@ class RightSignalDetector:
                 stock_signal = self.vp_adapter.to_stock_signal(
                     vp_signal, symbol, name, period,
                     close_price=latest['close'],
-                    change_pct=latest.get('change_pct', 0) * 100,
+                    change_pct=round(latest.get('change_pct', 0), 2),
                     technicals={
                         "date": trigger_date,
                         "ma20": latest.get('ma20'),
@@ -1165,27 +1166,27 @@ class RightSignalDetector:
 
         右侧信号要求更严格的量价配合和趋势确认
         """
-        score = 35  # 右侧信号基础分稍高（趋势已确认）
+        score = 25  # 右侧信号基础分收紧
         
         # 1. 信号类型加分
         if "突破" in signal_name:
-            score += 25  # 突破最重要
+            score += 18  # 突破最重要
         elif "多头排列" in signal_name:
-            score += 20
-        elif "金叉" in signal_name:
             score += 15
+        elif "金叉" in signal_name:
+            score += 10
         elif "量价" in signal_name:
-            score += 18
+            score += 12
         else:
-            score += 8
+            score += 5
         
         # 2. 强度加分
         if strength == SignalStrength.STRONG.value:
-            score += 18
+            score += 15
         elif strength == SignalStrength.MEDIUM.value:
-            score += 10
+            score += 8
         else:
-            score += 4
+            score += 3
         
         # 3. 技术指标加分（右侧信号关注动能和量能）
         tech_bonus = 0
@@ -1193,37 +1194,37 @@ class RightSignalDetector:
         # MACD红柱且扩大
         macd_hist = latest.get('macd_hist')
         if not pd.isna(macd_hist) and macd_hist > 0:
-            tech_bonus += 6
+            tech_bonus += 4
         
         # KDJ金叉区域（K>D且向上）
         kdj_k = latest.get('kdj_k')
         kdj_d = latest.get('kdj_d')
         if not pd.isna(kdj_k) and not pd.isna(kdj_d):
             if kdj_k > kdj_d and kdj_k < 80:  # 金叉且未超买
-                tech_bonus += 6
+                tech_bonus += 4
             elif kdj_k > 80:  # 超买区域扣分
-                tech_bonus -= 5
+                tech_bonus -= 6
         
         # 成交量配合（右侧信号更重视量能）
         vol_ratio = latest.get('volume_ratio')
         if not pd.isna(vol_ratio):
             if vol_ratio >= 2.5:  # 明显放量
-                tech_bonus += 10
+                tech_bonus += 8
             elif vol_ratio >= 1.5:  # 温和放量
-                tech_bonus += 6
+                tech_bonus += 4
             elif vol_ratio < 0.8:  # 缩量上涨，不健康
-                tech_bonus -= 3
+                tech_bonus -= 4
         
         # 价格在均线上方
         close = latest.get('close')
         ma20 = latest.get('ma20')
         if not pd.isna(close) and not pd.isna(ma20):
             if close > ma20 * 1.05:  # 明显站上MA20
-                tech_bonus += 5
+                tech_bonus += 4
             elif close < ma20:  # 还在MA20下方
-                tech_bonus -= 5
+                tech_bonus -= 6
         
-        score += min(max(tech_bonus, -10), 20)  # 限制在-10到+20
+        score += min(max(tech_bonus, -12), 12)  # 限制在-12到+12
         
         # 4. 负面因素扣分
         penalty = 0
@@ -1357,8 +1358,8 @@ class StockSignalScanner:
         self.asset_type = asset_type
         self.left_detector = LeftSignalDetector()
         self.right_detector = RightSignalDetector()
-        # 使用环境变量配置的 storage 路径
-        self.output_dir = get_storage_path("outputs", "signals")
+        # 统一输出到 shortterm/signals 目录
+        self.output_dir = SHORTTERM_SIGNALS_DIR
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.price_dir = RAW_PRICE_DIR
     
@@ -1433,7 +1434,7 @@ class StockSignalScanner:
             return pd.DataFrame()
     
     def scan_stock(self, symbol: str, name: str, signal_type: str = "all",
-                   multi_period: bool = True) -> List[StockSignal]:
+                   multi_period: bool = True, realtime_df: pd.DataFrame = None) -> List[StockSignal]:
         """
         扫描单只股票的信号
 
@@ -1442,11 +1443,22 @@ class StockSignalScanner:
             name: 股票名称
             signal_type: 信号类型 - all/left/right
             multi_period: 是否使用多周期分析
+            realtime_df: 实时行情DataFrame（可选），提供时会合并到日线数据
         """
         # 加载多周期数据
         df_daily = self.load_stock_data(symbol, "daily")
         if df_daily.empty:
             return []
+
+        # 合并实时数据（如果提供）
+        if realtime_df is not None and not realtime_df.empty:
+            rt_row = realtime_df[realtime_df['symbol'] == symbol]
+            if not rt_row.empty:
+                try:
+                    from Dashboard.utils.data_access import merge_realtime_to_history
+                    df_daily = merge_realtime_to_history(df_daily, rt_row.iloc[0], adjust="qfq")
+                except Exception:
+                    pass
 
         df_weekly = pd.DataFrame()
         df_monthly = pd.DataFrame()
@@ -1479,7 +1491,7 @@ class StockSignalScanner:
                 weekly_left = self.left_detector.detect_all(df_weekly, symbol, name, "weekly")
                 for sig in weekly_left:
                     sig.signal_name = f"周线{sig.signal_name}"
-                    sig.score = min(sig.score + 10, 100)  # 周线信号加分
+                    sig.score = min(sig.score + 3, 92)  # 周线小幅加分，上限92
                     sig.technicals['flat_mas'] = flat_ma_info.get('weekly', [])
                 signals.extend(weekly_left)
 
@@ -1487,7 +1499,7 @@ class StockSignalScanner:
                 weekly_right = self.right_detector.detect_all(df_weekly, symbol, name, "weekly")
                 for sig in weekly_right:
                     sig.signal_name = f"周线{sig.signal_name}"
-                    sig.score = min(sig.score + 10, 100)
+                    sig.score = min(sig.score + 5, 95)
                     sig.technicals['flat_mas'] = flat_ma_info.get('weekly', [])
                 signals.extend(weekly_right)
 
@@ -1497,7 +1509,7 @@ class StockSignalScanner:
                 monthly_left = self.left_detector.detect_all(df_monthly, symbol, name, "monthly")
                 for sig in monthly_left:
                     sig.signal_name = f"月线{sig.signal_name}"
-                    sig.score = min(sig.score + 15, 100)  # 月线信号加分更多
+                    sig.score = min(sig.score + 5, 92)  # 月线小幅加分，上限92
                     sig.technicals['flat_mas'] = flat_ma_info.get('monthly', [])
                 signals.extend(monthly_left)
 
@@ -1505,7 +1517,7 @@ class StockSignalScanner:
                 monthly_right = self.right_detector.detect_all(df_monthly, symbol, name, "monthly")
                 for sig in monthly_right:
                     sig.signal_name = f"月线{sig.signal_name}"
-                    sig.score = min(sig.score + 15, 100)
+                    sig.score = min(sig.score + 8, 95)
                     sig.technicals['flat_mas'] = flat_ma_info.get('monthly', [])
                 signals.extend(monthly_right)
 
@@ -1591,9 +1603,9 @@ class StockSignalScanner:
         # 检查共振
         for base_name, group in signal_groups.items():
             if len(group) >= 2:  # 至少两个周期有相同信号
-                # 给共振信号额外加分
+                # 共振小幅加分，上限92
                 for sig in group:
-                    sig.score = min(sig.score + 15, 100)
+                    sig.score = min(sig.score + 3, 92)
                     if "共振" not in sig.description:
                         sig.description += " | 多周期共振"
 
@@ -1633,51 +1645,63 @@ class StockSignalScanner:
         has_multi_period = len(set(sig.period for sig in signals)) >= 2
         has_multi_indicator = len(dim_details.get('indicators', {})) >= 2
         
-        # === 硬性上限控制（更严格）===
-        # 基础上限
+        # === 硬性上限控制（大幅收紧）===
         if n_signals == 1:
-            max_possible = 82  # 单一信号上限82
+            max_possible = 72  # 单一信号上限72
         elif not has_multi_period:
-            max_possible = 85  # 单周期上限85
+            max_possible = 75  # 单周期上限75
         elif not has_both_sides:
-            max_possible = 88  # 单侧上限88
+            max_possible = 78  # 单侧上限78
         elif has_both_sides and has_multi_period and has_multi_indicator and dim_coverage >= 0.7:
-            max_possible = 100  # 完美条件可达100
+            max_possible = 92  # 完美条件可达92
         elif has_both_sides and has_multi_period and has_multi_indicator:
-            max_possible = 95   # 较好条件95
+            max_possible = 88  # 较好条件88
         elif has_both_sides and has_multi_period:
-            max_possible = 92   # 双侧+多周期92
+            max_possible = 82  # 双侧+多周期82
         elif has_both_sides and has_multi_indicator:
-            max_possible = 90   # 双侧+多指标90
+            max_possible = 78  # 双侧+多指标78
         else:
-            max_possible = 88
+            max_possible = 75
         
-        # === 基础分计算（降低）===
+        # === 基础分计算 ===
         base_quality = max_score * 0.3 + avg_score * 0.4 + min(scores) * 0.3
         
-        # === 维度奖励（降低）===
+        # === 维度奖励 ===
         if dim_coverage >= 0.75:
-            dim_bonus = 8
+            dim_bonus = 6
         elif dim_coverage >= 0.5:
-            dim_bonus = 5
+            dim_bonus = 3
         elif dim_coverage >= 0.3:
-            dim_bonus = 2
+            dim_bonus = 1
         else:
             dim_bonus = 0
         
-        # === 共振奖励（降低）===
+        # === 共振奖励 ===
         resonance_bonus = 0
         if has_both_sides:
-            resonance_bonus += 3
-        if has_multi_period:
             resonance_bonus += 2
+        if has_multi_period:
+            resonance_bonus += 1
         if has_multi_indicator:
             resonance_bonus += 1
         
+        # === 市场环境惩罚（普跌时压制高分）===
+        market_penalty = 0
+        market_change = getattr(self, 'market_change_pct', 0)
+        if market_change < -3:
+            market_penalty = 12
+            max_possible = min(max_possible, 78)  # 大跌日最高分封顶78
+        elif market_change < -2:
+            market_penalty = 8
+            max_possible = min(max_possible, 82)
+        elif market_change < -1:
+            market_penalty = 4
+            max_possible = min(max_possible, 85)
+        
         # === 计算最终分 ===
-        portfolio_score = base_quality + dim_bonus + resonance_bonus
+        portfolio_score = base_quality + dim_bonus + resonance_bonus - market_penalty
         portfolio_score = min(portfolio_score, max_possible)
-        portfolio_score = max(30, min(portfolio_score, 100))
+        portfolio_score = max(20, min(portfolio_score, 100))
         
         # === 稀缺性标签 ===
         if portfolio_score >= 95:
@@ -1829,6 +1853,32 @@ class StockSignalScanner:
         period_str = "多周期" if multi_period else "日线"
         logger.info(f"开始扫描 {len(asset_list)} 只{asset_name}，信号类型: {signal_type}, 周期: {period_str}")
 
+        # 尝试加载当天实时数据（热数据），用于合并到历史K线
+        realtime_df = pd.DataFrame()
+        try:
+            from Dashboard.utils.data_access import load_realtime_data
+            realtime_df = load_realtime_data()
+            if not realtime_df.empty:
+                logger.info(f"已加载实时数据: {len(realtime_df)} 只")
+        except Exception:
+            pass
+
+        # 计算市场环境（上证指数当日涨跌）
+        self.market_change_pct = 0.0
+        try:
+            df_sh = self.load_stock_data("000001.SH", "daily")
+            # 合并实时数据到上证指数
+            if not realtime_df.empty:
+                rt_sh = realtime_df[realtime_df['symbol'] == '000001.SH']
+                if not rt_sh.empty:
+                    from Dashboard.utils.data_access import merge_realtime_to_history
+                    df_sh = merge_realtime_to_history(df_sh, rt_sh.iloc[0], adjust="qfq")
+            if not df_sh.empty and len(df_sh) >= 2:
+                self.market_change_pct = (df_sh.iloc[-1]['close'] - df_sh.iloc[-2]['close']) / df_sh.iloc[-2]['close'] * 100
+                logger.info(f"市场环境: 上证 {self.market_change_pct:+.2f}%")
+        except Exception:
+            pass
+
         all_signals = []
         all_health_scores = []  # 存储所有股票的健康度
         risk_alerts = []        # 存储风险预警（健康度<40且无买入信号）
@@ -1841,8 +1891,8 @@ class StockSignalScanner:
             if (idx + 1) % 100 == 0:
                 logger.info(f"进度: {idx + 1}/{len(asset_list)}")
 
-            # 扫描买入信号
-            signals = self.scan_stock(symbol, name, signal_type, multi_period)
+            # 扫描买入信号（传入实时数据，自动合并）
+            signals = self.scan_stock(symbol, name, signal_type, multi_period, realtime_df=realtime_df)
             
             # 计算趋势健康度（无论是否有买入信号）
             df_daily = self.load_stock_data(symbol, "daily")
@@ -1941,7 +1991,7 @@ class StockSignalScanner:
     
     def _get_stock_list(self) -> pd.DataFrame:
         """获取股票列表（排除北交所股票）"""
-        # 使用环境变量配置的 storage 路径
+        # 使用环境变量配置的存储路径
         stock_csv = get_storage_path("stock_basic_info.csv")
         if stock_csv.exists():
             df = pd.read_csv(stock_csv)
@@ -1952,7 +2002,7 @@ class StockSignalScanner:
 
     def _get_etf_list(self) -> pd.DataFrame:
         """获取ETF列表"""
-        # 使用环境变量配置的 storage 路径
+        # 使用环境变量配置的存储路径
         etf_csv = get_storage_path("etf_basic_info.csv")
         if etf_csv.exists():
             df = pd.read_csv(etf_csv)
@@ -1961,7 +2011,7 @@ class StockSignalScanner:
 
     def _get_index_list(self) -> pd.DataFrame:
         """获取指数列表（从 official_indices.csv）"""
-        # 使用环境变量配置的 storage 路径
+        # 使用环境变量配置的存储路径
         index_csv = get_storage_path("official_indices.csv")
         if index_csv.exists():
             df = pd.read_csv(index_csv)
@@ -1972,29 +2022,22 @@ class StockSignalScanner:
         return pd.DataFrame()
     
     def _save_result(self, result: Dict, signal_type: str):
-        """保存扫描结果 - 新格式：按股票组织，包含健康度和信号列表"""
+        """保存扫描结果 - 统一合并文件格式"""
         date_str = datetime.now().strftime('%Y%m%d')
-        if self.asset_type == "etf":
-            prefix = "etf_signals"
-        elif self.asset_type == "index":
-            prefix = "index_signals"
-        else:
-            prefix = "stock_signals"
-        
+
         # 构建统一格式的数据：按股票组织
         unified_data = self._build_unified_data(result)
-        
-        # 保存带日期的文件
-        filename = f"{prefix}_{date_str}.json"
-        filepath = self.output_dir / filename
+
+        # 统一保存带日期的文件（覆盖）
+        filepath = self.output_dir / f"signal_{date_str}.json"
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(unified_data, f, ensure_ascii=False, indent=2)
-        
-        # 保存latest文件（供Dashboard使用）
-        latest_path = self.output_dir / f"{prefix}_latest.json"
+
+        # 统一保存 latest 文件（覆盖）
+        latest_path = self.output_dir / "signal_latest.json"
         with open(latest_path, 'w', encoding='utf-8') as f:
             json.dump(unified_data, f, ensure_ascii=False, indent=2)
-        
+
         logger.info(f"结果已保存: {filepath} ({unified_data['total_signals']} 个信号, {unified_data['total_stocks']} 只股票)")
     
     def _build_unified_data(self, result: Dict) -> Dict:
@@ -2039,22 +2082,30 @@ class StockSignalScanner:
         for symbol, health in all_health_scores.items():
             stock_signals = signals_by_stock.get(symbol, [])
             
-            # 计算最高信号分
+            # 计算最高信号分（优先使用组合评分 portfolio_score）
             best_score = max([s["score"] for s in stock_signals]) if stock_signals else 0
-            
-            # 风险分 = 100 - 健康分（健康分越高，风险越低）
-            health_score = health.get("health_score", 50)
-            risk_score = 100 - health_score  # 转换：健康80分 = 风险20分
-            
+            portfolio_scores = [
+                s.get("technicals", {}).get("portfolio_score")
+                for s in stock_signals
+                if s.get("technicals", {}).get("portfolio_score") is not None
+            ]
+            signal_score = round(max(portfolio_scores)) if portfolio_scores else best_score
+
+            # 风险分：统一使用 calculate_risk_score 计算，确保与前端一致
+            best_signal = max(stock_signals, key=lambda x: x.get("score", 0)) if stock_signals else {}
+            tech = best_signal.get("technicals", {})
+            risk_score, risk_explanations = calculate_risk_score(tech, stock_signals)
+
             stock_data = {
                 "symbol": symbol,
                 "name": health.get("name", ""),
                 "risk_score": risk_score,  # 风险分（0-100，越高越危险）
-                "signal_score": best_score,  # 信号分（0-100，越高越好）
+                "risk_explanations": risk_explanations,
+                "signal_score": signal_score,  # 信号分（优先使用组合评分）
                 "has_buy_signal": len(stock_signals) > 0,
                 "signal_count": len(stock_signals),
                 "signals": stock_signals,
-                # 风险详情
+                # 风险详情（保留健康度原始数据做参考）
                 "risk_level": health.get("risk_level", "medium"),
                 "risk_warnings": health.get("warnings", []),
                 "risk_details": health.get("details", {}),

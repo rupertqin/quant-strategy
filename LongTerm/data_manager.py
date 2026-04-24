@@ -58,11 +58,9 @@ class DataManager:
         os.makedirs(self.cache_dir, exist_ok=True)
         os.makedirs(self.metadata_dir, exist_ok=True)
 
-        # SQLite 数据库路径 (统一到 storage/outputs)
-        self.db_path = os.path.join(
-            os.path.dirname(os.path.dirname(base_dir)),
-            "storage", "outputs", "shortterm", "database", "signals.db"
-        )
+        # SQLite 数据库路径 (统一到数据输出目录)
+        from DataHub.config import get_storage_path
+        self.db_path = str(get_storage_path("outputs", "shortterm", "database", "signals.db"))
 
         logger.info("DataManager initialized (using Parquet data)")
 

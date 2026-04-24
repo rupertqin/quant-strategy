@@ -188,6 +188,7 @@ class LimitUpScanner:
     """涨停板扫描器"""
 
     def __init__(self, config_path: str = None, use_datahub: bool = True):
+        from DataHub.config import get_storage_path
         # 自动查找 config.yaml
         if config_path is None:
             current_dir = os.path.dirname(__file__)
@@ -199,7 +200,7 @@ class LimitUpScanner:
         self.base_dir = os.path.dirname(config_path)
         self.cache_dir = self.config['cache']['dir']
         if not os.path.isabs(self.cache_dir):
-            self.cache_dir = os.path.join(self.base_dir, self.cache_dir)
+            self.cache_dir = str(get_storage_path(self.cache_dir))
         os.makedirs(self.cache_dir, exist_ok=True)
 
         self.data_client = UnifiedDataClient()
@@ -211,7 +212,7 @@ class LimitUpScanner:
         from lib.utils.stock_code import StockCodeUtil
         self.CORE_INDICES = StockCodeUtil.get_core_indices()
         if not self.CORE_INDICES:
-            raise RuntimeError("无法读取 storage/official_indices.csv，请确保文件存在且格式正确")
+            raise RuntimeError("无法读取 official_indices.csv，请确保文件存在且格式正确")
 
         logger.info("LimitUpScanner initialized")
 
@@ -394,46 +395,37 @@ class LimitUpScanner:
             logger.warning(f"从本地数据计算涨跌家数失败: {e}")
             return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
 
-    def _calculate_market_breadth_from_realtime(self) -> dict:
+    def _calculate_market_breadth_from_realtime(self, date: str = None) -> dict:
         """
-        从本地存储的实时行情数据文件计算涨跌家数
+        从分钟级实时 parquet 计算涨跌家数（每个 symbol 取最新快照）
+
+        Args:
+            date: 日期 YYYYMMDD，默认今天
 
         Returns:
             {'up': int, 'down': int, 'flat': int, 'total': int, 'up_ratio': float, 'breadth_score': float}
         """
         try:
-            from DataHub.config import REALTIME_DIR
+            from DataHub.services.realtime_service import RealtimeDataService
             from datetime import datetime
 
-            today = datetime.now().strftime('%Y%m%d')
+            today = date if date else datetime.now().strftime('%Y%m%d')
+            service = RealtimeDataService()
 
-            # 查找今日最新的实时数据文件
-            realtime_files = sorted(REALTIME_DIR.glob(f"realtime_{today}_*.json"))
-            if not realtime_files:
-                print(f"    ⚠️ 未找到今日实时数据文件")
+            df = service.load_intraday_parquet(
+                date_str=today, asset_type='stock', latest_snapshot=True
+            )
+            if df is None or df.empty:
+                print(f"    ⚠️ 未找到今日实时数据 parquet")
                 return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
 
-            # 使用最新的文件
-            latest_file = realtime_files[-1]
-            print(f"    从实时数据文件计算: {latest_file.name}")
+            print(f"    从实时 parquet 计算涨跌家数: {len(df)} 只")
 
-            with open(latest_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            stocks_data = data.get('data', [])
-            if not stocks_data:
-                print("    ⚠️ 实时数据文件为空")
-                return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
-
-            up_count = 0
-            down_count = 0
-            flat_count = 0
-
-            for stock in stocks_data:
-                change_pct = stock.get('change_pct')
+            up_count = down_count = flat_count = 0
+            for _, row in df.iterrows():
+                change_pct = row.get('change_pct')
                 if change_pct is None or pd.isna(change_pct):
                     continue
-
                 if change_pct > 0:
                     up_count += 1
                 elif change_pct < 0:
@@ -456,8 +448,8 @@ class LimitUpScanner:
                 'breadth_score': breadth_score
             }
         except Exception as e:
-            print(f"    ⚠️ 从实时数据文件计算涨跌家数失败: {e}")
-            logger.debug(f"从实时数据文件计算涨跌家数失败: {e}")
+            print(f"    ⚠️ 从实时 parquet 计算涨跌家数失败: {e}")
+            logger.debug(f"从实时 parquet 计算涨跌家数失败: {e}")
             return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
 
     def _get_limit_threshold(self, symbol: str, stock_name: str = None) -> dict:
@@ -579,43 +571,38 @@ class LimitUpScanner:
             logger.warning(f"从本地数据计算涨跌停失败: {e}")
             return 0, 0
 
-    def _calculate_zt_dt_from_realtime(self) -> tuple:
+    def _calculate_zt_dt_from_realtime(self, date: str = None) -> tuple:
         """
-        从本地存储的实时行情数据文件计算涨跌停数量
+        从分钟级实时 parquet 计算涨跌停数量（每个 symbol 取最新快照）
+
+        Args:
+            date: 日期 YYYYMMDD，默认今天
 
         Returns:
             (zt_count, dt_count, source, stats)
         """
         try:
-            from DataHub.config import REALTIME_DIR
+            from DataHub.services.realtime_service import RealtimeDataService
             from datetime import datetime
 
-            today = datetime.now().strftime('%Y%m%d')
+            today = date if date else datetime.now().strftime('%Y%m%d')
+            service = RealtimeDataService()
 
-            # 查找今日最新的实时数据文件
-            realtime_files = sorted(REALTIME_DIR.glob(f"realtime_{today}_*.json"))
-            if not realtime_files:
-                print(f"    ⚠️ 未找到今日实时数据文件")
+            df = service.load_intraday_parquet(
+                date_str=today, asset_type='stock', latest_snapshot=True
+            )
+            if df is None or df.empty:
+                print(f"    ⚠️ 未找到今日实时数据 parquet")
                 return 0, 0, "无本地数据", {}
 
-            # 使用最新的文件
-            latest_file = realtime_files[-1]
-            print(f"    从实时数据文件计算涨跌停: {latest_file.name}")
-
-            with open(latest_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            stocks_data = data.get('data', [])
-            if not stocks_data:
-                print("    ⚠️ 实时数据文件为空")
-                return 0, 0, "数据为空", {}
+            print(f"    从实时 parquet 计算涨跌停: {len(df)} 只")
 
             zt_count = 0
             dt_count = 0
             zt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
             dt_breakdown = {'主板': 0, '创业板': 0, '科创板': 0, '北交所': 0, 'ST': 0}
 
-            for stock in stocks_data:
+            for _, stock in df.iterrows():
                 try:
                     symbol = stock.get('symbol', '')
                     change_pct = stock.get('change_pct')
@@ -639,15 +626,15 @@ class LimitUpScanner:
             stats = {
                 'zt_breakdown': zt_breakdown,
                 'dt_breakdown': dt_breakdown,
-                'total': len(stocks_data)
+                'total': len(df)
             }
 
-            print(f"    计算结果: 涨停{zt_count}/跌停{dt_count}, 总计{len(stocks_data)}")
-            return zt_count, dt_count, "本地实时文件", stats
+            print(f"    计算结果: 涨停{zt_count}/跌停{dt_count}, 总计{len(df)}")
+            return zt_count, dt_count, f"实时 parquet({today})", stats
 
         except Exception as e:
-            print(f"    ⚠️ 从实时数据文件计算涨跌停失败: {e}")
-            logger.debug(f"从实时数据文件计算涨跌停失败: {e}")
+            print(f"    ⚠️ 从实时 parquet 计算涨跌停失败: {e}")
+            logger.debug(f"从实时 parquet 计算涨跌停失败: {e}")
             return 0, 0, "失败", {}
 
     def _calculate_index_performance_from_local(self) -> dict:
@@ -699,18 +686,39 @@ class LimitUpScanner:
                     # 确保date列为字符串格式
                     tech_df['date'] = tech_df['date'].astype(str)
 
-                    # 使用 market_regime 计算道氏理论分析
-                    dow_theory = self.market_regime._dow_theory_analysis(tech_df)
+                    # === 三周期分析：日线 / 周线 / 月线 ===
+                    # 日线
+                    dow_daily = self.market_regime._dow_theory_analysis(tech_df)
+                    elliott_daily = self.market_regime._elliott_wave_analysis(tech_df)
 
-                    # 使用 market_regime 计算波浪理论分析
-                    elliott_wave = self.market_regime._elliott_wave_analysis(tech_df)
+                    # 周线
+                    df_weekly = self.market_regime.resample_ohlcv(tech_df, 'weekly')
+                    dow_weekly = self.market_regime._dow_theory_analysis(df_weekly) if not df_weekly.empty else {'primary_trend': 'UNKNOWN', 'note': '数据不足'}
+                    elliott_weekly = self.market_regime._elliott_wave_analysis(df_weekly) if not df_weekly.empty else {'current_phase': 'unknown', 'note': '数据不足'}
+
+                    # 月线
+                    df_monthly = self.market_regime.resample_ohlcv(tech_df, 'monthly')
+                    dow_monthly = self.market_regime._dow_theory_analysis(df_monthly) if not df_monthly.empty else {'primary_trend': 'UNKNOWN', 'note': '数据不足'}
+                    elliott_monthly = self.market_regime._elliott_wave_analysis(df_monthly) if not df_monthly.empty else {'current_phase': 'unknown', 'note': '数据不足'}
 
                     result[name] = {
                         'change': change_pct if not pd.isna(change_pct) else 0,
                         'close': close if not pd.isna(close) else 0,
                         'trend': trend,
-                        'dow_theory': dow_theory,
-                        'elliott_wave': elliott_wave
+                        'analysis': {
+                            'daily': {
+                                'dow_theory': dow_daily,
+                                'elliott_wave': elliott_daily
+                            },
+                            'weekly': {
+                                'dow_theory': dow_weekly,
+                                'elliott_wave': elliott_weekly
+                            },
+                            'monthly': {
+                                'dow_theory': dow_monthly,
+                                'elliott_wave': elliott_monthly
+                            }
+                        }
                     }
                 except Exception as e:
                     logger.debug(f"处理指数 {name} 失败: {e}")
@@ -724,41 +732,39 @@ class LimitUpScanner:
             logger.warning(f"从本地数据计算指数表现失败: {e}")
             return {}
 
-    def _calculate_index_performance_from_realtime(self) -> dict:
+    def _calculate_index_performance_from_realtime(self, date: str = None) -> dict:
         """
         从本地存储的指数实时行情数据文件计算主要指数表现
+
+        从分钟级实时 parquet 计算主要指数表现（每个 symbol 取最新快照）
+
+        Args:
+            date: 日期 YYYYMMDD，默认今天
 
         Returns:
             {指数名称: {'change': float, 'close': float, 'trend': str, 'dow_theory': {...}, 'elliott_wave': {...}}}
         """
         try:
-            from DataHub.config import REALTIME_DIR, RAW_INDEX_PRICE_DIR
+            from DataHub.services.realtime_service import RealtimeDataService
+            from DataHub.config import RAW_INDEX_PRICE_DIR
             from datetime import datetime
 
-            today = datetime.now().strftime('%Y%m%d')
+            today = date if date else datetime.now().strftime('%Y%m%d')
+            service = RealtimeDataService()
 
-            # 查找今日最新的指数实时数据文件
-            index_files = sorted(REALTIME_DIR.glob(f"index_realtime_{today}_*.json"))
-            if not index_files:
-                print(f"    ⚠️ 未找到今日指数实时数据文件")
+            df = service.load_intraday_parquet(
+                date_str=today, asset_type='index', latest_snapshot=True
+            )
+            if df is None or df.empty:
+                print(f"    ⚠️ 未找到今日指数实时数据 parquet")
                 return {}
 
-            # 使用最新的文件
-            latest_file = index_files[-1]
-            print(f"    从指数实时数据文件计算: {latest_file.name}")
-
-            with open(latest_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            index_data = data.get('data', [])
-            if not index_data:
-                print("    ⚠️ 指数实时数据文件为空")
-                return {}
+            print(f"    从指数实时 parquet 计算: {len(df)} 个指数")
 
             result = {}
 
-            # 指数代码映射（文件中的代码 -> 内部名称）
-            for item in index_data:
+            # 指数代码映射（parquet 中的代码 -> 内部名称）
+            for _, item in df.iterrows():
                 try:
                     symbol = item.get('symbol', '')
                     idx_name = self.CORE_INDICES.get(symbol)
@@ -787,10 +793,9 @@ class LimitUpScanner:
                     try:
                         file_path = RAW_INDEX_PRICE_DIR / f"{symbol}.parquet"
                         if file_path.exists():
-                            df = pd.read_parquet(file_path)
-                            if not df.empty and len(df) >= 60:
-                                # 准备技术分析用的DataFrame
-                                tech_df = df.rename(columns={
+                            df_hist = pd.read_parquet(file_path)
+                            if not df_hist.empty and len(df_hist) >= 60:
+                                tech_df = df_hist.rename(columns={
                                     'trade_date': 'date',
                                     'open': 'open',
                                     'high': 'high',
@@ -799,8 +804,6 @@ class LimitUpScanner:
                                     'volume': 'volume'
                                 }).copy()
                                 tech_df['date'] = tech_df['date'].astype(str)
-
-                                # 计算道氏理论和波浪理论
                                 dow_theory = self.market_regime._dow_theory_analysis(tech_df)
                                 elliott_wave = self.market_regime._elliott_wave_analysis(tech_df)
                     except Exception as tech_e:
@@ -820,25 +823,23 @@ class LimitUpScanner:
             hk_indices = {k: v for k, v in self.CORE_INDICES.items() if k.endswith('.HK')}
             for symbol, idx_name in hk_indices.items():
                 if idx_name in result:
-                    continue  # 已存在则跳过
+                    continue
                 try:
                     file_path = RAW_INDEX_PRICE_DIR / f"{symbol}.parquet"
                     if not file_path.exists():
                         continue
 
-                    df = pd.read_parquet(file_path)
-                    if df.empty or len(df) < 2:
+                    df_hist = pd.read_parquet(file_path)
+                    if df_hist.empty or len(df_hist) < 2:
                         continue
 
-                    # 获取最新数据
-                    df = df.sort_values('trade_date')
-                    latest = df.iloc[-1]
-                    prev = df.iloc[-2]
+                    df_hist = df_hist.sort_values('trade_date')
+                    latest = df_hist.iloc[-1]
+                    prev = df_hist.iloc[-2]
 
                     close_price = float(latest['close'])
                     change_pct = float((latest['close'] - prev['close']) / prev['close'] * 100)
 
-                    # 判断趋势
                     if change_pct > 1:
                         trend = 'UP'
                     elif change_pct < -1:
@@ -846,11 +847,10 @@ class LimitUpScanner:
                     else:
                         trend = 'NEUTRAL'
 
-                    # 计算技术分析指标
                     dow_theory = {}
                     elliott_wave = {}
-                    if len(df) >= 60:
-                        tech_df = df.rename(columns={
+                    if len(df_hist) >= 60:
+                        tech_df = df_hist.rename(columns={
                             'trade_date': 'date',
                             'open': 'open',
                             'high': 'high',
@@ -873,15 +873,14 @@ class LimitUpScanner:
                 except Exception as hk_e:
                     logger.debug(f"计算港股指数 {idx_name} 失败: {hk_e}")
 
-            # 添加跨指数验证
             if result:
                 result['inter_index_validation'] = self.market_regime._validate_across_indices(result)
 
             print(f"    成功计算 {len(result)} 个指数")
             return result
         except Exception as e:
-            print(f"    ⚠️ 从实时数据文件计算指数表现失败: {e}")
-            logger.debug(f"从实时数据文件计算指数表现失败: {e}")
+            print(f"    ⚠️ 从实时 parquet 计算指数表现失败: {e}")
+            logger.debug(f"从实时 parquet 计算指数表现失败: {e}")
             return {}
 
     def _get_index_intraday(self, code: str, name: str) -> list:
@@ -971,13 +970,17 @@ class LimitUpScanner:
 
         return None
 
-    def _check_data_quality(self, date: str) -> dict:
+    def _check_data_quality(self, date: str, asset_type: str = "stock") -> dict:
         """
         数据质量检查 - 扫描前验证关键数据完整性
 
         检查项：
-        1. 复权因子更新状态（是否落后超过7天）
+        1. 复权因子更新状态（仅股票需要，指数/ETF 不需要）
         2. 价格数据最新日期
+
+        Args:
+            date: 扫描日期
+            asset_type: 资产类型 - 'stock' 股票, 'index' 指数, 'etf' ETF
 
         Returns:
             检查结果字典
@@ -988,37 +991,40 @@ class LimitUpScanner:
         print("\n🔍 数据质量检查...")
         issues = []
 
-        # 1. 检查复权因子更新状态（抽样检查）
-        try:
-            factor_files = list(RAW_ADJUST_FACTOR_DIR.glob("*.parquet"))
-            if factor_files:
-                # 抽样10个文件检查
-                import random
-                sample_files = random.sample(factor_files, min(10, len(factor_files)))
+        # 1. 检查复权因子更新状态（仅股票需要）
+        if asset_type == "stock":
+            try:
+                factor_files = list(RAW_ADJUST_FACTOR_DIR.glob("*.parquet"))
+                if factor_files:
+                    # 抽样10个文件检查
+                    import random
+                    sample_files = random.sample(factor_files, min(10, len(factor_files)))
 
-                outdated_count = 0
-                for f in sample_files:
-                    try:
-                        df = pd.read_parquet(f)
-                        if not df.empty and 'trade_date' in df.columns:
-                            latest_date = pd.to_datetime(df['trade_date']).max()
-                            days_diff = (datetime.now() - latest_date).days
-                            if days_diff > 7:
-                                outdated_count += 1
-                    except:
-                        pass
+                    outdated_count = 0
+                    for f in sample_files:
+                        try:
+                            df = pd.read_parquet(f)
+                            if not df.empty and 'trade_date' in df.columns:
+                                latest_date = pd.to_datetime(df['trade_date']).max()
+                                days_diff = (datetime.now() - latest_date).days
+                                if days_diff > 7:
+                                    outdated_count += 1
+                        except:
+                            pass
 
-                if outdated_count >= 3:  # 30%以上样本落后
-                    msg = f"⚠️  复权因子可能未及时更新（{outdated_count}/10 样本落后超过7天）"
-                    print(f"  {msg}")
-                    issues.append(msg)
+                    if outdated_count >= 3:  # 30%以上样本落后
+                        msg = f"⚠️  复权因子可能未及时更新（{outdated_count}/10 样本落后超过7天）"
+                        print(f"  {msg}")
+                        issues.append(msg)
+                    else:
+                        print(f"  ✓ 复权因子更新正常（抽样检查通过）")
                 else:
-                    print(f"  ✓ 复权因子更新正常（抽样检查通过）")
-            else:
-                print(f"  ⚠️  未找到复权因子数据，可能影响前复权计算精度")
-                issues.append("缺少复权因子数据")
-        except Exception as e:
-            print(f"  ⚠️  复权因子检查失败: {e}")
+                    print(f"  ⚠️  未找到复权因子数据，可能影响前复权计算精度")
+                    issues.append("缺少复权因子数据")
+            except Exception as e:
+                print(f"  ⚠️  复权因子检查失败: {e}")
+        else:
+            print(f"  ⏭️  跳过复权因子检查（{asset_type} 不需要）")
 
         # 2. 检查价格数据最新日期
         try:
@@ -1082,24 +1088,34 @@ class LimitUpScanner:
         print('='*50)
 
         # ========== 0. 数据质量检查 ==========
-        self._check_data_quality(date)
+        # LimitUpScanner 主要扫描指数和涨停板，不需要个股复权因子
+        self._check_data_quality(date, asset_type="index")
+
+        # 判断是否为当日扫描（当日扫描不应回退到无当天数据的历史 parquet）
+        is_today = (date == get_trading_date())
 
         # ========== 1. 技术面指标采集（优先使用实时数据）==========
         print("\n📊 从实时数据计算技术面指标...")
 
         # 1.1 市场涨跌家数（广度）- 优先从实时数据计算
-        breadth = self._calculate_market_breadth_from_realtime()
+        breadth = self._calculate_market_breadth_from_realtime(date)
         if breadth['total'] == 0:
-            print("  ⚠️ 实时数据获取失败，回退到本地数据")
-            breadth = self._calculate_market_breadth_from_local(date)
+            if is_today:
+                print("  ⚠️ 今日实时数据缺失，请运行: python DataHub/services/realtime_service.py")
+            else:
+                print("  ⚠️ 实时数据获取失败，回退到本地数据")
+                breadth = self._calculate_market_breadth_from_local(date)
         print(f"  涨跌家数: 涨{breadth['up']}/跌{breadth['down']}/平{breadth['flat']}")
         print(f"  涨跌比: {breadth['up_ratio']:.1%}")
 
         # 1.2 主要指数表现 - 优先从实时数据计算
-        indices = self._calculate_index_performance_from_realtime()
+        indices = self._calculate_index_performance_from_realtime(date)
         if not indices:
-            print("  ⚠️ 实时指数数据获取失败，回退到本地数据")
-            indices = self._calculate_index_performance_from_local()
+            if is_today:
+                print("  ⚠️ 今日实时指数数据缺失")
+            else:
+                print("  ⚠️ 实时指数数据获取失败，回退到本地数据")
+                indices = self._calculate_index_performance_from_local()
         print(f"  指数表现:")
         for name, data in indices.items():
             if name == 'inter_index_validation':
@@ -1125,18 +1141,21 @@ class LimitUpScanner:
 
         # 1.4 涨停跌停统计 - 优先使用实时数据计算（与图表逻辑一致）
         print("\n  📈 涨跌停统计（基于实时数据）:")
-        zt_count, dt_count, rt_source, rt_stats = self._calculate_zt_dt_from_realtime()
+        zt_count, dt_count, rt_source, rt_stats = self._calculate_zt_dt_from_realtime(date)
         print(f"    数据来源: {rt_source}")
         print(f"    涨停: {zt_count}家, 跌停: {dt_count}家")
         if rt_stats:
             print(f"    涨停分类: 主板{rt_stats['zt_breakdown']['主板']}/创业板{rt_stats['zt_breakdown']['创业板']}/科创板{rt_stats['zt_breakdown']['科创板']}/北交所{rt_stats['zt_breakdown']['北交所']}/ST{rt_stats['zt_breakdown']['ST']}")
             print(f"    跌停分类: 主板{rt_stats['dt_breakdown']['主板']}/创业板{rt_stats['dt_breakdown']['创业板']}/科创板{rt_stats['dt_breakdown']['科创板']}/北交所{rt_stats['dt_breakdown']['北交所']}/ST{rt_stats['dt_breakdown']['ST']}")
 
-        # 如果实时数据获取失败，回退到本地数据
+        # 如果实时数据获取失败，回退到本地数据（仅历史日期）
         if zt_count == 0 and dt_count == 0:
-            print("\n  ⚠️ 实时数据获取失败，尝试从本地数据计算...")
-            zt_count, dt_count = self._calculate_zt_dt_from_local(date)
-            print(f"    本地数据: 涨停{zt_count}/跌停{dt_count}")
+            if is_today:
+                print("\n  ⚠️ 今日实时数据缺失，涨跌停统计不可用")
+            else:
+                print("\n  ⚠️ 实时数据获取失败，尝试从本地数据计算...")
+                zt_count, dt_count = self._calculate_zt_dt_from_local(date)
+                print(f"    本地数据: 涨停{zt_count}/跌停{dt_count}")
 
         # 热点板块统计仍基于股池数据
         if not df_zt.empty and '所属行业' in df_zt.columns:
@@ -1309,10 +1328,11 @@ class LimitUpScanner:
         oil = self.market_regime.get_oil_price()
         print(f"  原油价格: {oil.get('current', 0):.2f} {oil.get('unit', '')} ({oil.get('change_pct', 0):+.2f}%) (来源: {oil.get('source', '默认')})")
 
-        # 4. 获取指数历史数据（用于图表展示）- 从本地数据文件读取
+        # 4. 获取指数历史数据（用于图表展示）- 从本地数据文件读取，生成日线/周线/月线
         print("\n📈 从本地数据获取指数历史...")
-        index_history = {}
-        index_intraday = {}  # 当日分时数据
+        index_history_daily = {}
+        index_history_weekly = {}
+        index_history_monthly = {}
         from DataHub.config import RAW_INDEX_PRICE_DIR
 
         for code, name in self.CORE_INDICES.items():
@@ -1327,24 +1347,62 @@ class LimitUpScanner:
                     print(f"  ✗ {name}: 数据不完整")
                     continue
 
-                # 按日期排序，取最近90天
+                # 按日期排序，取最近300天（足够生成周线/月线）
                 hist_df['trade_date'] = pd.to_datetime(hist_df['trade_date'])
-                hist_df = hist_df.sort_values('trade_date').tail(90)
+                hist_df = hist_df.sort_values('trade_date').tail(300)
 
-                # 转换为可序列化的格式
-                hist_df['date'] = hist_df['trade_date'].astype(str)
-                index_history[name] = hist_df[['date', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+                # 补充今天数据（如果本地数据未更新到当天）
+                last_date = hist_df['trade_date'].iloc[-1].date()
+                today_date = datetime.strptime(date, '%Y%m%d').date()
+                if last_date != today_date:
+                    try:
+                        from DataHub.services.realtime_service import RealtimeDataService
+                        rt_df = RealtimeDataService().load_intraday_parquet(
+                            date_str=date, asset_type='index', latest_snapshot=True
+                        )
+                        if rt_df is not None and not rt_df.empty:
+                            rt_row = rt_df[rt_df['symbol'] == code]
+                            if not rt_row.empty:
+                                r = rt_row.iloc[0]
+                                today_row = pd.DataFrame([{
+                                    'trade_date': pd.Timestamp(today_date),
+                                    'open': r.get('open') if pd.notna(r.get('open')) else r.get('close'),
+                                    'high': r.get('high') if pd.notna(r.get('high')) else r.get('close'),
+                                    'low': r.get('low') if pd.notna(r.get('low')) else r.get('close'),
+                                    'close': r.get('close'),
+                                    'volume': int(r.get('volume', 0)) if pd.notna(r.get('volume')) else 0,
+                                }])
+                                hist_df = pd.concat([hist_df, today_row], ignore_index=True)
+                                hist_df = hist_df.sort_values('trade_date').tail(300)
+                                print(f"  ↻ {name}: 已从实时数据补充 {today_date}")
+                    except Exception as e:
+                        print(f"  ⚠ {name}: 补充实时数据失败 - {e}")
 
-                # 获取当日分时数据
-                try:
-                    intraday_data = self._get_index_intraday(code, name)
-                    if intraday_data:
-                        index_intraday[name] = intraday_data
-                        print(f"  ✓ {name}: {len(hist_df)} 条日线 + 分时数据")
-                    else:
-                        print(f"  ✓ {name}: {len(hist_df)} 条日线")
-                except Exception as e:
-                    print(f"  ✓ {name}: {len(hist_df)} 条日线 (分时获取失败: {e})")
+                # 标准化列名
+                tech_df = hist_df.rename(columns={
+                    'trade_date': 'date',
+                    'open': 'open',
+                    'high': 'high',
+                    'low': 'low',
+                    'close': 'close',
+                    'volume': 'volume'
+                }).copy()
+                tech_df['date'] = tech_df['date'].astype(str)
+
+                # 日线
+                index_history_daily[name] = tech_df[['date', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+
+                # 周线
+                df_weekly = self.market_regime.resample_ohlcv(tech_df, 'weekly')
+                if not df_weekly.empty:
+                    index_history_weekly[name] = df_weekly[['date', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+
+                # 月线
+                df_monthly = self.market_regime.resample_ohlcv(tech_df, 'monthly')
+                if not df_monthly.empty:
+                    index_history_monthly[name] = df_monthly[['date', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+
+                print(f"  ✓ {name}: {len(tech_df)} 日 / {len(df_weekly)} 周 / {len(df_monthly)} 月")
             except Exception as e:
                 print(f"  ✗ {name}: 获取失败 - {e}")
 
@@ -1376,8 +1434,12 @@ class LimitUpScanner:
                         'change_pct': round(float(data['change']), 2),
                         'trend': str(data['trend']),
                         'close': round(float(data['close']), 2),
-                        'dow_theory': data.get('dow_theory', {}),
-                        'elliott_wave': data.get('elliott_wave', {})
+                        'analysis': data.get('analysis', {
+                            'daily': {
+                                'dow_theory': data.get('dow_theory', {}),
+                                'elliott_wave': data.get('elliott_wave', {})
+                            }
+                        })
                     } for name, data in indices.items() if name != 'inter_index_validation'
                 },
                 'inter_index_validation': indices.get('inter_index_validation', {}),
@@ -1435,45 +1497,33 @@ class LimitUpScanner:
                     'type': str(oil.get('type', '原油'))
                 }
             },
-            'index_history': index_history,
-            'index_intraday': index_intraday,
+            'index_history': index_history_daily,
+            'index_history_weekly': index_history_weekly,
+            'index_history_monthly': index_history_monthly,
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'market_close_time': (close_time := get_data_close_time())[0],
             'data_status': close_time[1]
         }
 
-        # 确定输出目录 - 按日期分文件夹，支持分钟级报告
-        # 使用环境变量配置的 storage 路径
+        # 确定输出目录
         from DataHub.config import get_storage_path
-        base_output_dir = get_storage_path("outputs", "shortterm", "services")
+        base_output_dir = get_storage_path("outputs", "shortterm", "technical_overview")
+        base_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 按日期创建子文件夹
-        date_folder = base_output_dir / date
-        date_folder.mkdir(parents=True, exist_ok=True)
-
-        # 生成时间戳 (HHMMSS格式)
-        timestamp = datetime.now().strftime('%H%M%S')
-
-        # 保存三份文件：
-        # 1. 最新文件（Dashboard读取）- 在根目录
-        latest_file = base_output_dir / "daily_signals.json"
+        # 保存两份文件（覆盖）：
+        # 1. 最新文件（Dashboard读取）
+        latest_file = base_output_dir / "latest.json"
         with open(latest_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
-        # 2. 日期文件夹内的分钟级文件
-        timed_file = date_folder / f"daily_signals_{timestamp}.json"
-        with open(timed_file, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-        # 3. 日期文件夹内的最新文件（方便查看当天最新）
-        daily_latest_file = date_folder / "daily_signals_latest.json"
-        with open(daily_latest_file, 'w', encoding='utf-8') as f:
+        # 2. 按日期归档文件
+        dated_file = base_output_dir / f"{date}.json"
+        with open(dated_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
         print(f"\n信号已保存至:")
         print(f"  最新: {latest_file}")
-        print(f"  当天: {daily_latest_file}")
-        print(f"  历史: {timed_file}")
+        print(f"  归档: {dated_file}")
 
         return result
 
@@ -1495,7 +1545,7 @@ class LimitUpScanner:
             '上证指数': '000001'
         }
 
-        # 使用环境变量配置的 storage 路径
+        # 使用环境变量配置的存储路径
         from DataHub.config import get_storage_path
         csv_path = get_storage_path('official_indices.csv')
         if not csv_path.exists():
@@ -1615,8 +1665,8 @@ class LimitUpScanner:
 
     def save_to_history(self, heat: pd.DataFrame):
         """保存板块热度历史数据"""
-        # 统一到 storage/outputs/shortterm/services
-        # 使用环境变量配置的 storage 路径
+        # 统一到 outputs/shortterm/services
+        # 使用环境变量配置的存储路径
         from DataHub.config import get_storage_path
         output_dir = get_storage_path("outputs", "shortterm", "services")
         output_dir.mkdir(parents=True, exist_ok=True)

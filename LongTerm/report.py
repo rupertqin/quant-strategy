@@ -29,25 +29,26 @@ class PortfolioReport:
     """组合报告生成器"""
 
     def __init__(self, config_path: str = "config.yaml"):
+        from DataHub.config import get_storage_path
         self.config_path = config_path
         self.config = self._load_config(config_path)
         self.base_dir = os.path.dirname(config_path)
 
-        # 数据目录: 从配置读取，默认到 storage/processed
-        data_config = self.config.get('data_dir', '../storage/processed')
+        # 数据目录: 从配置读取，默认到 processed
+        data_config = self.config.get('data_dir', 'processed')
         if os.path.isabs(data_config):
             self.data_dir = data_config
         else:
-            self.data_dir = os.path.join(self.base_dir, data_config)
+            self.data_dir = str(get_storage_path(data_config))
 
-        # 从配置读取输出路径，默认到 storage
+        # 从配置读取输出路径，默认到 outputs/longterm
         output_config = self.config.get('output', {})
-        self.reports_dir = output_config.get('reports_dir', '../storage/outputs/longterm/reports')
-        self.charts_dir = output_config.get('charts_dir', '../storage/outputs/longterm/reports/charts')
+        self.reports_dir = output_config.get('reports_dir', 'outputs/longterm/reports')
+        self.charts_dir = output_config.get('charts_dir', 'outputs/longterm/reports/charts')
         if not os.path.isabs(self.reports_dir):
-            self.reports_dir = os.path.join(self.base_dir, self.reports_dir)
+            self.reports_dir = str(get_storage_path(self.reports_dir))
         if not os.path.isabs(self.charts_dir):
-            self.charts_dir = os.path.join(self.base_dir, self.charts_dir)
+            self.charts_dir = str(get_storage_path(self.charts_dir))
 
         os.makedirs(self.reports_dir, exist_ok=True)
         os.makedirs(self.charts_dir, exist_ok=True)
@@ -58,10 +59,11 @@ class PortfolioReport:
 
     def load_weights(self) -> pd.DataFrame:
         """加载优化后的权重"""
+        from DataHub.config import get_storage_path
         output_config = self.config.get('output', {})
-        weights_file = output_config.get('weights_file', '../storage/outputs/longterm/weights/output_weights.csv')
+        weights_file = output_config.get('weights_file', 'outputs/longterm/weights/output_weights.csv')
         if not os.path.isabs(weights_file):
-            weights_file = os.path.join(self.base_dir, weights_file)
+            weights_file = str(get_storage_path(weights_file))
         weights = pd.read_csv(weights_file)
         # 过滤零权重
         weights = weights[weights['weight'] > 0.001]

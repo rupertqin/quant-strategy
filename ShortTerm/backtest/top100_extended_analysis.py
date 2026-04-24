@@ -32,8 +32,9 @@ def analyze_top100_backtest():
     results = {}
     periods = [1, 3, 5]  # 现有数据只能支持到5天
     
+    from DataHub.config import get_storage_path
     for period in periods:
-        csv_path = project_root / f"storage/outputs/backtest/top100_hold{period}d_trades.csv"
+        csv_path = get_storage_path("outputs", "backtest") / f"top100_hold{period}d_trades.csv"
         if not csv_path.exists():
             print(f"\n持有{period}天数据不存在，跳过")
             continue
@@ -204,8 +205,9 @@ def analyze_top100_backtest():
     print(f"{'='*100}")
     
     try:
-        df_top10 = pd.read_csv(project_root / "storage/outputs/backtest/top10_hold3d_trades.csv")
-        df_top100 = pd.read_csv(project_root / "storage/outputs/backtest/top100_hold3d_trades.csv")
+        from DataHub.config import get_storage_path
+        df_top10 = pd.read_csv(get_storage_path("outputs", "backtest") / "top10_hold3d_trades.csv")
+        df_top100 = pd.read_csv(get_storage_path("outputs", "backtest") / "top100_hold3d_trades.csv")
         
         print(f"{'指标':<30} {'Top10':>20} {'Top100':>20}")
         print("-"*80)
@@ -315,7 +317,8 @@ def create_top100_charts(results):
         all_returns = []
         labels = []
         for period in periods:
-            df = pd.read_csv(project_root / f"storage/outputs/backtest/top100_hold{period}d_trades.csv")
+            from DataHub.config import get_storage_path
+            df = pd.read_csv(get_storage_path("outputs", "backtest") / f"top100_hold{period}d_trades.csv")
             all_returns.append(df['return_pct'])
             labels.append(f'{period}天')
         
@@ -385,7 +388,8 @@ def create_top100_charts(results):
             }
             
             for strategy, file_prefix in [('Top10', 'top10'), ('Top100', 'top100')]:
-                df = pd.read_csv(project_root / f"storage/outputs/backtest/{file_prefix}_hold3d_trades.csv")
+                from DataHub.config import get_storage_path
+                df = pd.read_csv(get_storage_path("outputs", "backtest") / f"{file_prefix}_hold3d_trades.csv")
                 daily = df.groupby('entry_date')['return_pct'].mean()
                 
                 comparison_data['胜率(%)'].append(df['win'].mean() * 100)
@@ -410,7 +414,8 @@ def create_top100_charts(results):
         plt.suptitle('Top100信号分策略回测分析', fontsize=16, fontweight='bold', y=1.02)
         plt.tight_layout()
         
-        output_path = project_root / "storage/outputs/backtest/top100_analysis.png"
+        from DataHub.config import get_storage_path
+        output_path = get_storage_path("outputs", "backtest") / "top100_analysis.png"
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"\n图表已保存: {output_path}")
         

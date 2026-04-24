@@ -100,86 +100,52 @@ class StockRealtimeLoader(RealtimeDataLoader):
 
 
 class EtfRealtimeLoader(RealtimeDataLoader):
-    """ETF实时数据加载器"""
-    
-    def __init__(self, project_root: Path):
-        self.project_root = project_root
-        self.realtime_dir = project_root / "storage" / "raw" / "realtime"
-        self.today_str = datetime.now().strftime('%Y%m%d')
-    
+    """ETF实时数据加载器（从 intraday parquet 读取）"""
+
     def load(self) -> Tuple[Optional[pd.DataFrame], str]:
         from DataHub.services.realtime_service import RealtimeDataService
-        
         rt_service = RealtimeDataService()
-        etf_files = sorted(self.realtime_dir.glob(f"etf_realtime_{self.today_str}_*.json"))
-        
-        if not etf_files:
+        df = rt_service.load_intraday_parquet(asset_type='etf', latest_snapshot=True)
+        if df is None or df.empty:
             return None, ""
-        
-        latest_file = etf_files[-1]
-        df = rt_service.load_realtime_data(str(latest_file))
-        
-        # 从文件名提取完整时间: YYYYMMDD_HHMMSS -> YYYY-MM-DD HH:MM
-        fname = latest_file.name
-        # 解析文件名: etf_realtime_20260420_131801.json
-        import re
-        match = re.search(r'etf_realtime_(\d{8})_(\d{6})\.json', fname)
-        if match:
-            date_part = f"{match.group(1)[:4]}-{match.group(1)[4:6]}-{match.group(1)[6:8]}"
-            time_part = f"{match.group(2)[:2]}:{match.group(2)[2:4]}"
-            time_str = f"{date_part} {time_part}"
-        else:
-            time_str = ""
-        
+
+        time_str = ""
+        if 'timestamp' in df.columns and not df.empty:
+            time_str = df['timestamp'].max().strftime('%Y-%m-%d %H:%M')
         return df, time_str
-    
+
     def check_exists(self) -> bool:
-        return len(list(self.realtime_dir.glob(f"etf_realtime_{self.today_str}_*.json"))) > 0
+        from DataHub.services.realtime_service import RealtimeDataService
+        df = RealtimeDataService().load_intraday_parquet(asset_type='etf', latest_snapshot=True)
+        return df is not None and not df.empty
 
 
 class IndexRealtimeLoader(RealtimeDataLoader):
-    """指数实时数据加载器"""
-    
-    def __init__(self, project_root: Path):
-        self.project_root = project_root
-        self.realtime_dir = project_root / "storage" / "raw" / "realtime"
-        self.today_str = datetime.now().strftime('%Y%m%d')
-    
+    """指数实时数据加载器（从 intraday parquet 读取）"""
+
     def load(self) -> Tuple[Optional[pd.DataFrame], str]:
         from DataHub.services.realtime_service import RealtimeDataService
-        
         rt_service = RealtimeDataService()
-        index_files = sorted(self.realtime_dir.glob(f"index_realtime_{self.today_str}_*.json"))
-        
-        if not index_files:
+        df = rt_service.load_intraday_parquet(asset_type='index', latest_snapshot=True)
+        if df is None or df.empty:
             return None, ""
-        
-        latest_file = index_files[-1]
-        df = rt_service.load_realtime_data(str(latest_file))
-        
-        # 从文件名提取完整时间: YYYYMMDD_HHMMSS -> YYYY-MM-DD HH:MM
-        fname = latest_file.name
-        # 解析文件名: index_realtime_20260420_131801.json
-        import re
-        match = re.search(r'index_realtime_(\d{8})_(\d{6})\.json', fname)
-        if match:
-            date_part = f"{match.group(1)[:4]}-{match.group(1)[4:6]}-{match.group(1)[6:8]}"
-            time_part = f"{match.group(2)[:2]}:{match.group(2)[2:4]}"
-            time_str = f"{date_part} {time_part}"
-        else:
-            time_str = ""
-        
+
+        time_str = ""
+        if 'timestamp' in df.columns and not df.empty:
+            time_str = df['timestamp'].max().strftime('%Y-%m-%d %H:%M')
         return df, time_str
-    
+
     def check_exists(self) -> bool:
-        return len(list(self.realtime_dir.glob(f"index_realtime_{self.today_str}_*.json"))) > 0
+        from DataHub.services.realtime_service import RealtimeDataService
+        df = RealtimeDataService().load_intraday_parquet(asset_type='index', latest_snapshot=True)
+        return df is not None and not df.empty
 
 
 # 实时数据加载器工厂
 REALTIME_LOADERS: Dict[str, Callable[[Path], RealtimeDataLoader]] = {
     'stock': lambda root: StockRealtimeLoader(),
-    'etf': lambda root: EtfRealtimeLoader(root),
-    'index': lambda root: IndexRealtimeLoader(root),
+    'etf': lambda root: EtfRealtimeLoader(),
+    'index': lambda root: IndexRealtimeLoader(),
 }
 
 
@@ -227,9 +193,9 @@ def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame,
     if hist_df is None or hist_df.empty:
         return []
 
-    # 合并实时数据到历史K线
+    # 合并实时数据到历史K线（历史数据为前复权，需同步转换实时价格）
     from Dashboard.utils.data_access import merge_realtime_to_history
-    merged_df = merge_realtime_to_history(hist_df, realtime)
+    merged_df = merge_realtime_to_history(hist_df, realtime, adjust="qfq")
     
     # 3. 使用完整的检测器进行信号检测（日线）
     signals = []
@@ -324,9 +290,9 @@ def build_scan_result(signals: list, symbols: List[str], price_time_str: str,
 
 
 def save_scan_result(result: Dict, asset_type: str, project_root: Path) -> Path:
-    """保存扫描结果到文件"""
-    config = get_asset_config(asset_type)
-    output_dir = project_root / "storage" / "outputs" / "signals"
+    """保存扫描结果到文件（统一合并文件）"""
+    from DataHub.config import SHORTTERM_SIGNALS_DIR
+    output_dir = SHORTTERM_SIGNALS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
     date_str = datetime.now().strftime('%Y%m%d')
@@ -334,20 +300,16 @@ def save_scan_result(result: Dict, asset_type: str, project_root: Path) -> Path:
     # 转换 numpy 类型为 Python 原生类型
     result = convert_to_serializable(result)
 
-    # 带日期的文件名
-    filename = f"{config.filename_prefix}_signals_intraday_{date_str}.json"
-    filepath = output_dir / filename
-
+    # 统一带日期的文件名（覆盖）
+    filepath = output_dir / f"signal_{date_str}.json"
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    
-    # latest 文件名
-    latest_filename = f"{config.filename_prefix}_signals_latest.json"
-    latest_path = output_dir / latest_filename
-    
+
+    # 统一 latest 文件名（覆盖）
+    latest_path = output_dir / "signal_latest.json"
     with open(latest_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    
+
     return latest_path
 
 
@@ -397,7 +359,7 @@ def print_intraday_summary(signals: list, asset_config: AssetConfig, result: Dic
         )[:10]:
             print(f"    {sig_name}: {count}")
     
-    print(f"\n💾 数据已保存: {asset_config.filename_prefix}_signals_latest.json")
+    print(f"\n💾 数据已保存: signal_latest.json")
 
 
 def print_scan_summary(result: Dict, asset_config: AssetConfig):
@@ -426,7 +388,7 @@ def print_scan_summary(result: Dict, asset_config: AssetConfig):
         )[:15]:
             print(f"    {sig_name}: {count}")
 
-    print(f"\n💾 数据已保存: {asset_config.filename_prefix}_signals_latest.json")
+    print(f"\n💾 数据已保存: signal_latest.json")
     print(f"🌐 请在 Dashboard 中查看: streamlit run Dashboard/app.py")
 
 
@@ -649,10 +611,7 @@ def run_combined_scan(args, include_index: bool = True):
             total_signals += result['total_signals']
     
     print(f"\n📊 总计: {total_signals} 个信号")
-    print(f"💾 股票: stock_signals_latest.json")
-    print(f"💾 ETF: etf_signals_latest.json")
-    if include_index:
-        print(f"💾 指数: index_signals_latest.json")
+    print(f"💾 数据已保存: signal_latest.json")
 
 
 def scan_asset_type_intraday(realtime_df: pd.DataFrame, asset_type: str,
@@ -675,7 +634,8 @@ def scan_asset_type_intraday(realtime_df: pd.DataFrame, asset_type: str,
 
     # ETF只扫描 etf_basic_info.csv 中列出的（避免同步全市场ETF历史数据）
     if asset_type == 'etf':
-        etf_csv = project_root / "storage" / "etf_basic_info.csv"
+        from DataHub.config import get_storage_path
+        etf_csv = get_storage_path("etf_basic_info.csv")
         if etf_csv.exists():
             import pandas as pd
             etf_list = pd.read_csv(etf_csv)['symbol'].tolist()
@@ -683,11 +643,14 @@ def scan_asset_type_intraday(realtime_df: pd.DataFrame, asset_type: str,
 
     # 指数只扫描 official_indices.csv 中列出的（避免扫描全市场指数）
     if asset_type == 'index':
-        index_csv = project_root / "storage" / "official_indices.csv"
+        from DataHub.config import get_storage_path
+        index_csv = get_storage_path("official_indices.csv")
         if index_csv.exists():
             import pandas as pd
             index_list = pd.read_csv(index_csv)['symbol'].tolist()
             symbols = [s for s in symbols if s in index_list]
+        else:
+            print(f"   ⚠️ 未找到指数列表文件: {index_csv}，将扫描全部 {len(symbols)} 只指数")
 
     if limit:
         print(f"   扫描前 {limit} 只{config.name}...")
@@ -753,15 +716,9 @@ def run_all_intraday_scan(args, include_index: bool = True):
             all_signals.extend(signals)
             all_symbols.extend(symbols)
     
-    # 构建时间字符串
-    price_time_str = ""
-    if stock_time:
-        price_time_str += f"股票{stock_time}"
-    if etf_time:
-        price_time_str += f" ETF{etf_time}" if price_time_str else f"ETF{etf_time}"
-    if index_time:
-        price_time_str += f" 指数{index_time}" if price_time_str else f"指数{index_time}"
-    
+    # 统一价格时间（取最新的一个）
+    price_time_str = stock_time or etf_time or index_time or ""
+
     # 保存结果
     result = build_scan_result(all_signals, all_symbols, price_time_str, multi_period)
     save_all_intraday_results(result, all_signals, stock_df, etf_df, stock_time, etf_time, multi_period, args.limit, index_df, index_time)
@@ -776,42 +733,23 @@ def save_all_intraday_results(result: Dict, all_signals: List,
                                stock_df: Optional[pd.DataFrame], etf_df: Optional[pd.DataFrame],
                                stock_time: str, etf_time: str, multi_period: bool, limit: Optional[int],
                                index_df: Optional[pd.DataFrame] = None, index_time: str = ""):
-    """保存全市场盘中扫描结果"""
-    output_dir = project_root / "storage" / "outputs" / "signals"
+    """保存全市场盘中扫描结果（统一合并文件，覆盖保存）"""
+    from DataHub.config import SHORTTERM_SIGNALS_DIR
+    output_dir = SHORTTERM_SIGNALS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
     date_str = datetime.now().strftime('%Y%m%d')
 
     # 转换 numpy 类型为 Python 原生类型
     result = convert_to_serializable(result)
 
-    # 保存合并文件
-    filepath = output_dir / f"all_signals_intraday_{date_str}.json"
+    # 统一保存合并文件（覆盖）
+    filepath = output_dir / f"signal_{date_str}.json"
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
-    latest_path = output_dir / "all_signals_latest.json"
+    latest_path = output_dir / "signal_latest.json"
     with open(latest_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    
-    # 分别保存股票、ETF和指数结果
-    stock_signals = [s for s in all_signals if detect_asset_type(s.symbol) == 'stock']
-    etf_signals = [s for s in all_signals if detect_asset_type(s.symbol) == 'etf']
-    index_signals = [s for s in all_signals if detect_asset_type(s.symbol) == 'index']
-    
-    if stock_signals and stock_df is not None:
-        stock_symbols = extract_symbols_from_realtime(stock_df, 'stock', limit)
-        stock_result = build_scan_result(stock_signals, stock_symbols, stock_time, multi_period)
-        save_scan_result(stock_result, 'stock', project_root)
-    
-    if etf_signals and etf_df is not None:
-        etf_symbols = extract_symbols_from_realtime(etf_df, 'etf', limit)
-        etf_result = build_scan_result(etf_signals, etf_symbols, etf_time, multi_period)
-        save_scan_result(etf_result, 'etf', project_root)
-    
-    if index_signals and index_df is not None:
-        index_symbols = extract_symbols_from_realtime(index_df, 'index', limit)
-        index_result = build_scan_result(index_signals, index_symbols, index_time, multi_period)
-        save_scan_result(index_result, 'index', project_root)
 
 
 def print_all_intraday_summary(all_signals: List, stock_time: str, etf_time: str, index_time: str = ""):
@@ -855,12 +793,7 @@ def print_all_intraday_summary(all_signals: List, stock_time: str, etf_time: str
     if len(by_symbol) > 10:
         print(f"\n   ... 还有 {len(by_symbol)-10} 只标的有信号")
     
-    print(f"\n💾 数据已保存:")
-    print(f"   all_signals_latest.json (合并)")
-    print(f"   stock_signals_latest.json (股票)")
-    print(f"   etf_signals_latest.json (ETF)")
-    if index_signals:
-        print(f"   index_signals_latest.json (指数)")
+    print(f"\n💾 数据已保存: signal_latest.json")
 
 
 def main():

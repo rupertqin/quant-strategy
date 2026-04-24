@@ -9,9 +9,10 @@ import os
 from pathlib import Path
 
 
+from DataHub.config import get_storage_path
+
 # 数据库路径
-BASE_DIR = Path(__file__).parent.parent.parent
-DB_DIR = BASE_DIR / "storage" / "database"
+DB_DIR = get_storage_path("database")
 DB_PATH = DB_DIR / "quant.db"
 
 # 确保目录存在
@@ -195,7 +196,7 @@ def import_stock_basic():
     """从CSV导入股票基础信息"""
     import pandas as pd
     
-    csv_path = BASE_DIR / "storage" / "stock_basic_info.csv"
+    csv_path = get_storage_path("stock_basic_info.csv")
     if not csv_path.exists():
         print(f"⚠️ 股票基础信息CSV不存在: {csv_path}")
         return False
@@ -240,7 +241,7 @@ def import_etf_basic():
     """从CSV导入ETF基础信息"""
     import pandas as pd
     
-    csv_path = BASE_DIR / "storage" / "etf_basic_info.csv"
+    csv_path = get_storage_path("etf_basic_info.csv")
     if not csv_path.exists():
         print(f"⚠️ ETF基础信息CSV不存在: {csv_path}")
         return False

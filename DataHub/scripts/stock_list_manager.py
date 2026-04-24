@@ -55,8 +55,8 @@ class StockListManager:
             apply_changes: 是否执行实际变更，False 仅预览
         """
         self.apply_changes = apply_changes
-        self.base_dir = project_root
-        self.storage_dir = self.base_dir / "storage"
+        from DataHub.config import get_storage_path
+        self.storage_dir = get_storage_path()
         self.csv_path = self.storage_dir / "stock_basic_info.csv"
         self.price_dir = RAW_PRICE_DIR
         self.adjust_dir = RAW_ADJUST_FACTOR_DIR

@@ -18,7 +18,8 @@ class DataBridge:
         self.longterm_dir = os.path.join(self.base_dir, "LongTerm")
         self.shortterm_dir = os.path.join(self.base_dir, "ShortTerm")
         # 新统一输出目录
-        self.storage_outputs = os.path.join(self.base_dir, "storage", "outputs")
+        from DataHub.config import get_storage_path
+        self.storage_outputs = str(get_storage_path("outputs"))
 
     def get_longterm_weights(self) -> pd.DataFrame:
         """读取长线权重配置 - 从 storage/outputs 读取"""
@@ -41,7 +42,7 @@ class DataBridge:
 
     def get_shortterm_signals(self) -> dict:
         """读取短线信号 - 从 storage/outputs 读取"""
-        signals_file = os.path.join(self.storage_outputs, "shortterm", "services", "daily_signals.json")
+        signals_file = os.path.join(self.storage_outputs, "shortterm", "technical_overview", "latest.json")
         if os.path.exists(signals_file):
             with open(signals_file, 'r', encoding='utf-8') as f:
                 return json.load(f)

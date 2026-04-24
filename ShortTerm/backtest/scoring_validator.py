@@ -78,23 +78,24 @@ class ScoringValidator:
     """评分系统验证器"""
     
     def __init__(self, signals_dir: Path = None):
-        self.signals_dir = signals_dir or project_root / "storage" / "outputs" / "signals"
+        from DataHub.config import SHORTTERM_SIGNALS_DIR
+        self.signals_dir = signals_dir or SHORTTERM_SIGNALS_DIR
         self.results: List[BacktestResult] = []
-        
+
     def load_signals(self, date_str: str = None) -> List[Dict]:
         """加载指定日期的信号数据"""
         if date_str:
-            filepath = self.signals_dir / f"stock_signals_{date_str}.json"
+            filepath = self.signals_dir / f"signal_{date_str}.json"
         else:
-            filepath = self.signals_dir / "stock_signals_latest.json"
-            
+            filepath = self.signals_dir / "signal_latest.json"
+
         if not filepath.exists():
             logger.error(f"信号文件不存在: {filepath}")
             return []
-            
+
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            
+
         return data.get('signals', [])
     
     def calculate_future_returns(self, symbol: str, signal_date: str) -> Dict[str, float]:
