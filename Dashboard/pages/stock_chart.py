@@ -38,7 +38,8 @@ from utils.scoring import calculate_stock_score, get_score_label
 from utils.signal_components import (
     calculate_risk_score, calculate_stock_metrics,
     render_signal_list, render_risk_assessment,
-    render_expander_header, get_risk_color_emoji
+    render_expander_header, render_stock_signal_expander,
+    get_risk_color_emoji
 )
 
 # 导入底层数据接口（默认前复权）
@@ -1418,25 +1419,11 @@ def main():
         </style>
         """, unsafe_allow_html=True)
 
-        # 显示该股票的所有信号（使用模块化卡片）
-        expander_title = render_expander_header(signal_count, portfolio_score, score_label, risk_score)
-
-        with st.expander(expander_title, expanded=False):
-            # 使用组件渲染信号和风险详情（左右布局）
-            sig_col, risk_col = st.columns(2)
-            with sig_col:
-                if stock_signals:
-                    render_signal_list(stock_signals)
-                else:
-                    # 只有风险信号的股票
-                    st.markdown("""
-                    <div style="padding: 20px; background: #fdf2f2; border-radius: 8px; border-left: 4px solid #e74c3c;">
-                        <div style="font-size: 16px; font-weight: 600; color: #e74c3c; margin-bottom: 8px;">⚠️ 风险预警</div>
-                        <div style="font-size: 13px; color: #666;">该股票当前无买入信号，但检测到风险信号，建议关注。</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            with risk_col:
-                render_risk_assessment(risk_score, risk_explanations)
+        # 使用通用组件渲染信号+风险折叠区域
+        render_stock_signal_expander(
+            stock_signals, portfolio_score, risk_score, risk_explanations,
+            score_label=score_label, expanded=False
+        )
 
     # ============= 周期选择 =============
     periods = [("日线", "D"), ("周线", "W"), ("月线", "M")]

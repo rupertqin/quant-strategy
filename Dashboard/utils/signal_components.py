@@ -38,6 +38,38 @@ def get_risk_color_css(risk_score: int) -> str:
         return "#e74c3c"
 
 
+def get_change_pct_display(change_pct: float):
+    """统一返回涨跌幅的颜色和格式化字符串（兼容旧数据大值）"""
+    if abs(change_pct) > 100:
+        change_pct = change_pct / 100
+    if change_pct > 0:
+        return "#ff4757", f"+{change_pct:.2f}%"
+    elif change_pct < 0:
+        return "#2ed573", f"{change_pct:.2f}%"
+    else:
+        return "#888", "0.00%"
+
+
+def get_score_style(score: int):
+    """统一返回信号分的背景色和文字色"""
+    if score >= 70:
+        return "#27ae60", "white"
+    elif score >= 50:
+        return "#f39c12", "white"
+    else:
+        return "#e74c3c", "white"
+
+
+def get_risk_style(risk_score: int):
+    """统一返回风险分的背景色、文字色和标签"""
+    if risk_score < 40:
+        return "#27ae60", "white", "低风险"
+    elif risk_score < 70:
+        return "#f39c12", "white", "中风险"
+    else:
+        return "#e74c3c", "white", "高风险"
+
+
 def render_signal_list(signals: List[dict], show_header: bool = True) -> None:
     """
     渲染信号列表（信号详情）
@@ -53,11 +85,44 @@ def render_signal_list(signals: List[dict], show_header: bool = True) -> None:
         st.markdown("<div style='font-size: 12px; color: #888;'>无买入信号</div>", unsafe_allow_html=True)
         return
 
+    # 提取公共信息（同一股票的多条信号通常日期/价格相同）
+    common_date = signals[0].get('trigger_date', '')
+    common_price = signals[0].get('close_price', 0)
+    common_pct = signals[0].get('change_pct', 0)
+    # 兼容旧数据：异常大的值自动修正
+    if abs(common_pct) > 100:
+        common_pct = common_pct / 100
+
+    all_same = all(
+        s.get('trigger_date') == common_date and
+        abs(s.get('close_price', 0) - common_price) < 0.01 and
+        abs(s.get('change_pct', 0) - common_pct) < 0.01
+        for s in signals
+    )
+
+    # 公共的日期/价格/涨跌幅只在顶部显示一次
+    if all_same and signals:
+        if common_pct > 0:
+            pct_color = "#ff4757"
+            pct_str = f"+{common_pct:.2f}%"
+        elif common_pct < 0:
+            pct_color = "#2ed573"
+            pct_str = f"{common_pct:.2f}%"
+        else:
+            pct_color = "#888"
+            pct_str = "0.00%"
+        st.markdown(f"""
+        <div style="font-size: 11px; color: #666; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #eee;">
+            📅 {common_date}　💰 ¥{common_price:.2f}　<span style="color: {pct_color};">{pct_str}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
     for sig in signals:
         sig_type = sig.get('signal_type', 'left')
         period = sig.get('period', 'daily')
         sig_name = sig.get('signal_name', '')
         sig_score = sig.get('score', 0)
+        description = sig.get('description', '')
         type_emoji = "📈" if sig_type == 'right' else "📉"
         type_text = "右侧" if sig_type == 'right' else "左侧"
         period_name = {'daily': '日线', 'weekly': '周线', 'monthly': '月线'}.get(period, period)
@@ -71,9 +136,14 @@ def render_signal_list(signals: List[dict], show_header: bool = True) -> None:
             score_color = "#e74c3c"
 
         st.markdown(f"""
-        <div style="font-size: 12px; padding: 3px 0;">
-            {type_emoji} [{type_text}] {sig_name} ({period_name})
-            <span style="color: {score_color}; font-weight: 600;">{sig_score}分</span>
+        <div style="font-size: 12px; padding: 4px 0; border-bottom: 1px solid #f0f0f0;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span>{type_emoji} [{type_text}] {sig_name} ({period_name})</span>
+                <span style="color: {score_color}; font-weight: 600;">{sig_score}分</span>
+            </div>
+            <div style="font-size: 11px; color: #555; margin-top: 2px; line-height: 1.4;">
+                {description}
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -106,7 +176,7 @@ def render_signal_and_risk(
 ) -> None:
     """
     统一渲染信号详情和风险评估（两列布局）
-    
+
     Args:
         signals: 信号列表
         signal_score: 信号分数
@@ -125,6 +195,52 @@ def render_signal_and_risk(
         render_signal_list(signals)
         st.markdown("---")
         render_risk_assessment(risk_score, risk_explanations)
+
+
+def render_stock_signal_expander(
+    signals: List[dict],
+    signal_score: int,
+    risk_score: int,
+    risk_explanations: List[str],
+    score_label: str = "",
+    expanded: bool = False
+) -> None:
+    """
+    渲染股票的信号+风险折叠区域（通用组件）
+
+    供 signal_watch、pool_watch、stock_chart 共用，避免三处重复内联代码。
+
+    Args:
+        signals: 信号列表
+        signal_score: 信号分数
+        risk_score: 风险分数
+        risk_explanations: 风险解释列表
+        score_label: 信号评级标签，为空时自动计算
+        expanded: 是否默认展开
+    """
+    from Dashboard.utils.scoring import get_score_label
+
+    if not score_label:
+        score_label = get_score_label(signal_score)
+
+    expander_title = render_expander_header(
+        len(signals), signal_score, score_label, risk_score
+    )
+
+    with st.expander(expander_title, expanded=expanded):
+        sig_col, risk_col = st.columns(2)
+        with sig_col:
+            if signals:
+                render_signal_list(signals, show_header=False)
+            else:
+                st.markdown("""
+                <div style="padding: 20px; background: #fdf2f2; border-radius: 8px; border-left: 4px solid #e74c3c;">
+                    <div style="font-size: 16px; font-weight: 600; color: #e74c3c; margin-bottom: 8px;">⚠️ 风险预警</div>
+                    <div style="font-size: 13px; color: #666;">该股票当前无买入信号，但检测到风险信号，建议关注。</div>
+                </div>
+                """, unsafe_allow_html=True)
+        with risk_col:
+            render_risk_assessment(risk_score, risk_explanations)
 
 
 def render_expander_header(

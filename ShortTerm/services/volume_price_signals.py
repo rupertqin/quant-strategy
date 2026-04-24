@@ -417,6 +417,25 @@ class VolumePriceAdapter:
         else:
             signal_type = "left"   # 背离/缩量类属于左侧
         
+        # 构建包含具体数字的信号描述
+        pct_str = f"+{change_pct}%" if change_pct > 0 else f"{change_pct}%"
+        vol_ratio = round(vp_signal.volume_ratio, 2)
+        ma20 = technicals.get("ma20")
+        ma20_str = f"MA20=¥{ma20:.2f}" if ma20 else ""
+
+        if signal_name == "放量突破":
+            description = f"当前价格¥{close_price:.2f}({pct_str})，成交量{vol_ratio}倍突破，资金主动进攻"
+        elif signal_name == "倍量启动":
+            description = f"当前价格¥{close_price:.2f}({pct_str})，成交量骤增至{vol_ratio}倍，启动迹象明显"
+        elif signal_name == "量能堆积":
+            description = f"当前价格¥{close_price:.2f}({pct_str})，连续放量({vol_ratio}倍)，资金持续流入"
+        elif signal_name == "量价背离":
+            description = f"当前价格¥{close_price:.2f}({pct_str})，价格下行但成交量萎缩({vol_ratio}倍)，抛压减弱"
+        elif signal_name == "缩量整理":
+            description = f"当前价格¥{close_price:.2f}({pct_str})，成交量缩至{vol_ratio}倍，整理接近尾声"
+        else:
+            description = f"当前价格¥{close_price:.2f}({pct_str})，{signal_name}"
+
         return {
             "symbol": symbol,
             "name": name,
@@ -428,7 +447,7 @@ class VolumePriceAdapter:
             "close_price": close_price,
             "change_pct": change_pct,
             "volume_ratio": vp_signal.volume_ratio,
-            "description": vp_signal.description,
+            "description": description,
             "score": vp_signal.score,
             "technicals": {
                 **technicals,

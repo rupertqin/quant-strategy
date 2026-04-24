@@ -674,6 +674,9 @@ class LeftSignalDetector:
         if zt_quality['zt_quality_score'] is not None:
             technicals.update(zt_quality)
 
+        # 用具体数字构建信号描述（有理有据）
+        description = self._build_description(signal_name, latest, prev, technicals)
+
         return StockSignal(
             symbol=symbol,
             name=name,
@@ -689,6 +692,87 @@ class LeftSignalDetector:
             score=score,
             technicals=technicals
         )
+
+    def _build_description(self, signal_name: str, latest, prev, technicals: dict) -> str:
+        """
+        根据信号类型和实时数据构建包含具体数字的描述
+        """
+        close = round(latest['close'], 2)
+        change_pct = round(latest.get('change_pct', 0), 2)
+        pct_str = f"+{change_pct}%" if change_pct > 0 else f"{change_pct}%"
+        pct_word = "上涨" if change_pct > 0 else "下跌" if change_pct < 0 else "平盘"
+
+        ma5 = technicals.get('ma5')
+        ma10 = technicals.get('ma10')
+        ma20 = technicals.get('ma20')
+        ma60 = technicals.get('ma60')
+        macd_dif = technicals.get('macd_dif')
+        macd_dea = technicals.get('macd_dea')
+        kdj_k = technicals.get('kdj_k')
+        kdj_d = technicals.get('kdj_d')
+        kdj_j = technicals.get('kdj_j')
+        vol_ratio = round(latest.get('volume_ratio', 1), 2)
+
+        if signal_name == "MACD底背离":
+            return f"当前价格¥{close}({pct_str})，价格创新低但MACD(DIF={macd_dif})未创新低，底背离形成"
+
+        if signal_name == "KDJ底背离":
+            return f"当前价格¥{close}({pct_str})，KDJ(K={kdj_k}, D={kdj_d})在超卖区拐头向上，底背离"
+
+        if signal_name == "超跌反弹":
+            deviation = round((close - ma60) / ma60 * 100, 2) if ma60 else 0
+            return f"当前价格¥{close}({pct_str})，偏离MA60(¥{ma60})达{deviation}%，技术性反弹概率高"
+
+        if signal_name == "缩量十字星":
+            return f"当前价格¥{close}({pct_str})，实体极小且成交量萎缩至{vol_ratio}倍，下跌后可能企稳"
+
+        if signal_name == "长下影线":
+            lower_shadow = round(min(latest['close'], latest['open']) - latest['low'], 2)
+            return f"当前价格¥{close}({pct_str})，下影线长达¥{lower_shadow}，下方有强支撑"
+
+        if signal_name == "量价背离":
+            return f"当前价格¥{close}({pct_str})，价格下行但成交量萎缩({vol_ratio}倍)，抛压减弱"
+
+        if signal_name == "缩量整理":
+            return f"当前价格¥{close}({pct_str})，成交量缩至{vol_ratio}倍，整理接近尾声"
+
+        # 右侧信号
+        if signal_name == "MA5金叉MA10":
+            above_ma20 = "站上" if close > ma20 else "未站上"
+            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})上穿MA10(¥{ma10})，{above_ma20}MA20(¥{ma20})"
+
+        if signal_name == "MA5金叉MA20":
+            above_ma60 = "站上" if close > ma60 else "未站上"
+            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})上穿MA20(¥{ma20})，{above_ma60}MA60(¥{ma60})"
+
+        if signal_name == "MACD金叉":
+            zero_axis = "零轴上方" if macd_dif and macd_dif > 0 else "零轴下方"
+            return f"当前价格¥{close}({pct_str})，MACD(DIF={macd_dif})上穿DEA({macd_dea})，{zero_axis}金叉"
+
+        if signal_name == "KDJ金叉":
+            zone = "超卖区" if kdj_k and kdj_k < 20 else "常态区"
+            return f"当前价格¥{close}({pct_str})，KDJ(K={kdj_k})上穿D({kdj_d})，{zone}金叉"
+
+        if signal_name == "量价突破":
+            return f"当前价格¥{close}({pct_str})，成交量放大至{vol_ratio}倍，放量上涨资金入场"
+
+        if signal_name == "均线多头排列":
+            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})>MA10(¥{ma10})>MA20(¥{ma20})，多头排列"
+
+        if signal_name == "突破平台":
+            return f"当前价格¥{close}({pct_str})，放量({vol_ratio}倍)突破近期整理平台上沿"
+
+        if signal_name == "放量突破":
+            return f"当前价格¥{close}({pct_str})，成交量{vol_ratio}倍突破，资金主动进攻"
+
+        if signal_name == "倍量启动":
+            return f"当前价格¥{close}({pct_str})，成交量骤增至{vol_ratio}倍，启动迹象明显"
+
+        if signal_name == "量能堆积":
+            return f"当前价格¥{close}({pct_str})，连续放量({vol_ratio}倍)，资金持续流入"
+
+        # 默认回退
+        return f"当前价格¥{close}({pct_str})，{signal_name}"
 
     def _calculate_score(self, signal_name: str, strength: str, latest) -> int:
         """
@@ -1144,6 +1228,9 @@ class RightSignalDetector:
         if zt_quality['zt_quality_score'] is not None:
             technicals.update(zt_quality)
 
+        # 用具体数字构建信号描述（有理有据）
+        description = self._build_description(signal_name, latest, prev, technicals)
+
         return StockSignal(
             symbol=symbol,
             name=name,
@@ -1159,6 +1246,61 @@ class RightSignalDetector:
             score=score,
             technicals=technicals
         )
+
+    def _build_description(self, signal_name: str, latest, prev, technicals: dict) -> str:
+        """
+        根据信号类型和实时数据构建包含具体数字的描述
+        """
+        close = round(latest['close'], 2)
+        change_pct = round(latest.get('change_pct', 0), 2)
+        pct_str = f"+{change_pct}%" if change_pct > 0 else f"{change_pct}%"
+
+        ma5 = technicals.get('ma5')
+        ma10 = technicals.get('ma10')
+        ma20 = technicals.get('ma20')
+        ma60 = technicals.get('ma60')
+        macd_dif = technicals.get('macd_dif')
+        macd_dea = technicals.get('macd_dea')
+        kdj_k = technicals.get('kdj_k')
+        kdj_d = technicals.get('kdj_d')
+        vol_ratio = round(latest.get('volume_ratio', 1), 2)
+
+        if signal_name == "MA5金叉MA10":
+            above_ma20 = "站上" if close > ma20 else "未站上"
+            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})上穿MA10(¥{ma10})，{above_ma20}MA20(¥{ma20})"
+
+        if signal_name == "MA5金叉MA20":
+            above_ma60 = "站上" if close > ma60 else "未站上"
+            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})上穿MA20(¥{ma20})，{above_ma60}MA60(¥{ma60})"
+
+        if signal_name == "MACD金叉":
+            zero_axis = "零轴上方" if macd_dif and macd_dif > 0 else "零轴下方"
+            return f"当前价格¥{close}({pct_str})，MACD(DIF={macd_dif})上穿DEA({macd_dea})，{zero_axis}金叉"
+
+        if signal_name == "KDJ金叉":
+            zone = "超卖区" if kdj_k and kdj_k < 20 else "常态区"
+            return f"当前价格¥{close}({pct_str})，KDJ(K={kdj_k})上穿D({kdj_d})，{zone}金叉"
+
+        if signal_name == "量价突破":
+            return f"当前价格¥{close}({pct_str})，成交量放大至{vol_ratio}倍，放量上涨资金入场"
+
+        if signal_name == "均线多头排列":
+            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})>MA10(¥{ma10})>MA20(¥{ma20})，多头排列"
+
+        if signal_name == "突破平台":
+            return f"当前价格¥{close}({pct_str})，放量({vol_ratio}倍)突破近期整理平台上沿"
+
+        if signal_name == "放量突破":
+            return f"当前价格¥{close}({pct_str})，成交量{vol_ratio}倍突破，资金主动进攻"
+
+        if signal_name == "倍量启动":
+            return f"当前价格¥{close}({pct_str})，成交量骤增至{vol_ratio}倍，启动迹象明显"
+
+        if signal_name == "量能堆积":
+            return f"当前价格¥{close}({pct_str})，连续放量({vol_ratio}倍)，资金持续流入"
+
+        # 默认回退
+        return f"当前价格¥{close}({pct_str})，{signal_name}"
 
     def _calculate_score(self, signal_name: str, strength: str, latest) -> int:
         """

@@ -14,7 +14,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.scoring import calculate_stock_score
 from utils.signal_components import (
-    calculate_risk_score, render_signal_list, render_risk_assessment
+    calculate_risk_score, render_signal_list, render_risk_assessment,
+    get_change_pct_display, get_score_style, get_risk_style
 )
 
 # 导入底层数据接口
@@ -515,31 +516,12 @@ def _render_stock_rows():
         if abs(change_pct) > 100:
             change_pct = change_pct / 100
 
-        # 涨跌幅颜色
-        if change_pct > 0:
-            change_color = "#ff4757"
-            change_str = f"+{change_pct:.2f}%"
-        elif change_pct < 0:
-            change_color = "#2ed573"
-            change_str = f"{change_pct:.2f}%"
-        else:
-            change_color = "#888"
-            change_str = "0.00%"
+        # 涨跌幅颜色与格式化（使用通用函数）
+        change_color, change_str = get_change_pct_display(change_pct)
 
-        # 分数样式
-        if signal_score >= 60:
-            sig_color = "#27ae60"
-        elif signal_score >= 40:
-            sig_color = "#f39c12"
-        else:
-            sig_color = "#e74c3c"
-
-        if risk_score < 40:
-            risk_color = "#27ae60"
-        elif risk_score < 70:
-            risk_color = "#f39c12"
-        else:
-            risk_color = "#e74c3c"
+        # 分数样式（使用通用函数）
+        sig_color, _ = get_score_style(signal_score)
+        risk_color, _, _ = get_risk_style(risk_score)
 
         # 生成唯一 key
         stock_key = symbol.replace(".", "_")

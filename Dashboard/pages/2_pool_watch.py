@@ -21,7 +21,8 @@ from Dashboard.utils.formatters import render_signal_card
 from Dashboard.utils.scoring import calculate_stock_score
 from Dashboard.utils.signal_components import (
     calculate_stock_metrics, render_signal_list, render_risk_assessment,
-    render_expander_header, get_risk_color_css
+    render_expander_header, render_stock_signal_expander,
+    get_change_pct_display, get_score_style, get_risk_style, get_risk_color_css
 )
 from DataHub.config import get_storage_path
 
@@ -368,10 +369,9 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
                 st.switch_page("pages/stock_chart.py")
         
         with price_col:
-            # 价格和时间
-            price_color = "#ff6b6b" if change_pct >= 0 else "#2ed573"
+            # 价格和时间（使用通用格式化函数）
+            price_color, change_display = get_change_pct_display(change_pct)
             price_display = f"¥{close_price:.2f}" if close_price else "-"
-            change_display = f"{change_pct:+.2f}%" if change_pct else "-"
 
             st.markdown(f'''
             <div style="text-align: right; font-size: 11px; margin-top: 8px;">
@@ -398,40 +398,32 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
             # 只有风险信号的股票显示风险预警标签
             st.markdown(f'<div style="margin: 5px 0;"><span style="background: #e74c3c; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">⚠️ 风险预警</span></div>', unsafe_allow_html=True)
         
-        # 使用折叠区域显示信号和风险详情（与signal_watch页面一致）
+        # 使用通用组件渲染信号和风险折叠区域
         from Dashboard.utils.scoring import get_score_label
         score_label = get_score_label(total_score)
-        expander_title = render_expander_header(len(signals), total_score, score_label, risk_score)
-
-        with st.expander(expander_title, expanded=False):
-            # 使用组件渲染信号和风险详情（左右布局）
-            sig_col, risk_col = st.columns(2)
-            with sig_col:
-                render_signal_list(signals)
-            with risk_col:
-                render_risk_assessment(risk_score, risk_explanations)
+        render_stock_signal_expander(
+            signals, total_score, risk_score, risk_explanations,
+            score_label=score_label, expanded=False
+        )
     
     with col2:
         # 信号评分（只有风险信号的股票显示为"-")
         if has_buy_signal:
-            score_bg = "#ff6b6b" if total_score >= 80 else "#feca57" if total_score >= 60 else "#dfe6e9"
-            score_color = "white" if total_score >= 60 else "#333"
+            score_bg, score_color = get_score_style(total_score)
             score_display = str(total_score)
         else:
-            score_bg = "#95a5a6"  # 灰色表示无信号
-            score_color = "white"
+            score_bg, score_color = "#95a5a6", "white"
             score_display = "-"
 
-        # 风险分颜色和标签
-        risk_bg = get_risk_color_css(risk_score)
-        risk_text = "低风险" if risk_score < 40 else "中风险" if risk_score < 70 else "高风险"
+        # 风险分和标签（使用通用格式化函数）
+        risk_bg, risk_color, risk_text = get_risk_style(risk_score)
 
         st.markdown(f'''
         <div style="background: {score_bg}; color: {score_color}; padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 8px;">
             <div style="font-size: 20px; font-weight: bold;">{score_display}</div>
             <div style="font-size: 11px;">信号分</div>
         </div>
-        <div style="background: {risk_bg}; color: white; padding: 10px; border-radius: 10px; text-align: center;">
+        <div style="background: {risk_bg}; color: {risk_color}; padding: 10px; border-radius: 10px; text-align: center;">
             <div style="font-size: 20px; font-weight: bold;">{risk_score}</div>
             <div style="font-size: 11px;">{risk_text}</div>
         </div>
