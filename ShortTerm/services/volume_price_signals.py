@@ -334,37 +334,43 @@ class VolumePriceDetector:
     def _detect_volume_accumulation(self, df: pd.DataFrame) -> Optional[VolumePriceSignal]:
         """
         检测量能堆积信号
-        
+
         条件：
         1. 连续3日成交量 > 前20日均量
-        2. 价格缓慢上涨或横盘
+        2. 价格缓慢上涨或横盘（且最新一天不能暴跌）
         3. 可能是主力资金吸筹
         """
         if len(df) < 5:
             return None
-            
+
         recent_3d = df.tail(3)
         latest = df.iloc[-1]
-        
+
+        # === 防线2：修正放量逻辑 —— 暴跌日放量不是"资金流入"，是"恐慌出逃" ===
+        latest_change = latest.get('change_pct')
+        if not pd.isna(latest_change) and latest_change < -4.0:
+            # 最新一天暴跌超过4%，即使放量也不产生量能堆积买入信号
+            return None
+
         # 连续3日放量
         all_above_avg = all(recent_3d['volume_ratio'] > 1.0)
-        
+
         # 价格变化
         price_change_3d = (latest['close'] - df.iloc[-4]['close']) / df.iloc[-4]['close'] * 100
-        
+
         # 成交量递增
         volume_increasing = recent_3d['volume'].is_monotonic_increasing
-        
+
         if all_above_avg and abs(price_change_3d) < 5:
             avg_volume_ratio = recent_3d['volume_ratio'].mean()
-            
+
             if avg_volume_ratio >= 1.5 and volume_increasing:
                 strength = "strong"
                 score = 70
             else:
                 strength = "medium"
                 score = 55
-                
+
             return VolumePriceSignal(
                 pattern=VolumePricePattern.VOLUME_ACCUMULATION,
                 strength=strength,
@@ -411,11 +417,12 @@ class VolumePriceAdapter:
         signal_name = cls.PATTERN_NAMES.get(vp_signal.pattern, vp_signal.pattern.value)
         
         # 判断左右侧信号
-        if vp_signal.pattern in [VolumePricePattern.BREAKOUT_VOLUME, 
-                                  VolumePricePattern.DOUBLE_VOLUME]:
-            signal_type = "right"  # 追涨/突破类属于右侧
+        if vp_signal.pattern in [VolumePricePattern.BREAKOUT_VOLUME,
+                                  VolumePricePattern.DOUBLE_VOLUME,
+                                  VolumePricePattern.VOLUME_ACCUMULATION]:
+            signal_type = "right"  # 追涨/突破/量能堆积类属于右侧（趋势跟随）
         else:
-            signal_type = "left"   # 背离/缩量类属于左侧
+            signal_type = "left"   # 背离/缩量类属于左侧（逆势抄底）
         
         # 构建包含具体数字的信号描述
         pct_str = f"+{change_pct}%" if change_pct > 0 else f"{change_pct}%"

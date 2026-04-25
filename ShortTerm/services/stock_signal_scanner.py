@@ -90,6 +90,51 @@ def format_date_safe(date_value) -> str:
 EXCLUDED_EXCHANGES = ['BJ']
 
 
+def deduplicate_signals(signals: List["StockSignal"], categories: Dict[str, List[str]]) -> List["StockSignal"]:
+    """
+    按维度去重，同一维度只保留分数最高的信号（解决多重共线性）
+
+    Args:
+        signals: 原始信号列表
+        categories: 维度分类，如 {'volume': ['倍量启动', '放量突破']}
+
+    Returns:
+        去重后的信号列表
+    """
+    if not signals:
+        return signals
+
+    # 建立信号名到类别的映射
+    name_to_cat = {}
+    for cat, names in categories.items():
+        for n in names:
+            name_to_cat[n] = cat
+
+    # 按类别分组
+    grouped = {}
+    others = []
+    index_map = {}
+
+    for i, sig in enumerate(signals):
+        cat = name_to_cat.get(sig.signal_name)
+        if cat:
+            grouped.setdefault(cat, []).append(sig)
+            index_map[id(sig)] = i
+        else:
+            others.append(sig)
+            index_map[id(sig)] = i
+
+    # 每个类别只保留最高分
+    result = others[:]
+    for cat_signals in grouped.values():
+        best = max(cat_signals, key=lambda s: s.score)
+        result.append(best)
+
+    # 保持原始顺序
+    result.sort(key=lambda s: index_map[id(s)])
+    return result
+
+
 def filter_excluded_symbols(symbols_or_df) -> list:
     """
     过滤掉排除的交易所股票（如北交所）
@@ -427,6 +472,17 @@ class SignalCalculator:
         df['volume_ratio'] = df['volume'] / df['volume_ma5']
         return df
 
+    @staticmethod
+    def calculate_rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
+        """计算RSI相对强弱指标"""
+        df = df.copy()
+        delta = df['close'].diff()
+        gain = delta.where(delta > 0, 0).rolling(window=window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+        rs = gain / loss
+        df['rsi'] = 100 - (100 / (1 + rs))
+        return df
+
 
 class LeftSignalDetector:
     """左侧信号检测器（抄底/反转信号）"""
@@ -455,10 +511,22 @@ class LeftSignalDetector:
         df = self.calc.calculate_kdj(df)
         df = self.calc.calculate_bollinger(df)
         df = self.calc.calculate_volume_ratio(df)
-        
+        df = self.calc.calculate_rsi(df)
+
         latest = df.iloc[-1]
         prev = df.iloc[-2] if len(df) > 1 else latest
         prev2 = df.iloc[-3] if len(df) > 2 else prev
+
+        # === 情境锁：左侧信号只能在股价偏弱/底部时触发 ===
+        # 如果股票已经处于强势上涨状态，所有左侧信号直接失效
+        rsi = latest.get('rsi')
+        ma60 = latest.get('ma60')
+
+        if pd.notna(ma60) and latest['close'] > ma60:
+            return signals  # 已站上MA60，禁止左侧信号
+
+        if pd.notna(rsi) and rsi > 50:
+            return signals  # RSI偏高（非弱势），禁止左侧信号
 
         # 1. MACD底背离
         macd_divergence = self._detect_macd_divergence(df)
@@ -503,7 +571,14 @@ class LeftSignalDetector:
         # 6. 新增：左侧量价信号（缩量整理、量价背离）
         vp_signals = self._detect_volume_price_signals(df, symbol, name, period, latest)
         signals.extend(vp_signals)
-        
+
+        # === 信号互斥去重：同一维度只保留最高分，避免多重共线性 ===
+        signals = deduplicate_signals(signals, {
+            'left_trend': ['MACD底背离', 'KDJ底背离', '超跌反弹'],
+            'left_pattern': ['缩量十字星', '长下影线'],
+            'left_volume': ['量价背离', '缩量整理'],
+        })
+
         return signals
     
     def _detect_volume_price_signals(self, df: pd.DataFrame, symbol: str, name: str, 
@@ -548,10 +623,16 @@ class LeftSignalDetector:
         return signals
 
     def _detect_macd_divergence(self, df: pd.DataFrame, lookback=20) -> Optional[str]:
-        """检测MACD底背离"""
+        """检测MACD底背离（增加情境锁：当前RSI必须<45）"""
         if len(df) < lookback + 10:
             return None
-        
+
+        # 底背离情境锁：当前RSI>=45时，底背离失效
+        latest = df.iloc[-1]
+        rsi = latest.get('rsi')
+        if pd.notna(rsi) and rsi >= 45:
+            return None
+
         recent = df.tail(lookback)
         
         # 找近期价格低点
@@ -573,10 +654,16 @@ class LeftSignalDetector:
         return None
     
     def _detect_kdj_divergence(self, df: pd.DataFrame, lookback=15) -> Optional[str]:
-        """检测KDJ底背离"""
+        """检测KDJ底背离（增加情境锁：当前RSI必须<45）"""
         if len(df) < lookback + 5:
             return None
-        
+
+        # 底背离情境锁：当前RSI>=45时，底背离失效
+        latest = df.iloc[-1]
+        rsi = latest.get('rsi')
+        if pd.notna(rsi) and rsi >= 45:
+            return None
+
         recent = df.tail(lookback)
         
         # 价格创新低
@@ -994,11 +1081,12 @@ class RightSignalDetector:
         df = self.calc.calculate_macd(df)
         df = self.calc.calculate_kdj(df)
         df = self.calc.calculate_volume_ratio(df)
-        
+        df = self.calc.calculate_rsi(df)
+
         latest = df.iloc[-1]
         prev = df.iloc[-2] if len(df) > 1 else latest
         prev2 = df.iloc[-3] if len(df) > 2 else prev
-        
+
         # 1. MA5上穿MA10金叉
         ma_cross = self._detect_ma_cross(df, latest, prev)
         if ma_cross:
@@ -1058,7 +1146,15 @@ class RightSignalDetector:
         # 8. 新增：右侧量价信号（放量突破、倍量启动）
         vp_signals = self._detect_volume_price_signals(df, symbol, name, period, latest)
         signals.extend(vp_signals)
-        
+
+        # === 信号互斥去重：同一维度只保留最高分，避免多重共线性 ===
+        signals = deduplicate_signals(signals, {
+            'trend_ma': ['MA5金叉MA10', 'MA5金叉MA20', '均线多头排列'],
+            'momentum': ['MACD金叉', 'KDJ金叉'],
+            'volume': ['量价突破', '放量突破', '倍量启动', '量能堆积'],
+            'pattern': ['突破平台'],
+        })
+
         return signals
     
     def _detect_volume_price_signals(self, df: pd.DataFrame, symbol: str, name: str, 
@@ -1144,17 +1240,22 @@ class RightSignalDetector:
         return None
     
     def _detect_kdj_cross(self, latest, prev) -> Optional[str]:
-        """检测KDJ金叉"""
+        """检测KDJ金叉（增加高位钝化过滤）"""
         if pd.isna(latest['kdj_k']) or pd.isna(latest['kdj_d']) or pd.isna(prev['kdj_k']) or pd.isna(prev['kdj_d']):
             return None
-        
+
+        # KDJ高位钝化过滤：RSI > 75时，KDJ金叉失效（极端单边上涨中无意义）
+        rsi = latest.get('rsi')
+        if pd.notna(rsi) and rsi > 75:
+            return None
+
         # K上穿D
         if latest['kdj_k'] > latest['kdj_d'] and prev['kdj_k'] < prev['kdj_d']:
             # 在超卖区金叉更强
             if prev['kdj_k'] < 20:
                 return SignalStrength.STRONG.value
             return SignalStrength.MEDIUM.value
-        
+
         return None
     
     def _detect_volume_breakout(self, df: pd.DataFrame, latest, prev, min_volume_ratio=1.5) -> Optional[str]:
@@ -1568,12 +1669,23 @@ class StockSignalScanner:
                 'close': 'last',
                 'volume': 'sum',
                 'amount': 'sum' if 'amount' in df.columns else 'sum'
-            }).dropna()
+            })
 
-            # 过滤掉未来的日期（重要！）
-            from datetime import datetime
-            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            resampled = resampled[resampled.index <= today]
+            # === Bug修复：保留未完成的当前周期，避免时间错位 ===
+            # resample会把本周/本月数据聚合到周期结束日（周五/月末）
+            # 如果周期未结束，结束日是未来日期，需要改为实际最新数据日期
+            if not resampled.empty:
+                last_valid_date = df.index[-1]  # 实际最新数据的日期
+                last_resampled_date = resampled.index[-1]
+
+                if last_resampled_date > last_valid_date:
+                    # 修改最后一根bar的日期为实际最新日期
+                    new_index = resampled.index.tolist()
+                    new_index[-1] = last_valid_date
+                    resampled.index = new_index
+
+            # 删除完全为空的bar
+            resampled = resampled.dropna()
 
             if resampled.empty:
                 return pd.DataFrame()
@@ -1695,6 +1807,56 @@ class StockSignalScanner:
                 sig.technicals['risk_level'] = health['risk_level']
                 sig.technicals['health_warnings'] = health['warnings']
                 sig.technicals['health_recommendation'] = health['recommendation']
+
+        # === 优化3：全局均线优先级屏蔽 ===
+        # 如果任何周期出现了"均线多头排列"，说明均线已经理顺，
+        # 所有 MA5金叉 信号（无论周期）都属于噪音，直接屏蔽。
+        has_bull_arrangement = any('多头排列' in s.signal_name for s in signals)
+        if has_bull_arrangement:
+            signals = [s for s in signals if 'MA5金叉' not in s.signal_name]
+
+        # === 优化2b：指数量能信号降权 ===
+        # 指数是庞然大物，极难出现个股那种"倍量"控盘行情，
+        # 因此指数的量价信号分数需要降权，避免误报。
+        if self.asset_type == 'index':
+            volume_keywords = ('倍量', '放量', '量能', '量价')
+            for sig in signals:
+                if any(kw in sig.signal_name for kw in volume_keywords):
+                    sig.score = int(sig.score * 0.6)
+
+        # === 优化1：统一所有信号的涨跌幅显示为日线涨幅 ===
+        # 周/月线信号原本显示的是"本周/月迄今涨幅"，会造成同一只股票
+        # 在不同周期信号里涨跌幅不一致的混乱。统一用日线涨替代。
+        if not df_daily.empty:
+            daily_change_pct = df_daily.iloc[-1].get('change_pct', 0)
+            # 兜底：如果原始数据没有 change_pct，用收盘价自己算
+            if pd.isna(daily_change_pct) and len(df_daily) >= 2:
+                daily_change_pct = (df_daily.iloc[-1]['close'] / df_daily.iloc[-2]['close'] - 1) * 100
+
+            if pd.notna(daily_change_pct):
+                daily_pct_str = f"+{daily_change_pct:.2f}%" if daily_change_pct > 0 else f"{daily_change_pct:.2f}%"
+                for sig in signals:
+                    # 统一所有信号的 change_pct（包括日线，以防原始数据缺失）
+                    sig.change_pct = round(daily_change_pct, 2)
+                    # 非日线信号还需要替换描述中的旧涨幅
+                    if sig.period != 'daily':
+                        import re
+                        sig.description = re.sub(
+                            r'\([+-]?\d+\.?\d*%\)',
+                            f'({daily_pct_str})',
+                            sig.description,
+                            count=1
+                        )
+                    else:
+                        # 日线信号：如果描述里出现了 (nan%)，也兜底替换
+                        if '(nan%)' in sig.description or '(N/A%)' in sig.description:
+                            import re
+                            sig.description = re.sub(
+                                r'\(nan%\)|\(N/A%\)',
+                                f'({daily_pct_str})',
+                                sig.description,
+                                count=1
+                            )
 
         return signals
 
@@ -1880,6 +2042,156 @@ class StockSignalScanner:
             sig.technicals['scarcity_label'] = scarcity_label
         
         return signals
+
+    def calculate_dimension_score(self, df_daily: pd.DataFrame, signals: List[StockSignal]) -> dict:
+        """
+        基于互斥维度计算股票综合评分（满分100）
+
+        核心原则：
+        1. 先判定阶段（Close > MA60 → 右侧追涨；否则 → 左侧抄底）
+        2. 右侧取消所有均线金叉信号，只看均线排布状态
+        3. 左侧只看超跌程度和止跌信号
+        4. 每个维度只计一次分，避免多重共线性
+        """
+        latest = df_daily.iloc[-1]
+        close = latest['close']
+
+        # 确保均线已计算
+        if 'ma5' not in df_daily.columns:
+            df_daily = SignalCalculator.calculate_ma(df_daily)
+            latest = df_daily.iloc[-1]
+
+        ma5 = latest.get('ma5', 0) or 0
+        ma10 = latest.get('ma10', 0) or 0
+        ma20 = latest.get('ma20', 0) or 0
+        ma60 = latest.get('ma60', 0) or 0
+
+        # 阶段判定
+        stage = 'right' if close > ma60 else 'left'
+
+        result = {
+            'stage': stage,
+            'trend_score': 0,
+            'momentum_score': 0,
+            'volume_score': 0,
+            'total_score': 0,
+        }
+
+        if stage == 'right':
+            # ========== 右侧评分模块 ==========
+            # === 防线3：日线暴跌一票否决 ===
+            daily_change = latest.get('change_pct')
+            if not pd.isna(daily_change) and daily_change < -4.0:
+                # 今天大跌超过4%，取消所有右侧加分。这种票即使要买，也必须等日线企稳收阳线。
+                result['trend_score'] = 0
+                result['momentum_score'] = 0
+                result['volume_score'] = 0
+                result['total_score'] = 0
+                result['crash_veto'] = True  # 标记被一票否决
+                return result
+
+            # 维度一：趋势判定（30分）- 只看排布，不看金叉
+            if ma5 > ma10 > ma20 > ma60:
+                result['trend_score'] = 30
+            elif ma5 > ma10 > ma20:
+                result['trend_score'] = 20
+            elif close > ma20:
+                result['trend_score'] = 15
+            elif close > ma60:
+                result['trend_score'] = 8
+
+            # 维度二：动能与爆发力（30分）
+            if len(df_daily) >= 20:
+                high_20 = df_daily['high'].tail(20).max()
+                if close >= high_20 * 0.995:
+                    result['momentum_score'] += 20
+
+            if len(df_daily) >= 10 and ma20 > 0:
+                ma20_now = df_daily['ma20'].iloc[-1]
+                ma20_prev = df_daily['ma20'].iloc[-10]
+                if ma20_now > ma20_prev:
+                    slope = (ma20_now - ma20_prev) / ma20_prev * 100
+                    result['momentum_score'] += min(10, max(0, int(slope * 2)))
+
+            # 维度三：量能配合（40分）
+            today_vol = latest['volume']
+            vol_ma5 = df_daily['volume'].tail(5).mean()
+            today_close = latest['close']
+            today_open = latest['open']
+
+            if today_vol > vol_ma5 and today_close > today_open:
+                result['volume_score'] += 20
+
+            if len(df_daily) >= 4:
+                stable = True
+                for i in range(-3, 0):
+                    row = df_daily.iloc[i]
+                    prev = df_daily.iloc[i - 1]
+                    if row['close'] > prev['close']:
+                        if row['volume'] < prev['volume'] * 0.9:
+                            stable = False
+                            break
+                    elif row['close'] < prev['close']:
+                        if row['volume'] > prev['volume'] * 1.1:
+                            stable = False
+                            break
+                if stable:
+                    result['volume_score'] += 20
+
+        else:
+            # ========== 左侧评分模块 ==========
+            # 维度一：超跌程度（30分）
+            deviate_ma20 = (close - ma20) / ma20 * 100 if ma20 else 0
+            deviate_ma60 = (close - ma60) / ma60 * 100 if ma60 else 0
+
+            if deviate_ma60 < -20:
+                result['trend_score'] = 30
+            elif deviate_ma60 < -15:
+                result['trend_score'] = 20
+            elif deviate_ma60 < -10:
+                result['trend_score'] = 10
+            elif deviate_ma20 < -10:
+                result['trend_score'] = 8
+
+            # 维度二：止跌信号（30分）
+            left_signals = [s for s in signals if s.signal_type == 'left']
+            if left_signals:
+                best_left = max(left_signals, key=lambda s: s.score)
+                name = best_left.signal_name
+                if '底背离' in name:
+                    result['momentum_score'] += 20
+                elif '十字星' in name or '下影线' in name:
+                    result['momentum_score'] += 12
+                else:
+                    result['momentum_score'] += 8
+
+                tech = best_left.technicals
+                kdj_j = tech.get('kdj_j', 50)
+                if kdj_j < 0:
+                    result['momentum_score'] += 10
+                elif kdj_j < 20:
+                    result['momentum_score'] += 5
+
+            # 维度三：量能配合（40分）
+            today_vol = latest['volume']
+            vol_ma5 = df_daily['volume'].tail(5).mean()
+            today_close = latest['close']
+            today_open = latest['open']
+
+            if today_vol > vol_ma5 * 1.5 and today_close > today_open:
+                result['volume_score'] += 25
+
+            if len(df_daily) >= 4:
+                vol_trend_down = True
+                for i in range(-3, 0):
+                    if df_daily.iloc[i]['volume'] > df_daily.iloc[i - 1]['volume'] * 1.05:
+                        vol_trend_down = False
+                        break
+                if vol_trend_down and today_close >= today_open:
+                    result['volume_score'] += 15
+
+        result['total_score'] = min(100, result['trend_score'] + result['momentum_score'] + result['volume_score'])
+        return result
     
     def _calculate_consistency(self, signals: List[StockSignal]) -> float:
         """计算信号间一致性（0-1），1表示完全一致，0表示矛盾"""
@@ -2061,6 +2373,15 @@ class StockSignalScanner:
                 raw_change = df_daily.iloc[-1].get('change_pct', 0) if not df_daily.empty else 0
                 latest_change = round(raw_change, 2) if pd.notna(raw_change) else 0
 
+                # 计算互斥维度分（替代旧的多重共线性评分）
+                dim = self.calculate_dimension_score(df_daily, signals)
+                
+                # 计算真正的风险雷达（排雷工具，不做加分）
+                from DataHub.core.risk_scorer import calculate_risk_radar
+                risk_score, risk_explanations = calculate_risk_radar(
+                    df_daily, is_index=(self.asset_type == 'index')
+                )
+
                 health_record = {
                     "symbol": symbol,
                     "name": name,
@@ -2070,7 +2391,16 @@ class StockSignalScanner:
                     "recommendation": health["recommendation"],
                     "has_buy_signal": len(signals) > 0,
                     "close_price": latest_close,
-                    "change_pct": latest_change
+                    "change_pct": latest_change,
+                    "dimension_score": dim['total_score'],
+                    "stage": dim['stage'],
+                    "dimension_breakdown": {
+                        'trend': dim['trend_score'],
+                        'momentum': dim['momentum_score'],
+                        'volume': dim['volume_score']
+                    },
+                    "risk_score": risk_score,
+                    "risk_explanations": risk_explanations
                 }
                 all_health_scores.append(health_record)
                 
@@ -2248,19 +2578,12 @@ class StockSignalScanner:
         for symbol, health in all_health_scores.items():
             stock_signals = signals_by_stock.get(symbol, [])
             
-            # 计算最高信号分（优先使用组合评分 portfolio_score）
-            best_score = max([s["score"] for s in stock_signals]) if stock_signals else 0
-            portfolio_scores = [
-                s.get("technicals", {}).get("portfolio_score")
-                for s in stock_signals
-                if s.get("technicals", {}).get("portfolio_score") is not None
-            ]
-            signal_score = round(max(portfolio_scores)) if portfolio_scores else best_score
-
-            # 风险分：统一使用 calculate_risk_score 计算，确保与前端一致
-            best_signal = max(stock_signals, key=lambda x: x.get("score", 0)) if stock_signals else {}
-            tech = best_signal.get("technicals", {})
-            risk_score, risk_explanations = calculate_risk_score(tech, stock_signals)
+            # 使用预计算的互斥维度分（替代旧的多重共线性评分）
+            signal_score = health.get("dimension_score", 0)
+            
+            # 风险分：直接使用预计算的风险雷达结果
+            risk_score = health.get("risk_score", 0)
+            risk_explanations = health.get("risk_explanations", [])
 
             # 价格：优先从健康度记录取（代表最新交易日），没有则从最新信号补
             close_price = health.get('close_price', 0)

@@ -674,9 +674,10 @@ def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
         stock_signals = signals_by_stock.get(symbol, [])
         scores = [s.get('score', 0) for s in stock_signals]
 
-        # 风险分 = 100 - 健康度（健康度越高越安全，风险分越高越危险）
-        health_score = health.get('health_score', 50)
-        risk_score = max(0, min(100, 100 - health_score))
+        # 直接使用预计算的风险雷达和维度分
+        risk_score = health.get('risk_score', 0)
+        risk_explanations = health.get('risk_explanations', [])
+        signal_score = health.get('dimension_score', 0)
 
         # 价格：优先从健康度记录取（代表最新交易日），没有则从最新信号补
         close_price = health.get('close_price', 0)
@@ -690,8 +691,10 @@ def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
             'symbol': symbol,
             'name': health.get('name', ''),
             'risk_score': risk_score,
-            'risk_explanations': health.get('warnings', []) or ['暂无风险详情'],
-            'signal_score': max(scores) if scores else 0,
+            'risk_explanations': risk_explanations or ['暂无风险详情'],
+            'signal_score': signal_score,
+            'stage': health.get('stage', 'unknown'),
+            'dimension_breakdown': health.get('dimension_breakdown', {}),
             'has_buy_signal': len(stock_signals) > 0,
             'signal_count': len(stock_signals),
             'signals': stock_signals,

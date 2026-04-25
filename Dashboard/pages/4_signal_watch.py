@@ -227,21 +227,22 @@ def _transform_signals_to_stocks(data: dict) -> list:
         stock_map[symbol]["has_buy_signal"] = True
         stock_map[symbol]["signal_count"] += 1
 
-    # 计算每个股票的信号分和风险分
+    # 补充每个股票的信号分和风险分（仅当后端未预存时）
     for symbol, stock in stock_map.items():
         all_signals = stock["signals"]
 
-        # 使用统一的综合评分算法计算信号分
-        change_pct = all_signals[0].get("change_pct", 0) if all_signals else 0
-        stock["signal_score"] = calculate_stock_score(all_signals, change_pct)
+        # 优先使用后端预存的维度分，没有才重新计算
+        if stock.get("signal_score", 0) == 0 and all_signals:
+            change_pct = all_signals[0].get("change_pct", 0) if all_signals else 0
+            stock["signal_score"] = calculate_stock_score(all_signals, change_pct)
 
-        # 取最高分信号的技术指标用于风险计算
-        best_signal = max(all_signals, key=lambda x: x.get("score", 0)) if all_signals else {}
-        tech = best_signal.get("technicals", {})
-
-        risk_score, risk_explanations = calculate_risk_score(tech, all_signals)
-        stock["risk_score"] = risk_score
-        stock["risk_explanations"] = risk_explanations
+        # 优先使用后端预存的风险雷达，没有才回退到旧逻辑
+        if not stock.get("risk_explanations") and all_signals:
+            best_signal = max(all_signals, key=lambda x: x.get("score", 0)) if all_signals else {}
+            tech = best_signal.get("technicals", {})
+            risk_score, risk_explanations = calculate_risk_score(tech, all_signals)
+            stock["risk_score"] = risk_score
+            stock["risk_explanations"] = risk_explanations
 
     return list(stock_map.values())
 
@@ -434,6 +435,10 @@ def main():
         )
     
     with toolbar_cols[1]:
+        # 边界检查：切换筛选条件后页码可能超出范围
+        if st.session_state.current_page >= total_pages:
+            st.session_state.current_page = max(0, total_pages - 1)
+
         if total_pages > 1:
             # 页码输入和总页数显示放在一行
             page_cols = st.columns([1, 3])
