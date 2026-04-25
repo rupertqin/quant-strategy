@@ -102,8 +102,13 @@ def render_signal_list(signals: List[dict], show_header: bool = True, fetch_time
         for s in signals
     )
 
-    # 公共的日期/价格/涨跌幅只在顶部显示一次
-    if all_same and signals:
+    # 显示日期/价格/涨跌幅（公共信息）
+    if signals:
+        # 取最新信号的日期/价格/涨跌幅（多周期信号可能日期不同，取第一个即可）
+        display_date = common_date
+        display_price = common_price
+        display_pct = common_pct
+
         if common_pct > 0:
             pct_color = "#ff4757"
             pct_str = f"+{common_pct:.2f}%"
@@ -121,11 +126,11 @@ def render_signal_list(signals: List[dict], show_header: bool = True, fetch_time
             m = re.search(r'(\d{2}):(\d{2})', fetch_time)
             if m:
                 time_part = f" {m.group(0)}"
-        date_display = f"{common_date}{time_part}"
+        date_display = f"{display_date}{time_part}"
 
         st.markdown(f"""
         <div style="font-size: 11px; color: #666; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #eee;">
-            📅 {date_display}　💰 ¥{common_price:.2f}　<span style="color: {pct_color};">{pct_str}</span>
+            📅 {date_display}　💰 ¥{display_price:.2f}　<span style="color: {pct_color};">{pct_str}</span>
         </div>
         """, unsafe_allow_html=True)
 

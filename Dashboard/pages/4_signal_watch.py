@@ -508,11 +508,14 @@ def _render_stock_rows():
         signals = stock.get('signals', [])
         risk_explanations = stock.get('risk_explanations', [])
 
-        # 获取最新实时价格：优先使用信号 JSON 中的数据（已合并实时热数据）
-        # 避免重新调用 load_stock_prices（只读冷数据，会导致显示昨日价格）
-        latest_signal = signals[0] if signals else {}
-        close_price = latest_signal.get('close_price', 0)
-        change_pct = latest_signal.get('change_pct', 0) if latest_signal else 0
+        # 获取最新实时价格：优先使用股票级别的价格数据（支持无信号股票也能显示价格）
+        # 次优先使用信号中的价格（兼容旧数据）
+        close_price = stock.get('close_price', 0)
+        change_pct = stock.get('change_pct', 0)
+        if not close_price and signals:
+            latest_signal = signals[0]
+            close_price = latest_signal.get('close_price', 0)
+            change_pct = latest_signal.get('change_pct', 0)
         # 兼容旧数据：异常大的值自动修正
         if abs(change_pct) > 100:
             change_pct = change_pct / 100

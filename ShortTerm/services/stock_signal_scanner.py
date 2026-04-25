@@ -2048,6 +2048,10 @@ class StockSignalScanner:
             df_daily = self.load_stock_data(symbol, "daily")
             if not df_daily.empty:
                 health = SignalCalculator.calculate_trend_health(df_daily)
+                # 记录最新价格用于列表展示（无论是否有买入信号）
+                latest_close = round(df_daily.iloc[-1]['close'], 2) if not df_daily.empty else 0
+                latest_change = round(df_daily.iloc[-1].get('change_pct', 0), 2) if not df_daily.empty else 0
+
                 health_record = {
                     "symbol": symbol,
                     "name": name,
@@ -2055,7 +2059,9 @@ class StockSignalScanner:
                     "risk_level": health["risk_level"],
                     "warnings": health["warnings"],
                     "recommendation": health["recommendation"],
-                    "has_buy_signal": len(signals) > 0
+                    "has_buy_signal": len(signals) > 0,
+                    "close_price": latest_close,
+                    "change_pct": latest_change
                 }
                 all_health_scores.append(health_record)
                 
@@ -2247,6 +2253,14 @@ class StockSignalScanner:
             tech = best_signal.get("technicals", {})
             risk_score, risk_explanations = calculate_risk_score(tech, stock_signals)
 
+            # 价格：优先从信号取，没有则从健康度记录取
+            if stock_signals:
+                close_price = stock_signals[0].get('close_price', health.get('close_price', 0))
+                change_pct = stock_signals[0].get('change_pct', health.get('change_pct', 0))
+            else:
+                close_price = health.get('close_price', 0)
+                change_pct = health.get('change_pct', 0)
+
             stock_data = {
                 "symbol": symbol,
                 "name": health.get("name", ""),
@@ -2256,6 +2270,8 @@ class StockSignalScanner:
                 "has_buy_signal": len(stock_signals) > 0,
                 "signal_count": len(stock_signals),
                 "signals": stock_signals,
+                "close_price": close_price,
+                "change_pct": change_pct,
                 # 风险详情（保留健康度原始数据做参考）
                 "risk_level": health.get("risk_level", "medium"),
                 "risk_warnings": health.get("warnings", []),

@@ -613,15 +613,30 @@ def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
         symbol = health['symbol']
         stock_signals = signals_by_stock.get(symbol, [])
         scores = [s.get('score', 0) for s in stock_signals]
+
+        # 风险分 = 100 - 健康度（健康度越高越安全，风险分越高越危险）
+        health_score = health.get('health_score', 50)
+        risk_score = max(0, min(100, 100 - health_score))
+
+        # 价格：优先从信号取，没有则从健康度记录取
+        if stock_signals:
+            close_price = stock_signals[0].get('close_price', health.get('close_price', 0))
+            change_pct = stock_signals[0].get('change_pct', health.get('change_pct', 0))
+        else:
+            close_price = health.get('close_price', 0)
+            change_pct = health.get('change_pct', 0)
+
         stocks.append({
             'symbol': symbol,
             'name': health.get('name', ''),
-            'risk_score': health.get('health_score', 50),
+            'risk_score': risk_score,
             'risk_explanations': health.get('warnings', []) or ['暂无风险详情'],
             'signal_score': max(scores) if scores else 0,
             'has_buy_signal': len(stock_signals) > 0,
             'signal_count': len(stock_signals),
             'signals': stock_signals,
+            'close_price': close_price,
+            'change_pct': change_pct,
             'risk_level': health.get('risk_level', 'unknown'),
             'risk_warnings': health.get('warnings', []),
             'risk_details': {},
