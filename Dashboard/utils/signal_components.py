@@ -87,24 +87,18 @@ def render_signal_list(signals: List[dict], show_header: bool = True, fetch_time
         st.markdown("<div style='font-size: 12px; color: #888;'>无买入信号</div>", unsafe_allow_html=True)
         return
 
-    # 提取公共信息（同一股票的多条信号通常日期/价格相同）
-    common_date = signals[0].get('trigger_date', '')
-    common_price = signals[0].get('close_price', 0)
-    common_pct = signals[0].get('change_pct', 0)
+    # 提取最新信号的信息（按 trigger_date 取最新的）
+    # 多周期信号（日/周/月）日期不同，取最新日期对应的信号
+    latest_sig = max(signals, key=lambda s: s.get('trigger_date', ''))
+    common_date = latest_sig.get('trigger_date', '')
+    common_price = latest_sig.get('close_price', 0)
+    common_pct = latest_sig.get('change_pct', 0)
     # 兼容旧数据：异常大的值自动修正
     if abs(common_pct) > 100:
         common_pct = common_pct / 100
 
-    all_same = all(
-        s.get('trigger_date') == common_date and
-        abs(s.get('close_price', 0) - common_price) < 0.01 and
-        abs(s.get('change_pct', 0) - common_pct) < 0.01
-        for s in signals
-    )
-
     # 显示日期/价格/涨跌幅（公共信息）
     if signals:
-        # 取最新信号的日期/价格/涨跌幅（多周期信号可能日期不同，取第一个即可）
         display_date = common_date
         display_price = common_price
         display_pct = common_pct

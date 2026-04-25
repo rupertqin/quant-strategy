@@ -1498,14 +1498,16 @@ class RightSignalDetector:
 class StockSignalScanner:
     """个股/ETF信号扫描器主类 - 支持多周期（日线/周线/月线）"""
     
-    def __init__(self, asset_type: str = "stock"):
+    def __init__(self, asset_type: str = "stock", scan_date: str = None):
         """
         初始化扫描器
-        
+
         Args:
             asset_type: "stock"(股票) 或 "etf"(ETF)
+            scan_date: 扫描基准日期 'YYYY-MM-DD'，None 表示使用最新数据
         """
         self.asset_type = asset_type
+        self.scan_date = scan_date
         self.left_detector = LeftSignalDetector()
         self.right_detector = RightSignalDetector()
         # 统一输出到 shortterm/signals 目录
@@ -1524,8 +1526,8 @@ class StockSignalScanner:
         """
         try:
             if period == "daily":
-                # 使用底层接口，默认前复权
-                return load_stock_prices(symbol, adjust=adjust)
+                # 使用底层接口，默认前复权；支持 scan_date 截断
+                return load_stock_prices(symbol, end_date=self.scan_date, adjust=adjust)
             else:
                 # 周线/月线从日线合成
                 return self._resample_from_daily(symbol, period, adjust=adjust)
@@ -1535,9 +1537,15 @@ class StockSignalScanner:
     
     def _resample_from_daily(self, symbol: str, period: str, adjust: str = "qfq") -> pd.DataFrame:
         """从日线数据合成周线/月线（基于前复权日线）"""
-        daily_df = self.load_stock_data(symbol, "daily", adjust=adjust)
+        # 绕过 load_stock_data 的 scan_date，直接加载完整数据再截断
+        # 因为周线/月线需要足够的历史数据来合成
+        daily_df = load_stock_prices(symbol, adjust=adjust)
         if daily_df.empty or len(daily_df) < 30:
             return pd.DataFrame()
+
+        # 如有 scan_date，截断到指定日期
+        if self.scan_date:
+            daily_df = daily_df[daily_df['trade_date'] <= self.scan_date]
 
         try:
             df = daily_df.copy()

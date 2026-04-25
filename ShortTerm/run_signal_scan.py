@@ -56,6 +56,42 @@ def convert_to_serializable(obj):
     return obj
 
 
+def parse_scan_date(date_str: str) -> Optional[str]:
+    """
+    解析扫描日期，支持多种格式
+
+    支持的格式:
+    - '2026-04-25' (ISO)
+    - '20260425' (纯数字)
+    - '2026/04/25'
+    - '2026.04.25'
+
+    Returns:
+        'YYYY-MM-DD' 格式字符串，或 None（解析失败时）
+    """
+    if not date_str:
+        return None
+
+    date_str = date_str.strip()
+
+    # 已经是 ISO 格式
+    if len(date_str) == 10 and date_str[4] == '-' and date_str[7] == '-':
+        return date_str
+
+    # 纯数字格式: 20260425
+    if date_str.isdigit() and len(date_str) == 8:
+        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+
+    # 尝试用 datetime 解析其他格式
+    for fmt in ('%Y/%m/%d', '%Y.%m.%d', '%m/%d/%Y', '%d/%m/%Y'):
+        try:
+            return datetime.strptime(date_str, fmt).strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+
+    return None
+
+
 @dataclass
 class AssetConfig:
     """资产类型配置"""
@@ -424,7 +460,7 @@ def run_intraday_scan(args, asset_config: AssetConfig, single_mode: bool = True)
         print("=" * 60)
         print(f"\n💡 模式: 当天数据模式（合并实时数据）- 实时行情由 DataHub 提供")
 
-    scanner = StockSignalScanner(asset_type=asset_config.name_en)
+    scanner = StockSignalScanner(asset_type=asset_config.name_en, scan_date=parse_scan_date(getattr(args, 'date', None)))
     loader = get_realtime_loader(asset_config.name_en, project_root)
     
     if not loader:
@@ -510,7 +546,7 @@ def run_historical_scan(args, asset_config: AssetConfig):
     print(f"🔍 开始扫描{asset_config.name}信号 - 周期: {period_str} - 模式: 历史数据模式")
     print("=" * 60)
 
-    scanner = StockSignalScanner(asset_type=asset_config.name_en)
+    scanner = StockSignalScanner(asset_type=asset_config.name_en, scan_date=parse_scan_date(getattr(args, 'date', None)))
 
     if args.symbol:
         # 扫描单只标的
@@ -541,7 +577,7 @@ def run_historical_scan(args, asset_config: AssetConfig):
 
 def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None,
                                 limit: Optional[int] = None, multi_period: bool = True,
-                                save_result: bool = True) -> Dict:
+                                save_result: bool = True, scan_date: Optional[str] = None) -> Dict:
     """
     扫描单一资产类型的历史信号
 
@@ -551,12 +587,13 @@ def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None,
         limit: 扫描数量限制
         multi_period: 是否多周期分析
         save_result: 是否保存结果到文件（组合扫描时由外部统一保存）
+        scan_date: 扫描基准日期 'YYYY-MM-DD'，None 表示使用最新数据
 
     Returns:
         扫描结果字典
     """
     config = get_asset_config(asset_type)
-    scanner = StockSignalScanner(asset_type=asset_type)
+    scanner = StockSignalScanner(asset_type=asset_type, scan_date=scan_date)
 
     if symbol:
         # 单只模式
@@ -680,7 +717,10 @@ def run_combined_scan(args, include_index: bool = True):
     for asset_type in asset_types:
         config = get_asset_config(asset_type)
         print(f"\n📊 扫描{config.name}...")
-        results[asset_type] = scan_asset_type_historical(asset_type, args.symbol, args.limit, multi_period, save_result=False)
+        results[asset_type] = scan_asset_type_historical(
+            asset_type, args.symbol, args.limit, multi_period,
+            save_result=False, scan_date=parse_scan_date(getattr(args, 'date', None))
+        )
     
     # 合并三份结果，统一保存到 signal_latest.json（避免覆盖）
     _merge_and_save_combined_results(results)
@@ -904,6 +944,7 @@ def main():
     )
     parser.add_argument('--symbol', type=str, help='扫描指定股票/ETF（自动识别类型）')
     parser.add_argument('--limit', type=int, help='限制扫描数量（测试用）')
+    parser.add_argument('--date', type=str, help='扫描基准日期，支持 2026-04-25 / 20260425 / 2026/04/25 等格式（默认使用最新数据）')
     parser.add_argument('--no-multi-period', action='store_true',
                         help='禁用多周期分析，仅使用日线')
     parser.add_argument('--watch', type=int, default=0,
