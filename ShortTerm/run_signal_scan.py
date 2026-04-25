@@ -539,23 +539,25 @@ def run_historical_scan(args, asset_config: AssetConfig):
             print(f"\n❌ 扫描失败: {result.get('message', '未知错误')}")
 
 
-def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None, 
-                                limit: Optional[int] = None, multi_period: bool = True) -> Dict:
+def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None,
+                                limit: Optional[int] = None, multi_period: bool = True,
+                                save_result: bool = True) -> Dict:
     """
     扫描单一资产类型的历史信号
-    
+
     Args:
         asset_type: 资产类型 'stock' / 'etf' / 'index'
         symbol: 指定代码（单只模式），None为全市场
         limit: 扫描数量限制
         multi_period: 是否多周期分析
-        
+        save_result: 是否保存结果到文件（组合扫描时由外部统一保存）
+
     Returns:
         扫描结果字典
     """
     config = get_asset_config(asset_type)
     scanner = StockSignalScanner(asset_type=asset_type)
-    
+
     if symbol:
         # 单只模式
         from lib.utils import get_stock_name
@@ -575,7 +577,7 @@ def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None,
         }
     else:
         # 全市场模式（scan_all 内部已使用 etf_basic_info.csv 获取ETF列表）
-        return scanner.scan_all('all', limit, multi_period)
+        return scanner.scan_all('all', limit, multi_period, save_result=save_result)
 
 
 def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
@@ -663,7 +665,7 @@ def run_combined_scan(args, include_index: bool = True):
     for asset_type in asset_types:
         config = get_asset_config(asset_type)
         print(f"\n📊 扫描{config.name}...")
-        results[asset_type] = scan_asset_type_historical(asset_type, args.symbol, args.limit, multi_period)
+        results[asset_type] = scan_asset_type_historical(asset_type, args.symbol, args.limit, multi_period, save_result=False)
     
     # 合并三份结果，统一保存到 signal_latest.json（避免覆盖）
     _merge_and_save_combined_results(results)

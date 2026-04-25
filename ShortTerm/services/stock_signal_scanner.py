@@ -1972,7 +1972,7 @@ class StockSignalScanner:
         }
     
     def scan_all(self, signal_type: str = "all", limit: int = None,
-                 multi_period: bool = True) -> Dict:
+                 multi_period: bool = True, save_result: bool = True) -> Dict:
         """
         扫描全市场股票或ETF
         
@@ -2117,8 +2117,9 @@ class StockSignalScanner:
             }
         }
 
-        # 保存结果
-        self._save_result(result, signal_type)
+        # 保存结果（可被外部调用方控制，避免组合扫描时重复覆盖）
+        if save_result:
+            self._save_result(result, signal_type)
 
         # 保存健康度数据到单独文件（便于快速加载）
         self._save_health_scores(result.get("health_scores", {}), date_str)
