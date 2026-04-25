@@ -15,12 +15,15 @@ class StockCodeUtil:
     
     # 正则表达式：匹配6位数字代码（支持前缀如sh/sz）
     CODE_PATTERN = re.compile(r'(?:^|[^\d])(\d{6})(?:[^\d]|$)')
+    # 港股正则：匹配1-5位数字（港股代码为1-5位，如 00700、00001）
+    HK_CODE_PATTERN = re.compile(r'(?:^|[^\d])(\d{1,5})(?:[^\d]|$)')
     
     # 交易所后缀映射
     EXCHANGE_SUFFIX = {
         'SH': '.SH',  # 上海
         'SZ': '.SZ',  # 深圳
         'BJ': '.BJ',  # 北京
+        'HK': '.HK',  # 香港
     }
     
     # 代码前缀判断交易所
@@ -102,18 +105,32 @@ class StockCodeUtil:
     @classmethod
     def extract(cls, code_str: str) -> Optional[str]:
         """
-        从字符串中提取6位数字代码
+        从字符串中提取股票代码
+        
+        A股为6位数字，港股为1-5位数字（标准化为5位）。
+        当文本中包含 .HK 后缀或 hk 前缀时，按港股规则提取。
         
         Args:
-            code_str: 任意格式的代码字符串，如 '600519.SH', 'sh600519', '贵州茅台(600519)'
+            code_str: 任意格式的代码字符串，如 '600519.SH', 'sh600519', 'hk00700', '00700.HK'
             
         Returns:
-            6位数字代码，如 '600519'，未找到返回 None
+            标准化代码：A股为6位数字，港股为5位数字，未找到返回 None
         """
         if not code_str:
             return None
         
-        match = cls.CODE_PATTERN.search(str(code_str))
+        s = str(code_str).strip()
+        upper = s.upper()
+        
+        # 如果包含 .HK 后缀或是 hk 前缀，使用港股模式（1-5位数字）
+        if '.HK' in upper or upper.startswith('HK'):
+            match = cls.HK_CODE_PATTERN.search(s)
+            if match:
+                return match.group(1).zfill(5)
+            return None
+        
+        # 否则使用A股模式（6位数字）
+        match = cls.CODE_PATTERN.search(s)
         return match.group(1) if match else None
     
     @classmethod
@@ -144,7 +161,8 @@ class StockCodeUtil:
         if not code:
             return None
         
-        exchange = cls.get_exchange(code)
+        # 传入原始字符串，使 .HK 后缀 / hk 前缀能被正确识别
+        exchange = cls.get_exchange(code_str)
         suffix = cls.EXCHANGE_SUFFIX.get(exchange, '')
         return f"{code}{suffix}" if suffix else code
     
@@ -157,8 +175,17 @@ class StockCodeUtil:
             code_str: 任意格式的代码
             
         Returns:
-            'SH', 'SZ', 'BJ' 或 None
+            'SH', 'SZ', 'BJ', 'HK' 或 None
         """
+        if not code_str:
+            return None
+        
+        s = str(code_str).strip()
+        
+        # 港股：带 .HK 后缀或 hk 前缀
+        if s.upper().endswith('.HK') or s.upper().startswith('HK'):
+            return 'HK'
+        
         code = cls.extract(code_str)
         if not code:
             return None
@@ -208,13 +235,27 @@ class StockCodeUtil:
         elif code_str.startswith('bj'):
             code = code_str[2:]
             exchange = 'BJ'
+        elif code_str.startswith('hk'):
+            code = code_str[2:]
+            exchange = 'HK'
+        elif code_str.endswith('.hk'):
+            # 处理带 .HK 后缀的格式，如 00700.HK
+            code = code_str[:-3]
+            exchange = 'HK'
         else:
             # 没有前缀，尝试提取数字并判断交易所
             code = cls.extract(code_str)
             exchange = cls.get_exchange(code) if code else None
         
         # 验证提取的代码
-        if code and len(code) == 6 and code.isdigit():
+        if not code or not code.isdigit():
+            return None, None
+        
+        if exchange == 'HK':
+            # 港股代码为1-5位数字，标准化为5位
+            if 1 <= len(code) <= 5:
+                return code.zfill(5), exchange
+        elif len(code) == 6:
             return code, exchange
         
         return None, None
@@ -242,8 +283,8 @@ class StockCodeUtil:
         if not code or not exchange:
             return None
 
-        # baostock 不支持北交所
-        if exchange == 'BJ':
+        # baostock 不支持北交所和港股
+        if exchange in ('BJ', 'HK'):
             return None
 
         return f"{exchange.lower()}.{code}"
@@ -553,9 +594,10 @@ def is_index(symbol: str) -> bool:
     if not symbol:
         return False
 
-    # 港股指数直接识别
-    if symbol.endswith('.HK'):
-        return True
+    # 港股：纯字母代码（如 HSI.HK）视为指数，纯数字代码（如 00700.HK）视为股票/ETF
+    if symbol.upper().endswith('.HK'):
+        code = symbol[:-3]
+        return code.isalpha()
 
     code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
     if not code.isdigit():
@@ -601,9 +643,12 @@ def detect_asset_type(symbol: str, default: str = "stock") -> str:
     if not symbol:
         return default
 
-    # 港股指数直接识别为指数
-    if symbol.endswith('.HK'):
-        return 'index'
+    # 港股：纯字母代码（如 HSI.HK）视为指数，纯数字代码（如 00700.HK）视为股票
+    if symbol.upper().endswith('.HK'):
+        code = symbol[:-3]
+        if code.isalpha():
+            return 'index'
+        return 'stock'
 
     # 去除后缀
     code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')

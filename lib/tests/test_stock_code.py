@@ -3,7 +3,7 @@
 
 覆盖要点：
 1. A股 6位数字代码的提取、转换、交易所判断
-2. 港股代码的边界（当前正则仅支持6位，4-5位港股代码是已知限制）
+2. 港股 1-5位数字代码的提取、转换（标准化为5位），字母代码识别为指数
 3. 指数 vs 股票的精确区分（带后缀判断，避免 000001.SH / 000001.SZ 冲突）
 4. ETF 前缀规则
 5. 空值/异常输入的防御性处理
@@ -90,12 +90,18 @@ class TestExtract:
         assert StockCodeUtil.extract('贵州茅台(600519)') == '600519'
         assert StockCodeUtil.extract('code: 600519, price: 100') == '600519'
 
-    def test_hk_stock_limitation(self):
-        """港股代码通常为4-5位，现有正则只匹配6位，这是已知限制"""
-        assert StockCodeUtil.extract('腾讯控股 00700.HK') is None
-        assert StockCodeUtil.extract('00001.HK') is None
-        # 6位数字在港股中极少见，但正则能匹配到
-        assert StockCodeUtil.extract('800001.HK') == '800001'
+    def test_hk_stock(self):
+        """港股代码为1-5位数字，标准化为5位；A股正则不再适用"""
+        assert StockCodeUtil.extract('腾讯控股 00700.HK') == '00700'
+        assert StockCodeUtil.extract('00001.HK') == '00001'
+        assert StockCodeUtil.extract('hk00700') == '00700'
+        assert StockCodeUtil.extract('HK03690') == '03690'
+        # 1位数字补齐到5位
+        assert StockCodeUtil.extract('美团 1.HK') == '00001'
+        # 6位数字超出港股范围，无法匹配
+        assert StockCodeUtil.extract('800001.HK') is None
+        # 无 .HK 无 hk 前缀的5位数字仍走A股逻辑（匹配不到）
+        assert StockCodeUtil.extract('00700') is None
 
     def test_edge_lengths(self):
         assert StockCodeUtil.extract('12345') is None
@@ -158,6 +164,11 @@ class TestGetExchange:
     def test_normal_shenzhen_stock(self):
         assert StockCodeUtil.get_exchange('000858') == 'SZ'  # 五粮液，不在指数列表
 
+    def test_hk_exchange(self):
+        assert StockCodeUtil.get_exchange('00700.HK') == 'HK'
+        assert StockCodeUtil.get_exchange('hk00700') == 'HK'
+        assert StockCodeUtil.get_exchange('HK03690') == 'HK'
+
     def test_invalid(self):
         assert StockCodeUtil.get_exchange('invalid') is None
         assert StockCodeUtil.get_exchange('12345') is None
@@ -186,6 +197,13 @@ class TestWithSuffix:
         """
         assert StockCodeUtil.with_suffix('000001') == '000001.SH'
         assert StockCodeUtil.with_suffix('000001.SZ') == '000001.SH'  # 丢失原始后缀！
+
+    def test_hk_suffix(self):
+        assert StockCodeUtil.with_suffix('00700.HK') == '00700.HK'
+        assert StockCodeUtil.with_suffix('hk00700') == '00700.HK'
+        assert StockCodeUtil.with_suffix('hk03690') == '03690.HK'
+        # 纯5位数字无上下文，A股正则匹配不到，返回 None
+        assert StockCodeUtil.with_suffix('00700') is None
 
     def test_invalid(self):
         assert StockCodeUtil.with_suffix('invalid') is None
@@ -216,7 +234,16 @@ class TestParsePrefixedCode:
         assert StockCodeUtil.parse_prefixed_code('') == (None, None)
         assert StockCodeUtil.parse_prefixed_code(None) == (None, None)
         assert StockCodeUtil.parse_prefixed_code('abc') == (None, None)
-        assert StockCodeUtil.parse_prefixed_code('00700.HK') == (None, None)
+
+    def test_hk_prefix(self):
+        assert StockCodeUtil.parse_prefixed_code('hk00700') == ('00700', 'HK')
+        assert StockCodeUtil.parse_prefixed_code('HK03690') == ('03690', 'HK')
+        assert StockCodeUtil.parse_prefixed_code('hk00001') == ('00001', 'HK')
+        assert StockCodeUtil.parse_prefixed_code('hk700') == ('00700', 'HK')
+        assert StockCodeUtil.parse_prefixed_code('hk1') == ('00001', 'HK')
+        # 超出5位数字不合法
+        assert StockCodeUtil.parse_prefixed_code('hk007001') == (None, None)
+        assert StockCodeUtil.parse_prefixed_code('00700.HK') == ('00700', 'HK')
 
 
 # -----------------------------------------------------------------------------
@@ -228,13 +255,15 @@ class TestConverters:
         assert StockCodeUtil.to_baostock('600000.SH') == 'sh.600000'
         assert StockCodeUtil.to_baostock('300001.SZ') == 'sz.300001'
         assert StockCodeUtil.to_baostock('920000.BJ') is None  # 北交所不支持
+        assert StockCodeUtil.to_baostock('00700.HK') is None  # 港股不支持
         assert StockCodeUtil.to_baostock('invalid') is None
         assert StockCodeUtil.to_baostock('') is None
 
     def test_to_akshare(self):
         assert StockCodeUtil.to_akshare('600000.SH') == '600000'
         assert StockCodeUtil.to_akshare('sh600000') == '600000'
-        assert StockCodeUtil.to_akshare('00700.HK') is None  # 提取不到
+        assert StockCodeUtil.to_akshare('00700.HK') == '00700'
+        assert StockCodeUtil.to_akshare('hk00700') == '00700'
 
     def test_to_tushare(self):
         assert StockCodeUtil.to_tushare('600000') == '600000.SH'
@@ -250,6 +279,14 @@ class TestConverters:
         assert StockCodeUtil.convert('600000.SH', 'akshare') == '600000'
         assert StockCodeUtil.convert('600000.SH', 'tushare') == '600000.SH'
         assert StockCodeUtil.convert('600000.SH', 'eastmoney') == '600000'
+
+    def test_hk_converters(self):
+        assert StockCodeUtil.to_akshare('00700.HK') == '00700'
+        assert StockCodeUtil.to_akshare('hk00700') == '00700'
+        assert StockCodeUtil.to_eastmoney('00700.HK') == '00700'
+        assert StockCodeUtil.to_tushare('00700.HK') == '00700.HK'
+        assert StockCodeUtil.to_tushare('hk00700') == '00700.HK'
+        assert StockCodeUtil.to_baostock('00700.HK') is None
 
     def test_convert_unknown_target(self):
         with pytest.raises(ValueError):
@@ -286,10 +323,14 @@ class TestIsIndex:
         assert is_index('159915.SZ') is False
 
     def test_hk_index(self):
+        # 纯字母 .HK 代码视为指数
         assert is_index('HSI.HK') is True
         assert is_index('HSCEI.HK') is True
-        # 当前实现：任何 .HK 都视为指数（港股股票支持不完善，属已知限制）
-        assert is_index('00700.HK') is True
+        assert is_index('HSTECH.HK') is True
+        # 纯数字 .HK 代码视为股票/ETF
+        assert is_index('00700.HK') is False
+        assert is_index('02800.HK') is False
+        assert is_index('03690.HK') is False
 
     def test_empty(self):
         assert is_index('') is False
@@ -325,9 +366,13 @@ class TestDetectAssetType:
         assert detect_asset_type('000001.SZ') == 'stock'
         assert detect_asset_type('000001.SH') == 'index'
 
-    def test_hk_current_behavior(self):
-        """当前代码行为：所有 .HK 视为 index（真正的港股股票会被误判，属已知限制）"""
-        assert detect_asset_type('00700.HK') == 'index'
+    def test_hk(self):
+        """港股区分：字母代码为指数，数字代码为股票"""
+        assert detect_asset_type('HSI.HK') == 'index'
+        assert detect_asset_type('HSCEI.HK') == 'index'
+        assert detect_asset_type('00700.HK') == 'stock'
+        assert detect_asset_type('02800.HK') == 'stock'
+        assert detect_asset_type('03690.HK') == 'stock'
 
     def test_none_and_invalid(self):
         """防御性处理：空值/None 应返回 default，不应抛异常"""
@@ -370,3 +415,7 @@ class TestConvenienceFunctions:
         assert StockCodeUtil.is_same('600519.SH', '300001.SZ') is False
         assert StockCodeUtil.is_same('invalid', '600519') is False
         assert StockCodeUtil.is_same('', '600519') is False
+        # 港股同一只股票的不同写法
+        assert StockCodeUtil.is_same('00700.HK', 'hk00700') is True
+        assert StockCodeUtil.is_same('00700.HK', '700.HK') is True  # 1位数字补齐后相同
+        assert StockCodeUtil.is_same('00700.HK', '03690.HK') is False
