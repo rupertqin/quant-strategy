@@ -70,7 +70,8 @@ def get_risk_style(risk_score: int):
         return "#e74c3c", "white", "高风险"
 
 
-def render_signal_list(signals: List[dict], show_header: bool = True, fetch_time: Optional[str] = None) -> None:
+def render_signal_list(signals: List[dict], show_header: bool = True, fetch_time: Optional[str] = None,
+                       close_price: float = None, change_pct: float = None) -> None:
     """
     渲染信号列表（信号详情）
 
@@ -79,6 +80,8 @@ def render_signal_list(signals: List[dict], show_header: bool = True, fetch_time
         show_header: 是否显示标题
         fetch_time: 实时数据获取时间（如 '2026-04-24 14:30' 或 '股票: 2026-04-24 14:30'）。
                     为空时按历史冷数据只显示日期；有值时按热数据追加时分。
+        close_price: 股票当前最新价格（与列表保持一致，优先于信号自身价格）
+        change_pct: 股票当前最新涨跌幅（与列表保持一致，优先于信号自身涨跌幅）
     """
     if show_header:
         st.markdown("<div style='font-size: 13px; font-weight: 600; color: #333; margin-bottom: 8px;'>📈 信号详情</div>", unsafe_allow_html=True)
@@ -91,8 +94,9 @@ def render_signal_list(signals: List[dict], show_header: bool = True, fetch_time
     # 多周期信号（日/周/月）日期不同，取最新日期对应的信号
     latest_sig = max(signals, key=lambda s: s.get('trigger_date', ''))
     common_date = latest_sig.get('trigger_date', '')
-    common_price = latest_sig.get('close_price', 0)
-    common_pct = latest_sig.get('change_pct', 0)
+    # 优先使用外部传入的最新价格/涨跌幅（与列表保持一致），否则回退到最新信号
+    common_price = close_price if close_price is not None else latest_sig.get('close_price', 0)
+    common_pct = change_pct if change_pct is not None else latest_sig.get('change_pct', 0)
     # 兼容旧数据：异常大的值自动修正
     if abs(common_pct) > 100:
         common_pct = common_pct / 100

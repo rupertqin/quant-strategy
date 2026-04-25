@@ -2058,7 +2058,8 @@ class StockSignalScanner:
                 health = SignalCalculator.calculate_trend_health(df_daily)
                 # 记录最新价格用于列表展示（无论是否有买入信号）
                 latest_close = round(df_daily.iloc[-1]['close'], 2) if not df_daily.empty else 0
-                latest_change = round(df_daily.iloc[-1].get('change_pct', 0), 2) if not df_daily.empty else 0
+                raw_change = df_daily.iloc[-1].get('change_pct', 0) if not df_daily.empty else 0
+                latest_change = round(raw_change, 2) if pd.notna(raw_change) else 0
 
                 health_record = {
                     "symbol": symbol,
@@ -2261,13 +2262,13 @@ class StockSignalScanner:
             tech = best_signal.get("technicals", {})
             risk_score, risk_explanations = calculate_risk_score(tech, stock_signals)
 
-            # 价格：优先从信号取，没有则从健康度记录取
-            if stock_signals:
-                close_price = stock_signals[0].get('close_price', health.get('close_price', 0))
-                change_pct = stock_signals[0].get('change_pct', health.get('change_pct', 0))
-            else:
-                close_price = health.get('close_price', 0)
-                change_pct = health.get('change_pct', 0)
+            # 价格：优先从健康度记录取（代表最新交易日），没有则从最新信号补
+            close_price = health.get('close_price', 0)
+            change_pct = health.get('change_pct', 0)
+            if not close_price and stock_signals:
+                latest_sig = max(stock_signals, key=lambda s: s.get('trigger_date', ''))
+                close_price = latest_sig.get('close_price', 0)
+                change_pct = latest_sig.get('change_pct', 0)
 
             stock_data = {
                 "symbol": symbol,

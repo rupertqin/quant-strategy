@@ -8,6 +8,7 @@ import streamlit as st
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
+import math
 
 # 导入共享格式化工具
 import sys
@@ -512,12 +513,26 @@ def _render_stock_rows():
         # 次优先使用信号中的价格（兼容旧数据）
         close_price = stock.get('close_price', 0)
         change_pct = stock.get('change_pct', 0)
+
+        # 处理 NaN
+        if isinstance(close_price, float) and math.isnan(close_price):
+            close_price = 0
+        if isinstance(change_pct, float) and math.isnan(change_pct):
+            change_pct = 0
+
         if not close_price and signals:
-            latest_signal = signals[0]
+            # 取最新日期的信号（而非第一个）
+            latest_signal = max(signals, key=lambda s: s.get('trigger_date', ''))
             close_price = latest_signal.get('close_price', 0)
             change_pct = latest_signal.get('change_pct', 0)
+            # 再次处理 NaN
+            if isinstance(close_price, float) and math.isnan(close_price):
+                close_price = 0
+            if isinstance(change_pct, float) and math.isnan(change_pct):
+                change_pct = 0
+
         # 兼容旧数据：异常大的值自动修正
-        if abs(change_pct) > 100:
+        if isinstance(change_pct, (int, float)) and abs(change_pct) > 100:
             change_pct = change_pct / 100
 
         # 涨跌幅颜色与格式化（使用通用函数）
@@ -591,7 +606,12 @@ def _render_stock_rows():
                 pass  # 股票列下方留空，保持对齐
 
             with expand_cols[1]:
-                render_signal_list(signals, fetch_time=st.session_state.get('_signal_fetch_time', ''))
+                render_signal_list(
+                    signals,
+                    fetch_time=st.session_state.get('_signal_fetch_time', ''),
+                    close_price=close_price,
+                    change_pct=change_pct
+                )
 
             with expand_cols[2]:
                 render_risk_assessment(risk_score, risk_explanations)

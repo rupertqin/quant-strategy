@@ -10,6 +10,7 @@ import json
 import sys
 from pathlib import Path
 from datetime import datetime
+import math
 
 # 添加项目路径
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -330,15 +331,27 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
     risk_explanations = stock_data['risk_explanations']
     has_buy_signal = stock_data.get('has_buy_signal', len(signals) > 0)
     
-    # 获取最新价格和涨跌幅（从第一个信号，如果没有信号则从其他数据源获取）
-    if signals:
-        first_sig = signals[0]
-        close_price = first_sig.get('close_price', 0)
-        change_pct = first_sig.get('change_pct', 0)
-    else:
-        # 只有风险信号的股票，尝试从 signals_data 获取价格
+    # 获取最新价格和涨跌幅：优先从股票级别取，次优先从最新信号取
+    close_price = stock_data.get('close_price', 0)
+    change_pct = stock_data.get('change_pct', 0)
+
+    # 处理 NaN
+    if isinstance(close_price, float) and math.isnan(close_price):
         close_price = 0
+    if isinstance(change_pct, float) and math.isnan(change_pct):
         change_pct = 0
+
+    if not close_price and signals:
+        # 取最新日期的信号（而非第一个）
+        latest_sig = max(signals, key=lambda s: s.get('trigger_date', ''))
+        close_price = latest_sig.get('close_price', 0)
+        change_pct = latest_sig.get('change_pct', 0)
+        if isinstance(close_price, float) and math.isnan(close_price):
+            close_price = 0
+        if isinstance(change_pct, float) and math.isnan(change_pct):
+            change_pct = 0
+    elif not close_price:
+        # 只有风险信号的股票，尝试从 signals_data 获取价格
         for s in signals_data.get('stocks', []):
             if s.get('symbol') == symbol:
                 tech = s.get('technicals', {})

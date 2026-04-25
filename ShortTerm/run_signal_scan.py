@@ -29,7 +29,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from ShortTerm.services.stock_signal_scanner import StockSignalScanner, filter_excluded_symbols
-from DataHub.core.data_reader import is_etf
+from DataHub.core.data_reader import is_etf, load_stock_prices
 from lib.utils import detect_asset_type
 import argparse
 import time
@@ -89,6 +89,19 @@ def parse_scan_date(date_str: str) -> Optional[str]:
         except ValueError:
             continue
 
+    return None
+
+
+def get_latest_market_date() -> Optional[str]:
+    """获取本地价格数据的最新市场交易日（用于未指定--date时）"""
+    for symbol in ['000001.SH', '000001.SZ', '600519.SH', '510300.SH']:
+        try:
+            df = load_stock_prices(symbol)
+            if not df.empty and 'trade_date' in df.columns:
+                latest = pd.to_datetime(df['trade_date']).max()
+                return latest.strftime('%Y-%m-%d')
+        except Exception:
+            continue
     return None
 
 
@@ -455,8 +468,11 @@ def run_intraday_scan(args, asset_config: AssetConfig, single_mode: bool = True)
         single_mode: 是否为单只标的模式（影响循环逻辑）
     """
     if single_mode:
+        scan_date = parse_scan_date(getattr(args, 'date', None))
+        date_display = scan_date if scan_date else datetime.now().strftime('%Y-%m-%d')
         print("=" * 60)
         print(f"📊 盘中{asset_config.name}信号监控 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"📅 数据日期: {date_display}")
         print("=" * 60)
         print(f"\n💡 模式: 当天数据模式（合并实时数据）- 实时行情由 DataHub 提供")
 
@@ -542,8 +558,15 @@ def run_historical_scan(args, asset_config: AssetConfig):
     multi_period = not args.no_multi_period
     period_str = "多周期(日/周/月)" if multi_period else "仅日线"
     
+    scan_date = parse_scan_date(getattr(args, 'date', None))
+    if scan_date:
+        date_display = scan_date
+    else:
+        latest_date = get_latest_market_date()
+        date_display = latest_date if latest_date else "最新可用数据"
     print("=" * 60)
     print(f"🔍 开始扫描{asset_config.name}信号 - 周期: {period_str} - 模式: 历史数据模式")
+    print(f"📅 扫描基准日期: {date_display}")
     print("=" * 60)
 
     scanner = StockSignalScanner(asset_type=asset_config.name_en, scan_date=parse_scan_date(getattr(args, 'date', None)))
@@ -655,13 +678,13 @@ def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
         health_score = health.get('health_score', 50)
         risk_score = max(0, min(100, 100 - health_score))
 
-        # 价格：优先从信号取，没有则从健康度记录取
-        if stock_signals:
-            close_price = stock_signals[0].get('close_price', health.get('close_price', 0))
-            change_pct = stock_signals[0].get('change_pct', health.get('change_pct', 0))
-        else:
-            close_price = health.get('close_price', 0)
-            change_pct = health.get('change_pct', 0)
+        # 价格：优先从健康度记录取（代表最新交易日），没有则从最新信号补
+        close_price = health.get('close_price', 0)
+        change_pct = health.get('change_pct', 0)
+        if not close_price and stock_signals:
+            latest_sig = max(stock_signals, key=lambda s: s.get('trigger_date', ''))
+            close_price = latest_sig.get('close_price', 0)
+            change_pct = latest_sig.get('change_pct', 0)
 
         stocks.append({
             'symbol': symbol,
@@ -708,8 +731,15 @@ def run_combined_scan(args, include_index: bool = True):
     period_str = "多周期(日/周/月)" if multi_period else "仅日线"
     
     scan_targets = "股票+ETF+指数" if include_index else "股票+ETF"
+    scan_date = parse_scan_date(getattr(args, 'date', None))
+    if scan_date:
+        date_display = scan_date
+    else:
+        latest_date = get_latest_market_date()
+        date_display = latest_date if latest_date else "最新可用数据"
     print("=" * 60)
     print(f"🔍 开始扫描全部信号（{scan_targets}）- 周期: {period_str}")
+    print(f"📅 扫描基准日期: {date_display}")
     print("=" * 60)
     
     results = {}
@@ -799,8 +829,11 @@ def scan_asset_type_intraday(realtime_df: pd.DataFrame, asset_type: str,
 
 def run_all_intraday_scan(args, include_index: bool = True):
     """运行全市场盘中扫描（股票+ETF+指数合并）"""
+    scan_date = parse_scan_date(getattr(args, 'date', None))
+    date_display = scan_date if scan_date else datetime.now().strftime('%Y-%m-%d')
     print("=" * 60)
     print(f"📊 全市场信号监控 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"📅 数据日期: {date_display}")
     print("=" * 60)
     print(f"\n💡 模式: 当天数据模式（合并实时数据）- 实时行情由 DataHub 提供")
     
@@ -951,9 +984,17 @@ def main():
                         help='持续监控模式，每隔N秒刷新一次（如 --watch 60）')
 
     args = parser.parse_args()
-    
+
+    scan_date = parse_scan_date(args.date)
+    if scan_date:
+        date_display = scan_date
+    else:
+        latest_date = get_latest_market_date()
+        date_display = latest_date if latest_date else "最新可用数据"
+
     print("=" * 60)
     print(f"📊 信号扫描 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"📅 扫描基准日期: {date_display}")
     print("=" * 60)
 
     # 单只标扫描模式
