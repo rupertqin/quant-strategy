@@ -70,13 +70,15 @@ def get_risk_style(risk_score: int):
         return "#e74c3c", "white", "高风险"
 
 
-def render_signal_list(signals: List[dict], show_header: bool = True) -> None:
+def render_signal_list(signals: List[dict], show_header: bool = True, fetch_time: Optional[str] = None) -> None:
     """
     渲染信号列表（信号详情）
-    
+
     Args:
         signals: 信号列表
         show_header: 是否显示标题
+        fetch_time: 实时数据获取时间（如 '2026-04-24 14:30' 或 '股票: 2026-04-24 14:30'）。
+                    为空时按历史冷数据只显示日期；有值时按热数据追加时分。
     """
     if show_header:
         st.markdown("<div style='font-size: 13px; font-weight: 600; color: #333; margin-bottom: 8px;'>📈 信号详情</div>", unsafe_allow_html=True)
@@ -111,9 +113,19 @@ def render_signal_list(signals: List[dict], show_header: bool = True) -> None:
         else:
             pct_color = "#888"
             pct_str = "0.00%"
+
+        # 热数据追加时分，冷数据只保留日期
+        time_part = ""
+        if fetch_time:
+            import re
+            m = re.search(r'(\d{2}):(\d{2})', fetch_time)
+            if m:
+                time_part = f" {m.group(0)}"
+        date_display = f"{common_date}{time_part}"
+
         st.markdown(f"""
         <div style="font-size: 11px; color: #666; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #eee;">
-            📅 {common_date}　💰 ¥{common_price:.2f}　<span style="color: {pct_color};">{pct_str}</span>
+            📅 {date_display}　💰 ¥{common_price:.2f}　<span style="color: {pct_color};">{pct_str}</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -172,7 +184,8 @@ def render_signal_and_risk(
     signal_score: int,
     risk_score: int,
     risk_explanations: List[str],
-    layout: str = "vertical"
+    layout: str = "vertical",
+    fetch_time: Optional[str] = None
 ) -> None:
     """
     统一渲染信号详情和风险评估（两列布局）
@@ -183,16 +196,17 @@ def render_signal_and_risk(
         risk_score: 风险分数
         risk_explanations: 风险解释列表
         layout: 布局方式，"vertical"(垂直) 或 "horizontal"(水平两列)
+        fetch_time: 实时数据获取时间，透传给 render_signal_list
     """
     if layout == "horizontal":
         cols = st.columns(2)
         with cols[0]:
-            render_signal_list(signals)
+            render_signal_list(signals, fetch_time=fetch_time)
         with cols[1]:
             render_risk_assessment(risk_score, risk_explanations)
     else:
         # 垂直布局 - 信号在上，风险在下
-        render_signal_list(signals)
+        render_signal_list(signals, fetch_time=fetch_time)
         st.markdown("---")
         render_risk_assessment(risk_score, risk_explanations)
 
@@ -203,7 +217,8 @@ def render_stock_signal_expander(
     risk_score: int,
     risk_explanations: List[str],
     score_label: str = "",
-    expanded: bool = False
+    expanded: bool = False,
+    fetch_time: Optional[str] = None
 ) -> None:
     """
     渲染股票的信号+风险折叠区域（通用组件）
@@ -217,6 +232,7 @@ def render_stock_signal_expander(
         risk_explanations: 风险解释列表
         score_label: 信号评级标签，为空时自动计算
         expanded: 是否默认展开
+        fetch_time: 实时数据获取时间，透传给 render_signal_list
     """
     from Dashboard.utils.scoring import get_score_label
 
@@ -231,7 +247,7 @@ def render_stock_signal_expander(
         sig_col, risk_col = st.columns(2)
         with sig_col:
             if signals:
-                render_signal_list(signals, show_header=False)
+                render_signal_list(signals, show_header=False, fetch_time=fetch_time)
             else:
                 st.markdown("""
                 <div style="padding: 20px; background: #fdf2f2; border-radius: 8px; border-left: 4px solid #e74c3c;">

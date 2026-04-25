@@ -152,7 +152,13 @@ class IndexSync(BaseSyncService):
                 combined = combined.sort_values('trade_date')
             else:
                 combined = new_df
-            
+
+            # 基于完整合并后的数据重新计算 change_pct，避免增量时新数据首行 NaN
+            if 'close' in combined.columns and len(combined) > 1:
+                combined['change_pct'] = combined['close'].pct_change(fill_method=None) * 100
+            elif 'close' in combined.columns and len(combined) == 1:
+                combined['change_pct'] = np.nan
+
             # 保存
             combined.to_parquet(file_path, index=False, compression='zstd')
             

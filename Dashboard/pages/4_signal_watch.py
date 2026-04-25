@@ -489,6 +489,7 @@ def main():
     # 使用 fragment 优化展开/折叠性能 - 将当前页数据存入 session_state
     st.session_state['_current_page_stocks'] = page_stocks
     st.session_state['_current_page_info'] = {'page': page, 'total_pages': total_pages, 'total': len(filtered_stocks)}
+    st.session_state['_signal_fetch_time'] = data.get('price_fetch_time', '')
     _render_stock_rows()
 
 
@@ -587,7 +588,7 @@ def _render_stock_rows():
                 pass  # 股票列下方留空，保持对齐
 
             with expand_cols[1]:
-                render_signal_list(signals)
+                render_signal_list(signals, fetch_time=st.session_state.get('_signal_fetch_time', ''))
 
             with expand_cols[2]:
                 render_risk_assessment(risk_score, risk_explanations)

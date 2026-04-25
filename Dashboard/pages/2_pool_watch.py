@@ -403,7 +403,8 @@ for idx, stock_data in enumerate(filtered_stocks[start_idx:end_idx], start_idx):
         score_label = get_score_label(total_score)
         render_stock_signal_expander(
             signals, total_score, risk_score, risk_explanations,
-            score_label=score_label, expanded=False
+            score_label=score_label, expanded=False,
+            fetch_time=price_fetch_time
         )
     
     with col2:

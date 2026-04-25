@@ -5,7 +5,7 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 import pandas as pd
@@ -59,8 +59,8 @@ class SyncManager:
         import akshare as ak
         
         today = datetime.now()
-        today_str = today.strftime('%Y%m%d')
-        today_date = today.date()
+        today_date = self._resolve_trade_date(today)
+        today_str = today_date.strftime('%Y%m%d')
         
         logger.info(f"开始同步当天数据: {today_str}")
         
@@ -388,6 +388,47 @@ class SyncManager:
             if symbol.startswith(('15', '16', '18')) and symbol.endswith('.SZ'):
                 return True
             return False
+
+    def _resolve_trade_date(self, now: datetime = None) -> datetime.date:
+        """
+        根据当前时间解析实际交易日期（处理非交易日、盘前、节假日）
+
+        逻辑：
+        - 收盘后（>= 15:00）：尝试用今天
+        - 盘前/盘中/凌晨（< 15:00）：回退到上一个交易日候选
+        - 通过交易日历确认候选日是否为交易日，非交易日则继续回退
+
+        Returns:
+            实际交易日期（datetime.date）
+        """
+        if now is None:
+            now = datetime.now()
+
+        # 未收盘时，数据大概率属于上一个交易日
+        if now.hour < 15:
+            target = now.date() - timedelta(days=1)
+        else:
+            target = now.date()
+
+        # 通过交易日历确认
+        try:
+            import akshare as ak
+            trade_df = ak.tool_trade_date_hist_sina()
+            trade_df['trade_date'] = pd.to_datetime(trade_df['trade_date']).dt.date
+            valid = trade_df[trade_df['trade_date'] <= target]
+            if not valid.empty:
+                actual = valid['trade_date'].iloc[-1]
+                if actual != now.date():
+                    logger.info(f"交易日历校正: {now.date()} -> {actual}")
+                return actual
+        except Exception as e:
+            logger.warning(f"交易日历获取失败，使用周末回退逻辑: {e}")
+
+        # 回退逻辑：跳过周末
+        date = target
+        while date.weekday() >= 5:
+            date -= timedelta(days=1)
+        return date
     
     def _get_stock_list(self, include_bj: bool = False) -> List[str]:
         """获取股票列表"""

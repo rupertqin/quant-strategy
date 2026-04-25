@@ -234,6 +234,22 @@ def load_stock_signals(symbol: str) -> list:
 
 
 @st.cache_data(ttl=300)
+def get_signal_fetch_time() -> str:
+    """获取信号数据的 price_fetch_time（用于区分热数据/冷数据）"""
+    import json
+    from DataHub.config import SHORTTERM_SIGNALS_DIR
+    signals_file = SHORTTERM_SIGNALS_DIR / 'signal_latest.json'
+    if not signals_file.exists():
+        return ""
+    try:
+        with open(signals_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('price_fetch_time', '')
+    except Exception:
+        return ""
+
+
+@st.cache_data(ttl=300)
 def load_stock_risk_info(symbol: str) -> dict:
     """加载指定股票的风险信息（兼容两种JSON格式）"""
     import json
@@ -1439,9 +1455,11 @@ def main():
         """, unsafe_allow_html=True)
 
         # 使用通用组件渲染信号+风险折叠区域
+        signal_fetch_time = get_signal_fetch_time()
         render_stock_signal_expander(
             stock_signals, portfolio_score, risk_score, risk_explanations,
-            score_label=score_label, expanded=False
+            score_label=score_label, expanded=False,
+            fetch_time=signal_fetch_time
         )
 
     # ============= 周期选择 =============
