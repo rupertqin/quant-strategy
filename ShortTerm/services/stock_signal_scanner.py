@@ -737,27 +737,31 @@ class LeftSignalDetector:
             return f"当前价格¥{close}({pct_str})，成交量缩至{vol_ratio}倍，整理接近尾声"
 
         # 右侧信号
+        # 辅助格式化：None 显示为 N/A，避免裸比较崩溃
+        def _fmt(val, digits=2):
+            return f"¥{val:.{digits}f}" if val is not None else "N/A"
+
         if signal_name == "MA5金叉MA10":
-            above_ma20 = "站上" if close > ma20 else "未站上"
-            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})上穿MA10(¥{ma10})，{above_ma20}MA20(¥{ma20})"
+            above_ma20 = "站上" if ma20 is not None and close > ma20 else "未站上" if ma20 is not None else "MA20数据不足"
+            return f"当前价格¥{close}({pct_str})，MA5({_fmt(ma5)})上穿MA10({_fmt(ma10)})，{above_ma20}MA20({_fmt(ma20)})"
 
         if signal_name == "MA5金叉MA20":
-            above_ma60 = "站上" if close > ma60 else "未站上"
-            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})上穿MA20(¥{ma20})，{above_ma60}MA60(¥{ma60})"
+            above_ma60 = "站上" if ma60 is not None and close > ma60 else "未站上" if ma60 is not None else "MA60数据不足"
+            return f"当前价格¥{close}({pct_str})，MA5({_fmt(ma5)})上穿MA20({_fmt(ma20)})，{above_ma60}MA60({_fmt(ma60)})"
 
         if signal_name == "MACD金叉":
-            zero_axis = "零轴上方" if macd_dif and macd_dif > 0 else "零轴下方"
-            return f"当前价格¥{close}({pct_str})，MACD(DIF={macd_dif})上穿DEA({macd_dea})，{zero_axis}金叉"
+            zero_axis = "零轴上方" if macd_dif is not None and macd_dif > 0 else "零轴下方" if macd_dif is not None else "零轴未知"
+            return f"当前价格¥{close}({pct_str})，MACD(DIF={macd_dif or 'N/A'})上穿DEA({macd_dea or 'N/A'})，{zero_axis}金叉"
 
         if signal_name == "KDJ金叉":
-            zone = "超卖区" if kdj_k and kdj_k < 20 else "常态区"
-            return f"当前价格¥{close}({pct_str})，KDJ(K={kdj_k})上穿D({kdj_d})，{zone}金叉"
+            zone = "超卖区" if kdj_k is not None and kdj_k < 20 else "常态区" if kdj_k is not None else "KDJ数据不足"
+            return f"当前价格¥{close}({pct_str})，KDJ(K={kdj_k or 'N/A'})上穿D({kdj_d or 'N/A'})，{zone}金叉"
 
         if signal_name == "量价突破":
             return f"当前价格¥{close}({pct_str})，成交量放大至{vol_ratio}倍，放量上涨资金入场"
 
         if signal_name == "均线多头排列":
-            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})>MA10(¥{ma10})>MA20(¥{ma20})，多头排列"
+            return f"当前价格¥{close}({pct_str})，MA5({_fmt(ma5)})>MA10({_fmt(ma10)})>MA20({_fmt(ma20)})，多头排列"
 
         if signal_name == "突破平台":
             return f"当前价格¥{close}({pct_str})，放量({vol_ratio}倍)突破近期整理平台上沿"
@@ -1265,27 +1269,31 @@ class RightSignalDetector:
         kdj_d = technicals.get('kdj_d')
         vol_ratio = round(latest.get('volume_ratio', 1), 2)
 
+        # 辅助格式化：None 显示为 N/A，避免裸比较崩溃
+        def _fmt(val, digits=2):
+            return f"¥{val:.{digits}f}" if val is not None else "N/A"
+
         if signal_name == "MA5金叉MA10":
-            above_ma20 = "站上" if close > ma20 else "未站上"
-            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})上穿MA10(¥{ma10})，{above_ma20}MA20(¥{ma20})"
+            above_ma20 = "站上" if ma20 is not None and close > ma20 else "未站上" if ma20 is not None else "MA20数据不足"
+            return f"当前价格¥{close}({pct_str})，MA5({_fmt(ma5)})上穿MA10({_fmt(ma10)})，{above_ma20}MA20({_fmt(ma20)})"
 
         if signal_name == "MA5金叉MA20":
-            above_ma60 = "站上" if close > ma60 else "未站上"
-            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})上穿MA20(¥{ma20})，{above_ma60}MA60(¥{ma60})"
+            above_ma60 = "站上" if ma60 is not None and close > ma60 else "未站上" if ma60 is not None else "MA60数据不足"
+            return f"当前价格¥{close}({pct_str})，MA5({_fmt(ma5)})上穿MA20({_fmt(ma20)})，{above_ma60}MA60({_fmt(ma60)})"
 
         if signal_name == "MACD金叉":
-            zero_axis = "零轴上方" if macd_dif and macd_dif > 0 else "零轴下方"
-            return f"当前价格¥{close}({pct_str})，MACD(DIF={macd_dif})上穿DEA({macd_dea})，{zero_axis}金叉"
+            zero_axis = "零轴上方" if macd_dif is not None and macd_dif > 0 else "零轴下方" if macd_dif is not None else "零轴未知"
+            return f"当前价格¥{close}({pct_str})，MACD(DIF={macd_dif or 'N/A'})上穿DEA({macd_dea or 'N/A'})，{zero_axis}金叉"
 
         if signal_name == "KDJ金叉":
-            zone = "超卖区" if kdj_k and kdj_k < 20 else "常态区"
-            return f"当前价格¥{close}({pct_str})，KDJ(K={kdj_k})上穿D({kdj_d})，{zone}金叉"
+            zone = "超卖区" if kdj_k is not None and kdj_k < 20 else "常态区" if kdj_k is not None else "KDJ数据不足"
+            return f"当前价格¥{close}({pct_str})，KDJ(K={kdj_k or 'N/A'})上穿D({kdj_d or 'N/A'})，{zone}金叉"
 
         if signal_name == "量价突破":
             return f"当前价格¥{close}({pct_str})，成交量放大至{vol_ratio}倍，放量上涨资金入场"
 
         if signal_name == "均线多头排列":
-            return f"当前价格¥{close}({pct_str})，MA5(¥{ma5})>MA10(¥{ma10})>MA20(¥{ma20})，多头排列"
+            return f"当前价格¥{close}({pct_str})，MA5({_fmt(ma5)})>MA10({_fmt(ma10)})>MA20({_fmt(ma20)})，多头排列"
 
         if signal_name == "突破平台":
             return f"当前价格¥{close}({pct_str})，放量({vol_ratio}倍)突破近期整理平台上沿"
