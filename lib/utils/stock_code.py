@@ -479,7 +479,7 @@ _index_codes_cache = None
 
 
 def _get_index_codes():
-    """从 official_indices.csv 读取所有指数代码"""
+    """从 official_indices.csv 读取所有指数代码（短码，用于交易所判断）"""
     global _index_codes_cache
 
     if _index_codes_cache is not None:
@@ -505,31 +505,68 @@ def _get_index_codes():
     return _index_codes_cache
 
 
+# 缓存带后缀的完整指数 symbol（避免 000001.SH 和 000001.SZ 冲突）
+_index_symbol_cache = None
+
+
+def _get_index_symbols():
+    """从 official_indices.csv 读取所有指数 symbol（带后缀的完整代码）"""
+    global _index_symbol_cache
+
+    if _index_symbol_cache is not None:
+        return _index_symbol_cache
+
+    _index_symbol_cache = set()
+    from DataHub.config import get_storage_path
+    csv_path = get_storage_path('official_indices.csv')
+
+    if csv_path.exists():
+        try:
+            import csv
+            with open(csv_path, 'r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    symbol = row.get('symbol', '').strip()
+                    if symbol:
+                        _index_symbol_cache.add(symbol)
+        except Exception:
+            pass
+
+    return _index_symbol_cache
+
+
 def is_index(symbol: str) -> bool:
     """
     判断代码是否为指数（结合后缀判断）
-    
+
     注意代码重名问题：
     - 000001.SH = 上证指数（指数）
     - 000001.SZ = 平安银行（股票）
     - 必须结合后缀判断！
-    
+
     硬编码规则：
     - 399xxx.SZ = 深证指数（如399001.SZ深证成指、399006.SZ创业板指）
-    
+
     查表确认：
-    - 其他代码查 official_indices.csv
+    - 其他代码查 official_indices.csv 的 symbol 列（带后缀）
     """
+    if not symbol:
+        return False
+
+    # 港股指数直接识别
+    if symbol.endswith('.HK'):
+        return True
+
     code = symbol.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
     if not code.isdigit():
         return False
-    
+
     # 硬编码规则：399xxx.SZ 一定是深证指数
     if symbol.endswith('.SZ') and code.startswith('399'):
         return True
-    
-    # 其他情况查表确认
-    return code in _get_index_codes()
+
+    # 其他情况必须用带后缀的完整 symbol 查表，避免 000001.SH / 000001.SZ 冲突
+    return symbol in _get_index_symbols()
 
 
 def detect_asset_type(symbol: str, default: str = "stock") -> str:
@@ -561,6 +598,9 @@ def detect_asset_type(symbol: str, default: str = "stock") -> str:
         >>> detect_asset_type('HSI.HK')
         'index'
     """
+    if not symbol:
+        return default
+
     # 港股指数直接识别为指数
     if symbol.endswith('.HK'):
         return 'index'
