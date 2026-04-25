@@ -578,6 +578,76 @@ def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None,
         return scanner.scan_all('all', limit, multi_period)
 
 
+def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
+    """合并股票+ETF+指数的扫描结果，统一保存到 signal_latest.json"""
+    from DataHub.config import SHORTTERM_SIGNALS_DIR
+    output_dir = SHORTTERM_SIGNALS_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 收集所有信号和健康度
+    all_signals = []
+    all_health_scores = []
+    total_stocks = 0
+
+    for result in results.values():
+        if result.get('status') != 'success':
+            continue
+        all_signals.extend(result.get('signals', []))
+        health = result.get('health_scores', {})
+        all_health_scores.extend(health.get('all_scores', []))
+        total_stocks += result.get('total_stocks', 0)
+
+    # 按 symbol 组织信号
+    signals_by_stock = {}
+    for sig in all_signals:
+        symbol = sig.get('symbol')
+        if symbol not in signals_by_stock:
+            signals_by_stock[symbol] = []
+        signals_by_stock[symbol].append(sig)
+
+    # 构建 stocks 数组
+    stocks = []
+    for health in all_health_scores:
+        symbol = health['symbol']
+        stock_signals = signals_by_stock.get(symbol, [])
+        scores = [s.get('score', 0) for s in stock_signals]
+        stocks.append({
+            'symbol': symbol,
+            'name': health.get('name', ''),
+            'risk_score': health.get('health_score', 50),
+            'risk_explanations': health.get('warnings', []) or ['暂无风险详情'],
+            'signal_score': max(scores) if scores else 0,
+            'has_buy_signal': len(stock_signals) > 0,
+            'signal_count': len(stock_signals),
+            'signals': stock_signals,
+            'risk_level': health.get('risk_level', 'unknown'),
+            'risk_warnings': health.get('warnings', []),
+            'risk_details': {},
+            'risk_recommendation': health.get('recommendation', ''),
+            'technicals': stock_signals[0].get('technicals', {}) if stock_signals else {},
+        })
+
+    # 按信号分数排序
+    stocks.sort(key=lambda x: x['signal_score'], reverse=True)
+
+    unified = {
+        'status': 'success',
+        'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'total_stocks': total_stocks,
+        'total_signals': len(all_signals),
+        'stocks': stocks,
+    }
+
+    unified = convert_to_serializable(unified)
+
+    latest_path = output_dir / "signal_latest.json"
+    with open(latest_path, 'w', encoding='utf-8') as f:
+        json.dump(unified, f, ensure_ascii=False, indent=2)
+
+    print(f"\n💾 合并结果已保存: {latest_path} ({len(all_signals)} 个信号, {len(stocks)} 只标的)")
+    return latest_path
+
+
 def run_combined_scan(args, include_index: bool = True):
     """运行组合扫描（股票+ETF+指数）"""
     multi_period = not args.no_multi_period
@@ -594,6 +664,9 @@ def run_combined_scan(args, include_index: bool = True):
         config = get_asset_config(asset_type)
         print(f"\n📊 扫描{config.name}...")
         results[asset_type] = scan_asset_type_historical(asset_type, args.symbol, args.limit, multi_period)
+    
+    # 合并三份结果，统一保存到 signal_latest.json（避免覆盖）
+    _merge_and_save_combined_results(results)
     
     # 打印结果
     print("\n" + "=" * 60)
