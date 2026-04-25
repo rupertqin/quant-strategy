@@ -8,6 +8,10 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+import sys
+
+BASE_DIR = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(BASE_DIR))
 
 from DataHub.config import INTRADAY_DIR
 

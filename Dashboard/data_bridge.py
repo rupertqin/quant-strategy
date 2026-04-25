@@ -8,6 +8,11 @@ import sys
 import pandas as pd
 from datetime import datetime
 from typing import Optional, Dict, Any
+from pathlib import Path
+
+# 确保项目根目录在路径中
+_BASE_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(_BASE_DIR))
 
 
 class DataBridge:

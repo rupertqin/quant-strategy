@@ -13,7 +13,7 @@ import streamlit as st
 from typing import List, Dict, Tuple, Optional
 
 # 统一风险评分核心模块（供 Scanner 与 Dashboard 共用）
-BASE_DIR = Path(__file__).parent.parent
+BASE_DIR = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
 from DataHub.core.risk_scorer import calculate_risk_score
 
