@@ -120,8 +120,6 @@ export default function PoolWatchClient() {
     }
   };
 
-  const summary = data?.summary || { buy_count: 0, sell_count: 0, watch_count: 0 };
-
   // 统计池内有效股票的信号数
   const poolBuyCount = validStocks.filter(s => s.has_buy_signal).length;
   const poolRiskCount = validStocks.filter(s => (s.risk_score ?? 0) >= 60 && !s.has_buy_signal).length;
@@ -132,9 +130,9 @@ export default function PoolWatchClient() {
 
   return (
     <div>
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold">📊 股票池监控</h1>
-        <p className="text-sm text-gray-500">
+      <div className="mb-8">
+        <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">股票池监控</h1>
+        <p className="text-sm text-gray-500 mt-1">
           数据时间: {data?.date || data?.scan_time?.split(' ')?.[0] || '未知'}
           {' '}| 股票池共 {pool.length} 只（有数据 {validStocks.length} 只）
         </p>
@@ -150,11 +148,11 @@ export default function PoolWatchClient() {
               value={inputSymbol}
               onChange={e => setInputSymbol(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleAdd()}
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-48 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-2 border border-gray-200 rounded-md text-sm w-48 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             />
             <button
               onClick={handleAdd}
-              className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors"
+              className="inline-flex items-center gap-1 px-3 py-2 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700 transition-colors"
             >
               <Plus size={16} />
               添加
@@ -166,14 +164,14 @@ export default function PoolWatchClient() {
           <div className="flex-1" />
           <button
             onClick={handleReset}
-            className="inline-flex items-center gap-1 px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-sm hover:bg-amber-100 transition-colors"
+            className="inline-flex items-center gap-1 px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-md text-sm font-medium hover:bg-amber-100 transition-colors"
           >
             <RotateCcw size={14} />
             重置默认
           </button>
           <button
             onClick={handleClear}
-            className="inline-flex items-center gap-1 px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-lg text-sm hover:bg-red-100 transition-colors"
+            className="inline-flex items-center gap-1 px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100 transition-colors"
           >
             <Trash2 size={14} />
             清空
@@ -184,20 +182,20 @@ export default function PoolWatchClient() {
       {/* 统计卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="metric-card text-center">
-          <p className="text-3xl font-bold text-blue-600">{pool.length}</p>
-          <p className="text-sm text-gray-500">股票池数量</p>
+          <p className="text-3xl font-bold text-primary-600">{pool.length}</p>
+          <p className="text-sm text-gray-500 mt-1">股票池数量</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-3xl font-bold text-green-600">{poolBuyCount}</p>
-          <p className="text-sm text-gray-500">买入信号</p>
+          <p className="text-sm text-gray-500 mt-1">买入信号</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-3xl font-bold text-yellow-600">{validStocks.length - poolBuyCount}</p>
-          <p className="text-sm text-gray-500">观察/无信号</p>
+          <p className="text-sm text-gray-500 mt-1">观察/无信号</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-3xl font-bold text-red-600">{poolRiskCount}</p>
-          <p className="text-sm text-gray-500">风险预警</p>
+          <p className="text-sm text-gray-500 mt-1">风险预警</p>
         </div>
       </div>
 
@@ -212,7 +210,7 @@ export default function PoolWatchClient() {
 
       {/* 股票明细 */}
       <div className="metric-card">
-        <h2 className="text-lg font-bold mb-4">股票明细</h2>
+        <h2 className="text-lg font-bold mb-4 text-gray-800">股票明细</h2>
         {validStocks.length === 0 && pool.length > 0 ? (
           <p className="text-center text-gray-500 py-8">股票池中的股票暂无今日信号数据</p>
         ) : pool.length === 0 ? (

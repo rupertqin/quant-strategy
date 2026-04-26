@@ -79,9 +79,9 @@ export default function SignalWatchClient() {
 
   return (
     <div>
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold">📡 个股信号监控</h1>
-        <p className="text-sm text-gray-500">
+      <div className="mb-8">
+        <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">个股信号监控</h1>
+        <p className="text-sm text-gray-500 mt-1">
           扫描 {totalStocks} 只股票，发现 {totalSignals} 个信号
           {data?.scan_time && ` | 扫描时间: ${data.scan_time}`}
         </p>
@@ -89,36 +89,36 @@ export default function SignalWatchClient() {
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <div className="metric-card text-center">
-          <p className="text-2xl font-bold text-quant-primary">{totalSignals}</p>
-          <p className="text-xs text-gray-500">总信号数</p>
+          <p className="text-2xl font-bold text-gray-800">{totalSignals}</p>
+          <p className="text-xs text-gray-500 mt-1">总信号数</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-2xl font-bold text-amber-600">{leftCount}</p>
-          <p className="text-xs text-gray-500">左侧信号</p>
+          <p className="text-xs text-gray-500 mt-1">左侧信号</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-2xl font-bold text-emerald-600">{rightCount}</p>
-          <p className="text-xs text-gray-500">右侧信号</p>
+          <p className="text-xs text-gray-500 mt-1">右侧信号</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-2xl font-bold text-blue-600">{dailyCount}</p>
-          <p className="text-xs text-gray-500">日线信号</p>
+          <p className="text-xs text-gray-500 mt-1">日线信号</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-2xl font-bold text-purple-600">{weeklyCount}</p>
-          <p className="text-xs text-gray-500">周线信号</p>
+          <p className="text-xs text-gray-500 mt-1">周线信号</p>
         </div>
       </div>
 
       {riskAlerts.length > 0 && (
         <div className="mb-6">
-          <h2 className="text-lg font-bold mb-3">⚠️ 风险预警 ({riskAlerts.length}只)</h2>
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <h2 className="text-lg font-bold mb-3 text-gray-800">⚠️ 风险预警 ({riskAlerts.length}只)</h2>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {riskAlerts.slice(0, 12).map(alert => (
-                <div key={alert.symbol} className="bg-white rounded p-3 border-l-4 border-red-500">
+                <div key={alert.symbol} className="bg-white rounded-lg p-3 border-l-4 border-red-500 shadow-sm">
                   <div className="flex justify-between">
-                    <span className="font-bold text-sm">{alert.symbol} {alert.name}</span>
+                    <span className="font-bold text-sm text-gray-800">{alert.symbol} {alert.name}</span>
                     <span className="text-xs text-red-600 font-medium">健康度 {alert.health_score}</span>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -135,7 +135,7 @@ export default function SignalWatchClient() {
       )}
 
       <div className="metric-card">
-        <h2 className="text-lg font-bold mb-4">📋 信号列表</h2>
+        <h2 className="text-lg font-bold mb-4 text-gray-800">📋 信号列表</h2>
         <SignalTable
           stocks={stocks}
           healthScores={healthScores}

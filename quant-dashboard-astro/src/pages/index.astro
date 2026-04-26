@@ -15,8 +15,21 @@ const topWeight = weights?.[0];
 ---
 
 <MainLayout title="首页" description="量化交易看板 - 长线战略配置 + 短线战术扫描">
+  <!-- Hero 区域 -->
+  <div class="text-center mb-12">
+    <h1 class="text-4xl md:text-5xl font-bold mb-4 tracking-tight">
+      量化交易
+      <span class="bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+        智能看板
+      </span>
+    </h1>
+    <p class="text-gray-500 max-w-2xl mx-auto">
+      整合长线战略配置与短线战术扫描，提供技术面分析、股票池监控与交易信号追踪。
+    </p>
+  </div>
+
   <!-- 顶部状态栏 -->
-  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
     <div class="metric-card text-center">
       <p class="text-sm text-gray-500 mb-1">市场状态</p>
       <p class:list={['text-2xl font-bold', regimeColor[regime] || 'text-gray-600']}>
@@ -25,37 +38,52 @@ const topWeight = weights?.[0];
     </div>
     <div class="metric-card text-center">
       <p class="text-sm text-gray-500 mb-1">风险评分</p>
-      <p class="text-2xl font-bold text-quant-primary">
+      <p class="text-2xl font-bold text-gray-800">
         {(techData?.composite_score || 50) / 10}/10
       </p>
     </div>
     <div class="metric-card text-center">
       <p class="text-sm text-gray-500 mb-1">涨停家数</p>
-      <p class="text-2xl font-bold text-quant-up">{techData?.total_zt_count || 0}</p>
+      <p class="text-2xl font-bold text-fin-up">{techData?.total_zt_count || 0}</p>
     </div>
     <div class="metric-card text-center">
       <p class="text-sm text-gray-500 mb-1">股票池买入信号</p>
-      <p class="text-2xl font-bold text-quant-success">{poolData?.summary?.buy_count || 0}</p>
+      <p class="text-2xl font-bold text-primary-600">{poolData?.summary?.buy_count || 0}</p>
     </div>
   </div>
 
   <!-- 功能模块导航 -->
-  <h2 class="text-xl font-bold mb-4">📑 功能模块</h2>
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-    <a href="/today-technical/" class="metric-card hover:shadow-md transition-shadow group">
-      <h3 class="text-lg font-bold mb-2 group-hover:text-blue-600">🔥 今日技术面</h3>
+  <h2 class="text-xl font-bold mb-4 text-gray-800">功能模块</h2>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
+    <a href="/today-technical/" class="metric-card hover:shadow-card-hover transition-shadow group">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-10 h-10 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center text-lg">
+          🔥
+        </div>
+        <h3 class="text-lg font-bold group-hover:text-primary-600 transition-colors">今日技术面</h3>
+      </div>
       <p class="text-sm text-gray-500">全市场涨停板扫描、板块热度分析、指数走势</p>
-      <div class="mt-3 text-blue-600 text-sm font-medium">进入页面 →</div>
+      <div class="mt-3 text-primary-600 text-sm font-medium">进入页面 →</div>
     </a>
-    <a href="/pool-watch/" class="metric-card hover:shadow-md transition-shadow group">
-      <h3 class="text-lg font-bold mb-2 group-hover:text-blue-600">📊 股票池监控</h3>
+    <a href="/pool-watch/" class="metric-card hover:shadow-card-hover transition-shadow group">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center text-lg">
+          📊
+        </div>
+        <h3 class="text-lg font-bold group-hover:text-primary-600 transition-colors">股票池监控</h3>
+      </div>
       <p class="text-sm text-gray-500">LongTerm股票池短线技术指标、均线系统分析</p>
-      <div class="mt-3 text-blue-600 text-sm font-medium">进入页面 →</div>
+      <div class="mt-3 text-primary-600 text-sm font-medium">进入页面 →</div>
     </a>
-    <a href="/signal-watch/" class="metric-card hover:shadow-md transition-shadow group">
-      <h3 class="text-lg font-bold mb-2 group-hover:text-blue-600">📡 信号监控</h3>
+    <a href="/signal-watch/" class="metric-card hover:shadow-card-hover transition-shadow group">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-10 h-10 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center text-lg">
+          📡
+        </div>
+        <h3 class="text-lg font-bold group-hover:text-primary-600 transition-colors">信号监控</h3>
+      </div>
       <p class="text-sm text-gray-500">左侧/右侧交易信号、风险雷达、健康度评分</p>
-      <div class="mt-3 text-blue-600 text-sm font-medium">进入页面 →</div>
+      <div class="mt-3 text-primary-600 text-sm font-medium">进入页面 →</div>
     </a>
   </div>
 
@@ -63,19 +91,19 @@ const topWeight = weights?.[0];
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- 左侧：今日技术面摘要 -->
     <div class="metric-card">
-      <h3 class="text-lg font-bold mb-4">🔥 今日技术面摘要</h3>
+      <h3 class="text-lg font-bold mb-4 text-gray-800">🔥 今日技术面摘要</h3>
       {techData ? (
         <div class="space-y-4">
           <div class="flex items-center justify-between">
             <span class="text-gray-600">涨停家数</span>
-            <span class="text-2xl font-bold text-quant-up">{techData.total_zt_count}</span>
+            <span class="text-2xl font-bold text-fin-up">{techData.total_zt_count}</span>
           </div>
           {hotSectors.length > 0 && (
             <div>
               <p class="text-sm text-gray-500 mb-2">热点板块</p>
               <div class="flex flex-wrap gap-2">
                 {hotSectors.map(sector => (
-                  <span class="px-3 py-1 bg-red-500 text-white text-sm rounded-full">
+                  <span class="px-3 py-1 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-sm rounded-full">
                     {sector.sector} ({sector.zt_count})
                   </span>
                 ))}
@@ -93,7 +121,7 @@ const topWeight = weights?.[0];
 
     <!-- 右侧：股票池监控摘要 -->
     <div class="metric-card">
-      <h3 class="text-lg font-bold mb-4">📊 股票池监控摘要</h3>
+      <h3 class="text-lg font-bold mb-4 text-gray-800">📊 股票池监控摘要</h3>
       {poolData ? (
         <div class="space-y-4">
           <div class="grid grid-cols-3 gap-4">
@@ -122,17 +150,17 @@ const topWeight = weights?.[0];
 
   <!-- 综合交易建议 -->
   <div class="mt-8 metric-card">
-    <h3 class="text-lg font-bold mb-4">💡 综合交易建议</h3>
+    <h3 class="text-lg font-bold mb-4 text-gray-800">💡 综合交易建议</h3>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <div>
         <p class="text-sm text-gray-500 mb-2">仓位建议</p>
-        <div class="w-full bg-gray-200 rounded-full h-4">
+        <div class="w-full bg-gray-200 rounded-full h-3">
           <div
-            class="bg-blue-500 h-4 rounded-full transition-all"
+            class="bg-gradient-to-r from-blue-500 to-purple-600 h-3 rounded-full transition-all"
             style={`width: ${regime === 'AGGRESSIVE' ? '100%' : regime === 'DEFENSIVE' ? '30%' : '70%'}`}
           />
         </div>
-        <p class="text-sm font-medium mt-1">
+        <p class="text-sm font-medium mt-2 text-gray-700">
           {regime === 'AGGRESSIVE' ? '100% 建议满仓' : regime === 'DEFENSIVE' ? '30% 建议轻仓' : '70% 建议中等仓位'}
         </p>
       </div>
@@ -141,7 +169,7 @@ const topWeight = weights?.[0];
         {hotSectors.length > 0 ? (
           <div class="flex flex-wrap gap-2">
             {hotSectors.map(s => (
-              <span class="px-3 py-1 bg-red-500 text-white text-sm rounded">{s.sector}</span>
+              <span class="px-3 py-1 bg-primary-50 text-primary-700 text-sm rounded-md border border-primary-100">{s.sector}</span>
             ))}
           </div>
         ) : (

@@ -35,8 +35,8 @@ export function formatDate(dateStr: string): string {
 }
 
 export function getChangeColor(changePct: number): string {
-  if (changePct > 0) return 'text-quant-up';
-  if (changePct < 0) return 'text-quant-down';
+  if (changePct > 0) return 'text-fin-up';
+  if (changePct < 0) return 'text-fin-down';
   return 'text-gray-500';
 }
 

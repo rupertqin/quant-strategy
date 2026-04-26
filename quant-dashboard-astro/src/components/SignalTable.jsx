@@ -83,29 +83,29 @@ export default function SignalTable({
   const formatPrice = v => v === undefined || v === null ? 'N/A' : `¥${v.toFixed(2)}`;
 
   const getChangeColor = v => {
-    if (v > 0) return 'text-red-600';
-    if (v < 0) return 'text-green-600';
+    if (v > 0) return 'text-fin-up';
+    if (v < 0) return 'text-fin-down';
     return 'text-gray-500';
   };
 
   const getStageBadge = stage => {
     const map = {
-      left: { cls: 'bg-amber-100 text-amber-700', label: '📉 左侧' },
-      right: { cls: 'bg-emerald-100 text-emerald-700', label: '📈 右侧' },
+      left: { cls: 'bg-amber-50 text-amber-700 border border-amber-200', label: '📉 左侧' },
+      right: { cls: 'bg-emerald-50 text-emerald-700 border border-emerald-200', label: '📈 右侧' },
     };
-    const s = map[stage] || { cls: 'bg-gray-100 text-gray-600', label: stage || '-' };
-    return <span className={`px-2 py-0.5 rounded text-xs ${s.cls}`}>{s.label}</span>;
+    const s = map[stage] || { cls: 'bg-gray-50 text-gray-600 border border-gray-200', label: stage || '-' };
+    return <span className={`px-2 py-0.5 rounded-md text-xs ${s.cls}`}>{s.label}</span>;
   };
 
   const getStrengthBadge = strength => {
     const map = {
-      strong: 'bg-red-100 text-red-700',
-      medium: 'bg-orange-100 text-orange-700',
-      weak: 'bg-gray-100 text-gray-600',
+      strong: 'bg-red-50 text-red-700 border border-red-200',
+      medium: 'bg-orange-50 text-orange-700 border border-orange-200',
+      weak: 'bg-gray-50 text-gray-600 border border-gray-200',
     };
     const label = { strong: '强', medium: '中', weak: '弱' };
     return (
-      <span className={`px-2 py-0.5 rounded text-xs ${map[strength] || map.weak}`}>
+      <span className={`px-2 py-0.5 rounded-md text-xs ${map[strength] || map.weak}`}>
         {label[strength] || strength}
       </span>
     );
@@ -137,12 +137,12 @@ export default function SignalTable({
           placeholder="搜索代码/名称"
           value={searchQuery}
           onChange={e => { setSearchQuery(e.target.value); setCurrentPage(0); }}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-gray-200 rounded-md text-sm w-40 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
         />
         <select
           value={filterType}
           onChange={e => { setFilterType(e.target.value); setCurrentPage(0); }}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
         >
           <option value="all">全部类型</option>
           <option value="left">含左侧信号</option>
@@ -151,7 +151,7 @@ export default function SignalTable({
         <select
           value={filterStage}
           onChange={e => { setFilterStage(e.target.value); setCurrentPage(0); }}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
         >
           <option value="all">全部阶段</option>
           <option value="left">左侧阶段</option>
@@ -160,7 +160,7 @@ export default function SignalTable({
         <select
           value={sortBy}
           onChange={e => setSortBy(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
         >
           <option value="score-desc">信号分 (高→低)</option>
           <option value="score-asc">信号分 (低→高)</option>
@@ -201,17 +201,17 @@ export default function SignalTable({
                 <>
                   <tr
                     key={stock.symbol}
-                    className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                    className="border-b border-gray-100 hover:bg-gray-50/80 cursor-pointer transition-colors"
                     onClick={() => toggleExpand(stock.symbol)}
                   >
                     <td className="px-3 py-3">
-                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
                     </td>
                     <td className="px-3 py-3">
                       <div>
                         <a
                           href={`/stock-chart/?symbol=${stock.symbol}`}
-                          className="font-bold text-blue-600 hover:underline"
+                          className="font-bold text-primary-600 hover:text-primary-700 hover:underline"
                           onClick={e => e.stopPropagation()}
                         >
                           {stock.symbol}
@@ -220,12 +220,12 @@ export default function SignalTable({
                       </div>
                     </td>
                     <td className="px-3 py-3">{getStageBadge(stock.stage)}</td>
-                    <td className="px-3 py-3 text-right font-mono">{formatPrice(firstSignal?.close_price ?? stock.close_price)}</td>
+                    <td className="px-3 py-3 text-right font-mono text-gray-700">{formatPrice(firstSignal?.close_price ?? stock.close_price)}</td>
                     <td className={`px-3 py-3 text-right font-mono ${getChangeColor(firstSignal?.change_pct ?? stock.change_pct)}`}>
                       {formatPct(firstSignal?.change_pct ?? stock.change_pct)}
                     </td>
                     <td className="px-3 py-3 text-center">
-                      <span className="font-bold">{stock.signal_count || signals.length}</span>
+                      <span className="font-bold text-gray-700">{stock.signal_count || signals.length}</span>
                     </td>
                     <td className="px-3 py-3 text-center">
                       <span className={`font-bold ${getRiskColor(health?.risk_score ?? 0)}`}>
@@ -233,7 +233,7 @@ export default function SignalTable({
                       </span>
                     </td>
                     <td className="px-3 py-3 text-center">
-                      <span className="font-bold text-blue-600">{stock.signal_score ?? '-'}</span>
+                      <span className="font-bold text-primary-600">{stock.signal_score ?? '-'}</span>
                     </td>
                     <td className="px-3 py-3 text-xs">
                       {stock.dimension_breakdown ? (
@@ -250,10 +250,10 @@ export default function SignalTable({
                       <td className="px-3 py-3 text-center">
                         <button
                           onClick={(e) => handlePoolAction(e, stock.symbol, inPool)}
-                          className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-colors ${
+                          className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold transition-all ${
                             inPool
                               ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
-                              : 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200'
+                              : 'bg-primary-50 text-primary-600 hover:bg-primary-100 border border-primary-200'
                           }`}
                           title={inPool ? '从股票池移除' : '添加到股票池'}
                         >
@@ -266,7 +266,7 @@ export default function SignalTable({
                   {/* 展开详情 */}
                   {isExpanded && (
                     <tr key={`${stock.symbol}-detail`}>
-                      <td colSpan={colSpan} className="px-3 py-4 bg-gray-50">
+                      <td colSpan={colSpan} className="px-3 py-4 bg-gray-50/80">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {/* 左侧：风险详情 */}
                           <div>
@@ -274,7 +274,7 @@ export default function SignalTable({
                             {health?.risk_explanations?.length > 0 ? (
                               <div className="space-y-2">
                                 {health.risk_explanations.map((exp, i) => (
-                                  <div key={i} className="text-xs px-3 py-2 rounded bg-red-50 text-red-700 border border-red-100">
+                                  <div key={i} className="text-xs px-3 py-2 rounded-md bg-red-50 text-red-700 border border-red-100">
                                     {exp}
                                   </div>
                                 ))}
@@ -297,17 +297,17 @@ export default function SignalTable({
                             ) : (
                             <div className="space-y-2">
                               {signals.map((sig, i) => (
-                                <div key={i} className="bg-white rounded p-3 border border-gray-200">
+                                <div key={i} className="bg-white rounded-lg p-3 border border-gray-200 shadow-sm">
                                   <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                       {sig.signal_type === 'left' ? (
-                                        <span className="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-700">📉 左侧</span>
+                                        <span className="px-2 py-0.5 rounded-md text-xs bg-amber-50 text-amber-700 border border-amber-200">📉 左侧</span>
                                       ) : (
-                                        <span className="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-700">📈 右侧</span>
+                                        <span className="px-2 py-0.5 rounded-md text-xs bg-emerald-50 text-emerald-700 border border-emerald-200">📈 右侧</span>
                                       )}
-                                      <span className="font-semibold text-sm">{sig.signal_name}</span>
+                                      <span className="font-semibold text-sm text-gray-800">{sig.signal_name}</span>
                                       {getStrengthBadge(sig.strength)}
-                                      <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+                                      <span className="text-xs px-2 py-0.5 rounded-md bg-gray-50 text-gray-600 border border-gray-200">
                                         {sig.period === 'daily' ? '日线' : sig.period === 'weekly' ? '周线' : '月线'}
                                       </span>
                                     </div>
@@ -350,17 +350,17 @@ export default function SignalTable({
             <button
               onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
               disabled={currentPage === 0}
-              className="p-2 rounded-lg border border-gray-200 disabled:opacity-30 hover:bg-gray-50"
+              className="p-2 rounded-md border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors"
             >
               <ChevronLeft size={16} />
             </button>
-            <span className="text-sm px-2">
+            <span className="text-sm px-2 text-gray-600">
               {currentPage + 1} / {totalPages}
             </span>
             <button
               onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
               disabled={currentPage >= totalPages - 1}
-              className="p-2 rounded-lg border border-gray-200 disabled:opacity-30 hover:bg-gray-50"
+              className="p-2 rounded-md border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors"
             >
               <ChevronRight size={16} />
             </button>

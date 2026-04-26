@@ -143,9 +143,9 @@ export default function TechnicalClient() {
   return (
     <div>
       {/* 标题 */}
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold">🔥 今日技术面</h1>
-        <p className="text-sm text-gray-500">
+      <div className="mb-8">
+        <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">🔥 今日技术面</h1>
+        <p className="text-sm text-gray-500 mt-1">
           涨停板扫描 | 板块热度分析 | 市场状态监控
           {data.market_close_time && ` | 数据时间: ${data.market_close_time}`}
           {data.data_status && ` [${data.data_status}]`}
@@ -157,32 +157,32 @@ export default function TechnicalClient() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">市场状态</p>
-          <p className="text-lg font-bold">
+          <p className="text-lg font-bold text-gray-800">
             {REGIME_MAP[regime]?.emoji || '⚪'} {REGIME_MAP[regime]?.name || regime}
           </p>
         </div>
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">综合评分</p>
-          <p className="text-lg font-bold">{Math.round(compositeScore / 10)}/10</p>
+          <p className="text-lg font-bold text-gray-800">{Math.round(compositeScore / 10)}/10</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">涨停:跌停</p>
-          <p className="text-lg font-bold">{ztCount}:{dtCount}</p>
+          <p className="text-lg font-bold text-gray-800">{ztCount}:{dtCount}</p>
           <p className={`text-xs ${getDtColor()}`}>{getSentiment()}</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">热点板块</p>
-          <p className="text-lg font-bold">{hotSectors.length}</p>
+          <p className="text-lg font-bold text-gray-800">{hotSectors.length}</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">涨停总数</p>
-          <p className="text-lg font-bold">{data.total_zt_count ?? 0}</p>
+          <p className="text-lg font-bold text-gray-800">{data.total_zt_count ?? 0}</p>
           <p className="text-xs text-gray-500">{data.market_type || ''}</p>
         </div>
       </div>
 
       {/* 宏观指标 */}
-      <h2 className="text-lg font-bold mb-3">🌍 宏观指标</h2>
+      <h2 className="text-lg font-bold mb-3 text-gray-800">🌍 宏观指标</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {MACRO_ITEMS.map(item => {
           const m = macro[item.key];
@@ -191,7 +191,7 @@ export default function TechnicalClient() {
           return (
             <div className="metric-card text-center" key={item.key}>
               <p className="text-xs text-gray-500">{item.label}</p>
-              <p className="text-lg font-bold">
+              <p className="text-lg font-bold text-gray-800">
                 {current > 0 ? `${current.toFixed(item.key === 'currency' ? 4 : 2)} ${item.unit}` : '--'}
               </p>
               {current > 0 && (
@@ -205,43 +205,43 @@ export default function TechnicalClient() {
       </div>
 
       {/* 技术面分析 */}
-      <h2 className="text-lg font-bold mb-3">📊 技术面分析</h2>
+      <h2 className="text-lg font-bold mb-3 text-gray-800">📊 技术面分析</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">技术面评分</p>
-          <p className="text-lg font-bold">{compositeScore}/100</p>
+          <p className="text-lg font-bold text-gray-800">{compositeScore}/100</p>
           <p className={`text-xs ${compositeScore >= 70 ? 'text-green-600' : compositeScore >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
             {compositeScore >= 70 ? '🟢 积极' : compositeScore >= 50 ? '🟡 中性' : '🔴 谨慎'}
           </p>
         </div>
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">涨跌家数</p>
-          <p className="text-lg font-bold">{marketBreadth.up_count ?? 0}:{marketBreadth.down_count ?? 0}</p>
+          <p className="text-lg font-bold text-gray-800">{marketBreadth.up_count ?? 0}:{marketBreadth.down_count ?? 0}</p>
           <p className="text-xs text-gray-500">
             ▲ 上涨{(marketBreadth.up_ratio ?? 0.5).toFixed(1)}%
           </p>
         </div>
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">市场情绪</p>
-          <p className="text-lg font-bold">{marketBreadth.interpretation || '未知'}</p>
+          <p className="text-lg font-bold text-gray-800">{marketBreadth.interpretation || '未知'}</p>
         </div>
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">涨跌停比</p>
-          <p className="text-lg font-bold">{ztCount}:{dtCount}</p>
+          <p className="text-lg font-bold text-gray-800">{ztCount}:{dtCount}</p>
           <p className={`text-xs ${getDtColor()}`}>{getDtSentiment()}</p>
         </div>
       </div>
 
       {/* 指数走势 & 技术分析 */}
-      <h2 className="text-lg font-bold mb-3">📈 指数走势 & 技术分析</h2>
+      <h2 className="text-lg font-bold mb-3 text-gray-800">📈 指数走势 & 技术分析</h2>
 
       {/* 周期 Tab */}
-      <div className="flex gap-1 mb-4">
+      <div className="flex gap-2 mb-4">
         {PERIODS.map(p => (
           <button
             key={p.key}
             onClick={() => setActivePeriod(p.key)}
-            className={`px-4 py-1.5 text-sm rounded ${activePeriod === p.key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
+            className={`tab-btn ${activePeriod === p.key ? 'active' : ''}`}
           >
             📊 {p.label}
           </button>
@@ -263,11 +263,11 @@ export default function TechnicalClient() {
             <div className="metric-card" key={name}>
               <div className="flex items-center justify-between mb-2">
                 {code ? (
-                  <a href={`/stock-chart/?symbol=${code}`} className="font-bold hover:text-blue-600">
+                  <a href={`/stock-chart/?symbol=${code}`} className="font-bold text-gray-800 hover:text-primary-600 transition-colors">
                     {name}
                   </a>
                 ) : (
-                  <span className="font-bold">{name}</span>
+                  <span className="font-bold text-gray-800">{name}</span>
                 )}
               </div>
               <IndexChart histData={histData} intradayData={[]} name={name} />
@@ -285,16 +285,16 @@ export default function TechnicalClient() {
       </div>
 
       {/* 道氏理论概览 */}
-      <h3 className="text-md font-bold mb-2">📊 道氏理论概览 ({PERIODS.find(p => p.key === activePeriod)?.label})</h3>
+      <h3 className="text-md font-bold mb-2 text-gray-800">📊 道氏理论概览 ({PERIODS.find(p => p.key === activePeriod)?.label})</h3>
       <div className="metric-card overflow-x-auto mb-6">
-        <table className="w-full text-sm">
+        <table className="data-table">
           <thead>
-            <tr className="bg-gray-50 text-gray-600">
-              <th className="px-3 py-2 text-left font-semibold">指数</th>
-              <th className="px-3 py-2 text-left font-semibold">主要趋势</th>
-              <th className="px-3 py-2 text-left font-semibold">次要趋势</th>
-              <th className="px-3 py-2 text-left font-semibold">趋势强度</th>
-              <th className="px-3 py-2 text-left font-semibold">区间位置</th>
+            <tr>
+              <th>指数</th>
+              <th>主要趋势</th>
+              <th>次要趋势</th>
+              <th>趋势强度</th>
+              <th>区间位置</th>
             </tr>
           </thead>
           <tbody>
@@ -304,14 +304,14 @@ export default function TechnicalClient() {
               if (!dow || !dow.primary_trend) return null;
               const strength = dow.trend_strength || {};
               return (
-                <tr key={name} className="border-b border-gray-100">
-                  <td className="px-3 py-2 font-medium">{name}</td>
-                  <td className="px-3 py-2">
+                <tr key={name}>
+                  <td className="font-medium text-gray-800">{name}</td>
+                  <td>
                     {TREND_EMOJI[dow.primary_trend] || '⚪'} {dow.primary_desc || dow.primary_trend}
                   </td>
-                  <td className="px-3 py-2">{dow.secondary_desc || '未知'}</td>
-                  <td className="px-3 py-2">ADX: {strength.adx ?? 0} ({strength.strength || 'weak'})</td>
-                  <td className="px-3 py-2">{((dow.position_in_range ?? 0) * 100).toFixed(0)}%</td>
+                  <td>{dow.secondary_desc || '未知'}</td>
+                  <td>ADX: {strength.adx ?? 0} ({strength.strength || 'weak'})</td>
+                  <td>{((dow.position_in_range ?? 0) * 100).toFixed(0)}%</td>
                 </tr>
               );
             })}
@@ -320,16 +320,16 @@ export default function TechnicalClient() {
       </div>
 
       {/* 波浪理论概览 */}
-      <h3 className="text-md font-bold mb-2">🌊 波浪理论概览 ({PERIODS.find(p => p.key === activePeriod)?.label})</h3>
+      <h3 className="text-md font-bold mb-2 text-gray-800">🌊 波浪理论概览 ({PERIODS.find(p => p.key === activePeriod)?.label})</h3>
       <div className="metric-card overflow-x-auto mb-6">
-        <table className="w-full text-sm">
+        <table className="data-table">
           <thead>
-            <tr className="bg-gray-50 text-gray-600">
-              <th className="px-3 py-2 text-left font-semibold">指数</th>
-              <th className="px-3 py-2 text-left font-semibold">当前阶段</th>
-              <th className="px-3 py-2 text-left font-semibold">最近峰值</th>
-              <th className="px-3 py-2 text-left font-semibold">最近谷值</th>
-              <th className="px-3 py-2 text-left font-semibold">距峰值</th>
+            <tr>
+              <th>指数</th>
+              <th>当前阶段</th>
+              <th>最近峰值</th>
+              <th>最近谷值</th>
+              <th>距峰值</th>
             </tr>
           </thead>
           <tbody>
@@ -338,12 +338,12 @@ export default function TechnicalClient() {
               const wave = analysis?.elliott_wave;
               if (!wave || !wave.current_phase) return null;
               return (
-                <tr key={name} className="border-b border-gray-100">
-                  <td className="px-3 py-2 font-medium">{name}</td>
-                  <td className="px-3 py-2">{wave.current_phase}</td>
-                  <td className="px-3 py-2">{wave.last_peak || '-'}</td>
-                  <td className="px-3 py-2">{wave.last_trough || '-'}</td>
-                  <td className="px-3 py-2">{(wave.current_vs_peak ?? 0).toFixed(1)}%</td>
+                <tr key={name}>
+                  <td className="font-medium text-gray-800">{name}</td>
+                  <td>{wave.current_phase}</td>
+                  <td>{wave.last_peak || '-'}</td>
+                  <td>{wave.last_trough || '-'}</td>
+                  <td>{(wave.current_vs_peak ?? 0).toFixed(1)}%</td>
                 </tr>
               );
             })}
@@ -354,7 +354,7 @@ export default function TechnicalClient() {
       {/* 主要指数详细分析 */}
       {mainIndex && (
         <div className="metric-card mb-6">
-          <h3 className="text-md font-bold mb-3">{mainIndexName} {PERIODS.find(p => p.key === activePeriod)?.label} 详细分析</h3>
+          <h3 className="text-md font-bold mb-3 text-gray-800">{mainIndexName} {PERIODS.find(p => p.key === activePeriod)?.label} 详细分析</h3>
 
           {(() => {
             const analysis = mainIndex.analysis?.[activeAnalysisKey];
@@ -371,8 +371,8 @@ export default function TechnicalClient() {
               <div className="space-y-4">
                 {/* 道氏理论 */}
                 <div>
-                  <p className="text-sm font-semibold text-gray-600 mb-1">道氏理论</p>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
+                  <p className="text-sm font-semibold text-gray-700 mb-1">道氏理论</p>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
                     <p>主要趋势: {TREND_EMOJI[dow.primary_trend] || '⚪'} {dow.primary_desc || dow.primary_trend}</p>
                     <p>次要趋势: {dow.secondary_desc || '未知'}</p>
                   </div>
@@ -380,9 +380,9 @@ export default function TechnicalClient() {
                     <div className="flex items-center gap-2 text-sm">
                       <span className="text-gray-500">趋势强度 ADX:</span>
                       <div className="flex-1 bg-gray-200 rounded-full h-2">
-                        <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${Math.min(adx, 100)}%` }} />
+                        <div className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full" style={{ width: `${Math.min(adx, 100)}%` }} />
                       </div>
-                      <span className="font-medium">{adx} ({strength.strength || 'weak'})</span>
+                      <span className="font-medium text-gray-700">{adx} ({strength.strength || 'weak'})</span>
                     </div>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -393,8 +393,8 @@ export default function TechnicalClient() {
                 {/* 波浪理论 */}
                 {elliott && elliott.current_phase && (
                   <div>
-                    <p className="text-sm font-semibold text-gray-600 mb-1">波浪理论</p>
-                    <p className="text-sm">当前阶段: {elliott.current_phase}</p>
+                    <p className="text-sm font-semibold text-gray-700 mb-1">波浪理论</p>
+                    <p className="text-sm text-gray-600">当前阶段: {elliott.current_phase}</p>
                     {elliott.structure && (
                       <p className="text-xs text-gray-500 mt-1">
                         波动率: {(elliott.structure.volatility_pct ?? 0).toFixed(2)}%
@@ -402,17 +402,17 @@ export default function TechnicalClient() {
                     )}
                     {elliott.structure?.fib_382 != null && (
                       <div className="grid grid-cols-3 gap-2 mt-2">
-                        <div className="text-center bg-gray-50 rounded p-2">
+                        <div className="text-center bg-gray-50 rounded-lg p-2">
                           <p className="text-xs text-gray-500">38.2%</p>
-                          <p className="font-bold">{elliott.structure.fib_382.toFixed(0)}</p>
+                          <p className="font-bold text-gray-800">{elliott.structure.fib_382.toFixed(0)}</p>
                         </div>
-                        <div className="text-center bg-gray-50 rounded p-2">
+                        <div className="text-center bg-gray-50 rounded-lg p-2">
                           <p className="text-xs text-gray-500">50.0%</p>
-                          <p className="font-bold">{elliott.structure.fib_500.toFixed(0)}</p>
+                          <p className="font-bold text-gray-800">{elliott.structure.fib_500.toFixed(0)}</p>
                         </div>
-                        <div className="text-center bg-gray-50 rounded p-2">
+                        <div className="text-center bg-gray-50 rounded-lg p-2">
                           <p className="text-xs text-gray-500">61.8%</p>
-                          <p className="font-bold">{elliott.structure.fib_618.toFixed(0)}</p>
+                          <p className="font-bold text-gray-800">{elliott.structure.fib_618.toFixed(0)}</p>
                         </div>
                       </div>
                     )}
@@ -427,29 +427,29 @@ export default function TechnicalClient() {
       {/* 跨指数验证 */}
       {interValidation && activePeriod === 'daily' && (
         <div className="metric-card mb-6">
-          <h3 className="text-md font-bold mb-2">指数验证</h3>
-          <p className="text-sm mb-2">
+          <h3 className="text-md font-bold mb-2 text-gray-800">指数验证</h3>
+          <p className="text-sm mb-2 text-gray-700">
             {({ CONFIRMED: '✅', PARTIAL: '⚠️', DIVERGENCE: '❌' })[interValidation.validation] || '➖'} {interValidation.note || ''}
           </p>
           <div className="flex items-center gap-2 text-sm">
             <span className="text-gray-500">一致性:</span>
             <div className="flex-1 bg-gray-200 rounded-full h-2 max-w-xs">
-              <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(interValidation.consistency ?? 0) * 100}%` }} />
+              <div className="bg-gradient-to-r from-green-400 to-green-600 h-2 rounded-full" style={{ width: `${(interValidation.consistency ?? 0) * 100}%` }} />
             </div>
-            <span className="font-medium">{((interValidation.consistency ?? 0) * 100).toFixed(0)}%</span>
+            <span className="font-medium text-gray-700">{((interValidation.consistency ?? 0) * 100).toFixed(0)}%</span>
           </div>
         </div>
       )}
 
       {/* 热点板块 */}
-      <h2 className="text-lg font-bold mb-3">🔥 热点板块</h2>
+      <h2 className="text-lg font-bold mb-3 text-gray-800">🔥 热点板块</h2>
       {hotSectors.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
           {hotSectors.map(sector => (
             <div className="hot-sector-card" key={sector.sector}>
               <div className="flex justify-between items-start mb-2">
                 <h3 className="font-bold text-lg">{sector.sector}</h3>
-                <span className="bg-white/20 px-2 py-1 rounded text-sm">
+                <span className="bg-white/20 px-2 py-1 rounded-md text-sm">
                   涨停 {sector.zt_count} 家
                 </span>
               </div>
@@ -468,35 +468,35 @@ export default function TechnicalClient() {
       )}
 
       {/* 涨停信号列表 */}
-      <h2 className="text-lg font-bold mb-3">📋 涨停信号列表</h2>
+      <h2 className="text-lg font-bold mb-3 text-gray-800">📋 涨停信号列表</h2>
       {signals.length > 0 ? (
         <div className="metric-card overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="bg-gray-50 text-gray-600">
-                <th className="px-3 py-2 text-left font-semibold">代码</th>
-                <th className="px-3 py-2 text-left font-semibold">名称</th>
-                <th className="px-3 py-2 text-left font-semibold">信号</th>
-                <th className="px-3 py-2 text-right font-semibold">价格</th>
-                <th className="px-3 py-2 text-right font-semibold">涨跌幅</th>
-                <th className="px-3 py-2 text-left font-semibold">描述</th>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>信号</th>
+                <th className="text-right">价格</th>
+                <th className="text-right">涨跌幅</th>
+                <th>描述</th>
               </tr>
             </thead>
             <tbody>
               {signals.map((sig, i) => (
-                <tr key={i} className="border-b border-gray-100">
-                  <td className="px-3 py-2 font-medium">{sig.symbol}</td>
-                  <td className="px-3 py-2">{sig.name}</td>
-                  <td className="px-3 py-2">
-                    <span className={`px-2 py-0.5 rounded text-xs ${sig.signal_type === 'left' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                <tr key={i}>
+                  <td className="font-medium text-gray-800">{sig.symbol}</td>
+                  <td>{sig.name}</td>
+                  <td>
+                    <span className={`px-2 py-0.5 rounded-md text-xs ${sig.signal_type === 'left' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
                       {sig.signal_type === 'left' ? '📉 左侧' : '📈 右侧'} {sig.signal_name}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-right font-mono">{formatPrice(sig.close_price)}</td>
-                  <td className={`px-3 py-2 text-right font-mono ${getChangeColor(sig.change_pct)}`}>
+                  <td className="text-right font-mono text-gray-700">{formatPrice(sig.close_price)}</td>
+                  <td className={`text-right font-mono ${getChangeColor(sig.change_pct)}`}>
                     {formatPercent(sig.change_pct)}
                   </td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{sig.description}</td>
+                  <td className="text-xs text-gray-600">{sig.description}</td>
                 </tr>
               ))}
             </tbody>

@@ -1,4 +1,6 @@
 ---
+import '../styles/global.css';
+
 interface Props {
   title: string;
   description?: string;
@@ -7,10 +9,10 @@ interface Props {
 const { title, description = "量化交易看板" } = Astro.props;
 
 const navItems = [
-  { href: "/", label: "📈 首页", exact: true },
-  { href: "/today-technical/", label: "🔥 今日技术面" },
-  { href: "/pool-watch/", label: "📊 股票池监控" },
-  { href: "/signal-watch/", label: "📡 信号监控" },
+  { href: "/", label: "首页", exact: true },
+  { href: "/today-technical/", label: "今日技术面" },
+  { href: "/pool-watch/", label: "股票池监控" },
+  { href: "/signal-watch/", label: "信号监控" },
 ];
 
 const currentPath = Astro.url.pathname;
@@ -26,16 +28,19 @@ const currentPath = Astro.url.pathname;
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js" async></script>
 </head>
-<body class="min-h-screen bg-quant-bg">
+<body class="min-h-screen bg-white text-gray-800">
   <!-- 顶部导航栏 -->
-  <header class="sticky top-0 z-50 bg-white border-b border-quant-border shadow-sm">
-    <div class="max-w-7xl mx-auto px-4">
-      <div class="flex items-center justify-between h-14">
-        <a href="/" class="flex items-center gap-2 text-lg font-bold text-quant-primary">
-          <span>📈</span>
-          <span>Quant Dashboard</span>
+  <header class="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+    <div class="max-w-[1440px] mx-auto px-6">
+      <div class="flex items-center justify-between h-16">
+        <!-- Logo -->
+        <a href="/" class="flex items-center gap-2">
+          <span class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+            Quant Dashboard
+          </span>
         </a>
-        <nav class="hidden md:flex items-center gap-1">
+        <!-- 桌面导航 -->
+        <nav class="hidden md:flex items-center gap-2">
           {navItems.map(item => {
             const isActive = item.exact ? currentPath === item.href : currentPath.startsWith(item.href);
             return (
@@ -48,29 +53,37 @@ const currentPath = Astro.url.pathname;
             );
           })}
         </nav>
-        <div class="text-xs text-gray-400">
-          量化交易看板
+        <!-- 右侧 CTA -->
+        <div class="hidden md:block">
+          <a href="/signal-watch/" class="btn-primary text-sm">
+            查看信号
+          </a>
         </div>
+        <!-- 移动端菜单按钮 -->
+        <button id="mobile-menu-button" class="md:hidden text-gray-600 p-2 focus:outline-none">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      </div>
+    </div>
+    <!-- 移动端菜单 -->
+    <div id="mobile-menu" class="md:hidden hidden border-t border-gray-100">
+      <div class="max-w-[1440px] mx-auto px-6 py-3 space-y-1">
+        {navItems.map(item => {
+          const isActive = item.exact ? currentPath === item.href : currentPath.startsWith(item.href);
+          return (
+            <a
+              href={item.href}
+              class:list={['block px-3 py-2 rounded-md text-sm font-medium transition-colors', isActive ? 'bg-primary-50 text-primary-600' : 'text-gray-600 hover:text-primary-600 hover:bg-gray-50']}
+            >
+              {item.label}
+            </a>
+          );
+        })}
       </div>
     </div>
   </header>
-
-  <!-- 移动端导航 -->
-  <nav class="md:hidden bg-white border-b border-quant-border px-4 py-2 overflow-x-auto">
-    <div class="flex gap-2">
-      {navItems.map(item => {
-        const isActive = item.exact ? currentPath === item.href : currentPath.startsWith(item.href);
-        return (
-          <a
-            href={item.href}
-            class:list={['nav-link whitespace-nowrap text-sm', { active: isActive }]}
-          >
-            {item.label}
-          </a>
-        );
-      })}
-    </div>
-  </nav>
 
   <!-- 主内容区 -->
   <main class="page-container">
@@ -78,8 +91,40 @@ const currentPath = Astro.url.pathname;
   </main>
 
   <!-- 页脚 -->
-  <footer class="border-t border-quant-border mt-12 py-6 text-center text-sm text-gray-400">
-    <p>⚠️ 仅供参考，不构成投资建议</p>
+  <footer class="border-t border-gray-200 mt-16 py-8">
+    <div class="max-w-[1440px] mx-auto px-6">
+      <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+        <div class="text-center md:text-left">
+          <p class="text-sm text-gray-600 font-medium">Quant Dashboard</p>
+          <p class="text-xs text-gray-400 mt-1">量化交易看板 - 长线战略配置 + 短线战术扫描</p>
+        </div>
+        <div class="flex items-center gap-6 text-sm text-gray-500">
+          <a href="/today-technical/" class="hover:text-primary-600 transition-colors">今日技术面</a>
+          <a href="/pool-watch/" class="hover:text-primary-600 transition-colors">股票池监控</a>
+          <a href="/signal-watch/" class="hover:text-primary-600 transition-colors">信号监控</a>
+        </div>
+      </div>
+      <div class="border-t border-gray-100 mt-6 pt-6 text-center">
+        <p class="text-xs text-gray-400">⚠️ 仅供参考，不构成投资建议</p>
+      </div>
+    </div>
   </footer>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const btn = document.getElementById('mobile-menu-button');
+      const menu = document.getElementById('mobile-menu');
+      if (btn && menu) {
+        btn.addEventListener('click', () => {
+          menu.classList.toggle('hidden');
+        });
+        document.addEventListener('click', (e) => {
+          if (!menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) {
+            menu.classList.add('hidden');
+          }
+        });
+      }
+    });
+  </script>
 </body>
 </html>
