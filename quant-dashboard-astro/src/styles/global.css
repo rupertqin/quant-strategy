@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-quant-bg text-quant-primary antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+}
+
+@layer components {
+  .metric-card {
+    @apply bg-quant-card rounded-xl p-5 shadow-sm border border-quant-border;
+  }
+
+  .signal-card {
+    @apply bg-white rounded-lg p-4 border-l-4 shadow-sm mb-3;
+  }
+
+  .signal-card-left {
+    @apply border-quant-warning bg-amber-50;
+  }
+
+  .signal-card-right {
+    @apply border-quant-success bg-emerald-50;
+  }
+
+  .hot-sector-card {
+    @apply bg-gradient-to-br from-red-500 to-orange-500 text-white rounded-xl p-5 shadow-md;
+  }
+
+  .btn-primary {
+    @apply bg-quant-accent text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors;
+  }
+
+  .page-container {
+    @apply max-w-7xl mx-auto px-4 py-6;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors;
+  }
+
+  .nav-link.active {
+    @apply bg-blue-50 text-blue-600;
+  }
+
+  .nav-link:not(.active) {
+    @apply text-gray-600 hover:bg-gray-50;
+  }
+}

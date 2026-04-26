@@ -1,0 +1,8 @@
+---
+import MainLayout from '@layouts/MainLayout.astro';
+import SignalWatchClient from '@components/SignalWatchClient.jsx';
+---
+
+<MainLayout title="信号监控">
+  <SignalWatchClient client:only="react" />
+</MainLayout>

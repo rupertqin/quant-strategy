@@ -1,0 +1,8 @@
+---
+import MainLayout from '@layouts/MainLayout.astro';
+import TechnicalClient from '@components/TechnicalClient.jsx';
+---
+
+<MainLayout title="今日技术面">
+  <TechnicalClient client:only="react" />
+</MainLayout>

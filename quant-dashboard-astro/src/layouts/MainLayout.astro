@@ -1,0 +1,85 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = "量化交易看板" } = Astro.props;
+
+const navItems = [
+  { href: "/", label: "📈 首页", exact: true },
+  { href: "/today-technical/", label: "🔥 今日技术面" },
+  { href: "/pool-watch/", label: "📊 股票池监控" },
+  { href: "/signal-watch/", label: "📡 信号监控" },
+];
+
+const currentPath = Astro.url.pathname;
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} - Quant Dashboard</title>
+  <meta name="description" content={description} />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js" async></script>
+</head>
+<body class="min-h-screen bg-quant-bg">
+  <!-- 顶部导航栏 -->
+  <header class="sticky top-0 z-50 bg-white border-b border-quant-border shadow-sm">
+    <div class="max-w-7xl mx-auto px-4">
+      <div class="flex items-center justify-between h-14">
+        <a href="/" class="flex items-center gap-2 text-lg font-bold text-quant-primary">
+          <span>📈</span>
+          <span>Quant Dashboard</span>
+        </a>
+        <nav class="hidden md:flex items-center gap-1">
+          {navItems.map(item => {
+            const isActive = item.exact ? currentPath === item.href : currentPath.startsWith(item.href);
+            return (
+              <a
+                href={item.href}
+                class:list={['nav-link', { active: isActive }]}
+              >
+                {item.label}
+              </a>
+            );
+          })}
+        </nav>
+        <div class="text-xs text-gray-400">
+          量化交易看板
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 移动端导航 -->
+  <nav class="md:hidden bg-white border-b border-quant-border px-4 py-2 overflow-x-auto">
+    <div class="flex gap-2">
+      {navItems.map(item => {
+        const isActive = item.exact ? currentPath === item.href : currentPath.startsWith(item.href);
+        return (
+          <a
+            href={item.href}
+            class:list={['nav-link whitespace-nowrap text-sm', { active: isActive }]}
+          >
+            {item.label}
+          </a>
+        );
+      })}
+    </div>
+  </nav>
+
+  <!-- 主内容区 -->
+  <main class="page-container">
+    <slot />
+  </main>
+
+  <!-- 页脚 -->
+  <footer class="border-t border-quant-border mt-12 py-6 text-center text-sm text-gray-400">
+    <p>⚠️ 仅供参考，不构成投资建议</p>
+  </footer>
+</body>
+</html>

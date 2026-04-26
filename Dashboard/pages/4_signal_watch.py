@@ -283,15 +283,6 @@ def _load_data_impl(asset_type: str = "stock") -> dict:
                 if "risk_explanations" not in stock:
                     warnings = stock.get("risk_warnings", [])
                     stock["risk_explanations"] = warnings if warnings else ["暂无风险详情"]
-                # 兼容旧数据：如果信号里有 portfolio_score，优先使用
-                signals = stock.get("signals", [])
-                portfolio_scores = [
-                    s.get("technicals", {}).get("portfolio_score")
-                    for s in signals
-                    if s.get("technicals", {}).get("portfolio_score") is not None
-                ]
-                if portfolio_scores:
-                    stock["signal_score"] = round(max(portfolio_scores))
         return data
 
     asset_name = "ETF" if asset_type == "etf" else "指数" if asset_type == "index" else "股票"

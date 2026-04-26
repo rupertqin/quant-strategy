@@ -40,11 +40,13 @@ import numpy as np
 
 
 def convert_to_serializable(obj):
-    """将 numpy 类型转换为 JSON 可序列化的 Python 原生类型"""
+    """将 numpy 类型转换为 JSON 可序列化的 Python 原生类型，NaN/Inf 转为 None"""
+    import math
     if isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
-        return float(obj)
+        f = float(obj)
+        return None if math.isnan(f) or math.isinf(f) else f
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
     elif isinstance(obj, dict):
@@ -53,6 +55,20 @@ def convert_to_serializable(obj):
         return [convert_to_serializable(item) for item in obj]
     elif isinstance(obj, tuple):
         return tuple(convert_to_serializable(item) for item in obj)
+    elif isinstance(obj, float):
+        return None if math.isnan(obj) or math.isinf(obj) else obj
+    return obj
+
+
+def sanitize_for_json(obj):
+    """递归清洗：将残留的 float NaN/Inf 转为 None，确保输出标准 JSON"""
+    import math
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, float):
+        return None if math.isnan(obj) or math.isinf(obj) else obj
     return obj
 
 
@@ -348,6 +364,7 @@ def save_scan_result(result: Dict, asset_type: str, project_root: Path) -> Path:
 
     # 转换 numpy 类型为 Python 原生类型
     result = convert_to_serializable(result)
+    result = sanitize_for_json(result)
 
     # 统一带日期的文件名（覆盖）
     filepath = output_dir / f"signal_{date_str}.json"
@@ -719,6 +736,7 @@ def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
     }
 
     unified = convert_to_serializable(unified)
+    unified = sanitize_for_json(unified)
 
     latest_path = output_dir / "signal_latest.json"
     with open(latest_path, 'w', encoding='utf-8') as f:
@@ -907,6 +925,7 @@ def save_all_intraday_results(result: Dict, all_signals: List,
 
     # 转换 numpy 类型为 Python 原生类型
     result = convert_to_serializable(result)
+    result = sanitize_for_json(result)
 
     # 统一保存合并文件（覆盖）
     filepath = output_dir / f"signal_{date_str}.json"

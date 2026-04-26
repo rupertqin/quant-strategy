@@ -1510,6 +1510,18 @@ class LimitUpScanner:
         base_output_dir = get_storage_path("outputs", "shortterm", "technical_overview")
         base_output_dir.mkdir(parents=True, exist_ok=True)
 
+        # 清洗 NaN/Inf，确保输出标准 JSON
+        import math
+        def _sanitize(obj):
+            if isinstance(obj, dict):
+                return {k: _sanitize(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [_sanitize(item) for item in obj]
+            elif isinstance(obj, float):
+                return None if math.isnan(obj) or math.isinf(obj) else obj
+            return obj
+        result = _sanitize(result)
+
         # 保存两份文件（覆盖）：
         # 1. 最新文件（Dashboard读取）
         latest_file = base_output_dir / "latest.json"

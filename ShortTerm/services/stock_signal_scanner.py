@@ -184,20 +184,24 @@ class StockSignal:
     technicals: Dict                 # 技术指标详情
     
     def to_dict(self) -> dict:
-        """转换为字典，自动处理 numpy 类型"""
+        """转换为字典，自动处理 numpy 类型，NaN/Inf 统一转为 None"""
         import numpy as np
+        import math
 
         def convert_value(v):
             if isinstance(v, np.integer):
                 return int(v)
             elif isinstance(v, np.floating):
-                return float(v)
+                f = float(v)
+                return None if math.isnan(f) or math.isinf(f) else f
             elif isinstance(v, np.ndarray):
                 return v.tolist()
             elif isinstance(v, dict):
                 return {k: convert_value(val) for k, val in v.items()}
             elif isinstance(v, list):
                 return [convert_value(item) for item in v]
+            elif isinstance(v, float):
+                return None if math.isnan(v) or math.isinf(v) else v
             return v
 
         return {k: convert_value(v) for k, v in asdict(self).items()}
@@ -1795,10 +1799,6 @@ class StockSignalScanner:
         if multi_period and len(signals) > 1:
             signals = self._detect_multi_period_resonance(signals)
 
-        # 应用信号组合评分（考虑信号数量和质量分布）
-        if len(signals) > 0:
-            signals = self._apply_signal_portfolio_scoring(signals)
-        
         # 计算趋势健康度并添加到每个信号（便于signal_watch页面展示）
         if not df_daily.empty:
             health = SignalCalculator.calculate_trend_health(df_daily)
@@ -1929,118 +1929,6 @@ class StockSignalScanner:
                     if "共振" not in sig.description:
                         sig.description += " | 多周期共振"
 
-        return signals
-
-    def _apply_signal_portfolio_scoring(self, signals: List[StockSignal]) -> List[StockSignal]:
-        """
-        信号组合评分 - 严格分级制度
-        
-        分数等级（稀缺性控制）：
-        - 95-100分（极品）: <2% - 必须双侧+多周期+多指标
-        - 90-94分（强烈推荐）: <5% - 必须双侧或多周期覆盖
-        - 85-89分（值得关注）: <15% - 需要较好维度覆盖
-        - 80-84分（观察）: <30% - 基础条件满足
-        - <80分（普通）: >50% - 一般信号
-        
-        硬性门槛：
-        - 单一信号（无论多强）≤ 85分
-        - 单侧信号（只有左或只有右）≤ 90分  
-        - 要达到95+必须有：双侧 + 多周期 + 多指标
-        """
-        if not signals:
-            return signals
-        
-        n_signals = len(signals)
-        scores = [sig.score for sig in signals]
-        max_score = max(scores)
-        avg_score = sum(scores) / n_signals
-        
-        # 计算维度
-        dimension_coverage = self._calculate_dimension_coverage(signals)
-        dim_coverage = dimension_coverage['coverage']
-        dim_details = dimension_coverage['details']
-        
-        # 检查关键条件
-        has_both_sides = len(set(sig.signal_type for sig in signals)) >= 2
-        has_multi_period = len(set(sig.period for sig in signals)) >= 2
-        has_multi_indicator = len(dim_details.get('indicators', {})) >= 2
-        
-        # === 硬性上限控制（大幅收紧）===
-        if n_signals == 1:
-            max_possible = 72  # 单一信号上限72
-        elif not has_multi_period:
-            max_possible = 75  # 单周期上限75
-        elif not has_both_sides:
-            max_possible = 78  # 单侧上限78
-        elif has_both_sides and has_multi_period and has_multi_indicator and dim_coverage >= 0.7:
-            max_possible = 92  # 完美条件可达92
-        elif has_both_sides and has_multi_period and has_multi_indicator:
-            max_possible = 88  # 较好条件88
-        elif has_both_sides and has_multi_period:
-            max_possible = 82  # 双侧+多周期82
-        elif has_both_sides and has_multi_indicator:
-            max_possible = 78  # 双侧+多指标78
-        else:
-            max_possible = 75
-        
-        # === 基础分计算 ===
-        base_quality = max_score * 0.3 + avg_score * 0.4 + min(scores) * 0.3
-        
-        # === 维度奖励 ===
-        if dim_coverage >= 0.75:
-            dim_bonus = 6
-        elif dim_coverage >= 0.5:
-            dim_bonus = 3
-        elif dim_coverage >= 0.3:
-            dim_bonus = 1
-        else:
-            dim_bonus = 0
-        
-        # === 共振奖励 ===
-        resonance_bonus = 0
-        if has_both_sides:
-            resonance_bonus += 2
-        if has_multi_period:
-            resonance_bonus += 1
-        if has_multi_indicator:
-            resonance_bonus += 1
-        
-        # === 市场环境惩罚（普跌时压制高分）===
-        market_penalty = 0
-        market_change = getattr(self, 'market_change_pct', 0)
-        if market_change < -3:
-            market_penalty = 12
-            max_possible = min(max_possible, 78)  # 大跌日最高分封顶78
-        elif market_change < -2:
-            market_penalty = 8
-            max_possible = min(max_possible, 82)
-        elif market_change < -1:
-            market_penalty = 4
-            max_possible = min(max_possible, 85)
-        
-        # === 计算最终分 ===
-        portfolio_score = base_quality + dim_bonus + resonance_bonus - market_penalty
-        portfolio_score = min(portfolio_score, max_possible)
-        portfolio_score = max(20, min(portfolio_score, 100))
-        
-        # === 稀缺性标签 ===
-        if portfolio_score >= 95:
-            scarcity_label = "极品 ⭐⭐⭐"
-        elif portfolio_score >= 90:
-            scarcity_label = "强烈推荐 ⭐⭐"
-        elif portfolio_score >= 85:
-            scarcity_label = "值得关注 ⭐"
-        elif portfolio_score >= 80:
-            scarcity_label = "观察"
-        else:
-            scarcity_label = "普通"
-        
-        for sig in signals:
-            sig.technicals['portfolio_score'] = round(portfolio_score, 1)
-            sig.technicals['signal_count'] = n_signals
-            sig.technicals['dimension_coverage'] = round(dim_coverage, 2)
-            sig.technicals['scarcity_label'] = scarcity_label
-        
         return signals
 
     def calculate_dimension_score(self, df_daily: pd.DataFrame, signals: List[StockSignal]) -> dict:
@@ -2516,6 +2404,18 @@ class StockSignalScanner:
                 df = df.rename(columns={'\ufeffsymbol': 'symbol'})
             return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
         return pd.DataFrame()
+
+    @staticmethod
+    def _sanitize_for_json(obj):
+        """递归清洗数据：将 NaN / Inf 转为 None，确保输出标准 JSON"""
+        import math
+        if isinstance(obj, dict):
+            return {k: StockSignalScanner._sanitize_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [StockSignalScanner._sanitize_for_json(item) for item in obj]
+        elif isinstance(obj, float):
+            return None if math.isnan(obj) or math.isinf(obj) else obj
+        return obj
     
     def _save_result(self, result: Dict, signal_type: str):
         """保存扫描结果 - 统一合并文件格式"""
@@ -2523,6 +2423,7 @@ class StockSignalScanner:
 
         # 构建统一格式的数据：按股票组织
         unified_data = self._build_unified_data(result)
+        unified_data = self._sanitize_for_json(unified_data)
 
         # 统一保存带日期的文件（覆盖）
         filepath = self.output_dir / f"signal_{date_str}.json"

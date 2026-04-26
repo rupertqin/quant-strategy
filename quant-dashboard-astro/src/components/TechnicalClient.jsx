@@ -1,0 +1,510 @@
+import { useState, useEffect } from 'react';
+import IndexChart from './IndexChart.jsx';
+import { formatPercent, getChangeColor, formatPrice } from '../utils/formatters';
+
+const INDEX_CODE_MAP = {
+  '上证指数': '000001.SH',
+  '深证成指': '399001.SZ',
+  '创业板指': '399006.SZ',
+  '沪深300': '000300.SH',
+  '上证50': '000016.SH',
+  '中证500': '000905.SH',
+  '中证1000': '000852.SH',
+};
+
+const MACRO_ITEMS = [
+  { key: 'currency', label: '💱 离岸人民币', unit: '' },
+  { key: 'dxy', label: '📊 美元指数', unit: '' },
+  { key: 'oil', label: '🛢️ 原油', unit: '美元/桶' },
+  { key: 'gold', label: '🥇 黄金', unit: '美元/盎司' },
+];
+
+const PERIODS = [
+  { label: '日线', key: 'daily' },
+  { label: '周线', key: 'weekly' },
+  { label: '月线', key: 'monthly' },
+];
+
+const REGIME_MAP = {
+  'AGGRESSIVE': { emoji: '🟢', name: '积极进攻' },
+  'DEFENSIVE': { emoji: '🔴', name: '防御避险' },
+  'NEUTRAL': { emoji: '🟡', name: '震荡中性' },
+  'UNKNOWN': { emoji: '⚪', name: '未知' },
+};
+
+const TREND_EMOJI = { BULL: '🟢', BEAR: '🔴', SIDEWAYS: '🟡', UNKNOWN: '⚪' };
+
+function safeJsonParse(text) {
+  return JSON.parse(
+    text
+      .replace(/:\s*NaN/g, ': null')
+      .replace(/:\s*-NaN/g, ': null')
+      .replace(/:\s*Infinity/g, ': null')
+      .replace(/:\s*-Infinity/g, ': null')
+  );
+}
+
+export default function TechnicalClient() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activePeriod, setActivePeriod] = useState('daily');
+
+  useEffect(() => {
+    fetch('/data/technical/latest.json')
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      })
+      .then(text => safeJsonParse(text))
+      .then(json => {
+        setData(json);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('加载技术面数据失败:', err);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) {
+    return <p className="text-gray-500 py-8">加载中...</p>;
+  }
+
+  if (!data) {
+    return <p className="text-gray-500 py-8">暂无技术面数据</p>;
+  }
+
+  const ti = data.technical_indicators || {};
+  const indexHistory = data.index_history || {};
+  const indexHistoryWeekly = data.index_history_weekly || {};
+  const indexHistoryMonthly = data.index_history_monthly || {};
+  const indexPerformance = ti.index_performance || {};
+  const hotSectors = data.hot_sectors || [];
+  const signals = data.signals || [];
+  const macro = data.macro_indicators || {};
+  const marketBreadth = ti.market_breadth || {};
+  const ztSentiment = ti.zt_sentiment || {};
+  const dtSentiment = ti.dt_sentiment || {};
+  const interValidation = ti.inter_index_validation || {};
+  const compositeScore = ti.composite_score ?? data.composite_score ?? 50;
+  const regime = data.regime || 'NEUTRAL';
+  const ztCount = ztSentiment.zt_count ?? data.zt_count ?? 0;
+  const dtCount = dtSentiment.dt_count ?? data.dt_count ?? 0;
+
+  const getSentiment = () => {
+    if (ztCount > dtCount * 5) return '🔥极热';
+    if (ztCount > dtCount * 2) return '🟢活跃';
+    if (ztCount > dtCount) return '🟡正常';
+    return '🔴谨慎';
+  };
+
+  const getDtSentiment = () => {
+    if (dtCount <= 0 || ztCount <= 0) return '🟡 平衡';
+    const ratio = ztCount / dtCount;
+    if (ratio >= 5) return '🔥 极热';
+    if (ratio >= 2) return '🟢 活跃';
+    if (ratio >= 1) return '🟡 平衡';
+    return '🔴 恐慌';
+  };
+
+  const getDtColor = () => {
+    if (dtCount <= 0 || ztCount <= 0) return 'text-gray-500';
+    const ratio = ztCount / dtCount;
+    if (ratio >= 2) return 'text-green-600';
+    if (ratio >= 1) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  const periodHistory = {
+    daily: indexHistory,
+    weekly: indexHistoryWeekly,
+    monthly: indexHistoryMonthly,
+  };
+
+  // 过滤掉深证成指
+  const filteredIndexPerf = Object.fromEntries(
+    Object.entries(indexPerformance).filter(([k]) => k !== '深证成指' && k !== 'inter_index_validation')
+  );
+
+  // 找主要指数（优先沪深300）
+  let mainIndex = null;
+  let mainIndexName = '';
+  for (const name of ['沪深300', '上证指数']) {
+    const idx = filteredIndexPerf[name];
+    if (idx?.analysis?.daily?.dow_theory) {
+      mainIndex = idx;
+      mainIndexName = name;
+      break;
+    }
+  }
+
+  const activeAnalysisKey = activePeriod;
+
+  return (
+    <div>
+      {/* 标题 */}
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold">🔥 今日技术面</h1>
+        <p className="text-sm text-gray-500">
+          涨停板扫描 | 板块热度分析 | 市场状态监控
+          {data.market_close_time && ` | 数据时间: ${data.market_close_time}`}
+          {data.data_status && ` [${data.data_status}]`}
+          {data.generated_at && ` | 生成时间: ${data.generated_at}`}
+        </p>
+      </div>
+
+      {/* 市场状态卡片 */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">市场状态</p>
+          <p className="text-lg font-bold">
+            {REGIME_MAP[regime]?.emoji || '⚪'} {REGIME_MAP[regime]?.name || regime}
+          </p>
+        </div>
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">综合评分</p>
+          <p className="text-lg font-bold">{Math.round(compositeScore / 10)}/10</p>
+        </div>
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">涨停:跌停</p>
+          <p className="text-lg font-bold">{ztCount}:{dtCount}</p>
+          <p className={`text-xs ${getDtColor()}`}>{getSentiment()}</p>
+        </div>
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">热点板块</p>
+          <p className="text-lg font-bold">{hotSectors.length}</p>
+        </div>
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">涨停总数</p>
+          <p className="text-lg font-bold">{data.total_zt_count ?? 0}</p>
+          <p className="text-xs text-gray-500">{data.market_type || ''}</p>
+        </div>
+      </div>
+
+      {/* 宏观指标 */}
+      <h2 className="text-lg font-bold mb-3">🌍 宏观指标</h2>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        {MACRO_ITEMS.map(item => {
+          const m = macro[item.key];
+          const current = m?.current ?? 0;
+          const change = m?.change_pct ?? 0;
+          return (
+            <div className="metric-card text-center" key={item.key}>
+              <p className="text-xs text-gray-500">{item.label}</p>
+              <p className="text-lg font-bold">
+                {current > 0 ? `${current.toFixed(item.key === 'currency' ? 4 : 2)} ${item.unit}` : '--'}
+              </p>
+              {current > 0 && (
+                <p className={`text-xs ${getChangeColor(change)}`}>
+                  {change > 0 ? '+' : ''}{change.toFixed(2)}%
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 技术面分析 */}
+      <h2 className="text-lg font-bold mb-3">📊 技术面分析</h2>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">技术面评分</p>
+          <p className="text-lg font-bold">{compositeScore}/100</p>
+          <p className={`text-xs ${compositeScore >= 70 ? 'text-green-600' : compositeScore >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
+            {compositeScore >= 70 ? '🟢 积极' : compositeScore >= 50 ? '🟡 中性' : '🔴 谨慎'}
+          </p>
+        </div>
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">涨跌家数</p>
+          <p className="text-lg font-bold">{marketBreadth.up_count ?? 0}:{marketBreadth.down_count ?? 0}</p>
+          <p className="text-xs text-gray-500">
+            ▲ 上涨{(marketBreadth.up_ratio ?? 0.5).toFixed(1)}%
+          </p>
+        </div>
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">市场情绪</p>
+          <p className="text-lg font-bold">{marketBreadth.interpretation || '未知'}</p>
+        </div>
+        <div className="metric-card text-center">
+          <p className="text-xs text-gray-500">涨跌停比</p>
+          <p className="text-lg font-bold">{ztCount}:{dtCount}</p>
+          <p className={`text-xs ${getDtColor()}`}>{getDtSentiment()}</p>
+        </div>
+      </div>
+
+      {/* 指数走势 & 技术分析 */}
+      <h2 className="text-lg font-bold mb-3">📈 指数走势 & 技术分析</h2>
+
+      {/* 周期 Tab */}
+      <div className="flex gap-1 mb-4">
+        {PERIODS.map(p => (
+          <button
+            key={p.key}
+            onClick={() => setActivePeriod(p.key)}
+            className={`px-4 py-1.5 text-sm rounded ${activePeriod === p.key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
+          >
+            📊 {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* 指数图表 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        {Object.entries(periodHistory[activePeriod] || {}).map(([name, histData]) => {
+          if (name === '深证成指') return null;
+          const code = INDEX_CODE_MAP[name] || '';
+          const idx = filteredIndexPerf[name];
+          const analysis = idx?.analysis?.[activeAnalysisKey];
+          const elliott = analysis?.elliott_wave;
+          const peaks = elliott?.structure?.recent_peaks || [];
+          const troughs = elliott?.structure?.recent_troughs || [];
+
+          return (
+            <div className="metric-card" key={name}>
+              <div className="flex items-center justify-between mb-2">
+                {code ? (
+                  <a href={`/stock-chart/?symbol=${code}`} className="font-bold hover:text-blue-600">
+                    {name}
+                  </a>
+                ) : (
+                  <span className="font-bold">{name}</span>
+                )}
+              </div>
+              <IndexChart histData={histData} intradayData={[]} name={name} />
+              <div className="mt-2 text-xs text-gray-500 flex gap-3">
+                {peaks.length > 0 && (
+                  <span>📈 最近峰值: {peaks[peaks.length - 1][1]?.toFixed(2)} ({peaks[peaks.length - 1][0]})</span>
+                )}
+                {troughs.length > 0 && (
+                  <span>📉 最近谷值: {troughs[troughs.length - 1][1]?.toFixed(2)} ({troughs[troughs.length - 1][0]})</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 道氏理论概览 */}
+      <h3 className="text-md font-bold mb-2">📊 道氏理论概览 ({PERIODS.find(p => p.key === activePeriod)?.label})</h3>
+      <div className="metric-card overflow-x-auto mb-6">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 text-gray-600">
+              <th className="px-3 py-2 text-left font-semibold">指数</th>
+              <th className="px-3 py-2 text-left font-semibold">主要趋势</th>
+              <th className="px-3 py-2 text-left font-semibold">次要趋势</th>
+              <th className="px-3 py-2 text-left font-semibold">趋势强度</th>
+              <th className="px-3 py-2 text-left font-semibold">区间位置</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(filteredIndexPerf).map(([name, idxData]) => {
+              const analysis = idxData?.analysis?.[activeAnalysisKey];
+              const dow = analysis?.dow_theory;
+              if (!dow || !dow.primary_trend) return null;
+              const strength = dow.trend_strength || {};
+              return (
+                <tr key={name} className="border-b border-gray-100">
+                  <td className="px-3 py-2 font-medium">{name}</td>
+                  <td className="px-3 py-2">
+                    {TREND_EMOJI[dow.primary_trend] || '⚪'} {dow.primary_desc || dow.primary_trend}
+                  </td>
+                  <td className="px-3 py-2">{dow.secondary_desc || '未知'}</td>
+                  <td className="px-3 py-2">ADX: {strength.adx ?? 0} ({strength.strength || 'weak'})</td>
+                  <td className="px-3 py-2">{((dow.position_in_range ?? 0) * 100).toFixed(0)}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 波浪理论概览 */}
+      <h3 className="text-md font-bold mb-2">🌊 波浪理论概览 ({PERIODS.find(p => p.key === activePeriod)?.label})</h3>
+      <div className="metric-card overflow-x-auto mb-6">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 text-gray-600">
+              <th className="px-3 py-2 text-left font-semibold">指数</th>
+              <th className="px-3 py-2 text-left font-semibold">当前阶段</th>
+              <th className="px-3 py-2 text-left font-semibold">最近峰值</th>
+              <th className="px-3 py-2 text-left font-semibold">最近谷值</th>
+              <th className="px-3 py-2 text-left font-semibold">距峰值</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(filteredIndexPerf).map(([name, idxData]) => {
+              const analysis = idxData?.analysis?.[activeAnalysisKey];
+              const wave = analysis?.elliott_wave;
+              if (!wave || !wave.current_phase) return null;
+              return (
+                <tr key={name} className="border-b border-gray-100">
+                  <td className="px-3 py-2 font-medium">{name}</td>
+                  <td className="px-3 py-2">{wave.current_phase}</td>
+                  <td className="px-3 py-2">{wave.last_peak || '-'}</td>
+                  <td className="px-3 py-2">{wave.last_trough || '-'}</td>
+                  <td className="px-3 py-2">{(wave.current_vs_peak ?? 0).toFixed(1)}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 主要指数详细分析 */}
+      {mainIndex && (
+        <div className="metric-card mb-6">
+          <h3 className="text-md font-bold mb-3">{mainIndexName} {PERIODS.find(p => p.key === activePeriod)?.label} 详细分析</h3>
+
+          {(() => {
+            const analysis = mainIndex.analysis?.[activeAnalysisKey];
+            const dow = analysis?.dow_theory;
+            const elliott = analysis?.elliott_wave;
+            if (!dow || !dow.primary_trend) return <p className="text-gray-500">分析数据不足</p>;
+
+            const strength = dow.trend_strength || {};
+            const adx = strength.adx ?? 0;
+            const volSignal = dow.volume_signal || 'neutral';
+            const volMap = { confirming: { emoji: '✅', text: '确认趋势' }, warning: { emoji: '⚠️', text: '背离警示' }, neutral: { emoji: '➖', text: '中性' } };
+
+            return (
+              <div className="space-y-4">
+                {/* 道氏理论 */}
+                <div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">道氏理论</p>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <p>主要趋势: {TREND_EMOJI[dow.primary_trend] || '⚪'} {dow.primary_desc || dow.primary_trend}</p>
+                    <p>次要趋势: {dow.secondary_desc || '未知'}</p>
+                  </div>
+                  <div className="mt-2">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-gray-500">趋势强度 ADX:</span>
+                      <div className="flex-1 bg-gray-200 rounded-full h-2">
+                        <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${Math.min(adx, 100)}%` }} />
+                      </div>
+                      <span className="font-medium">{adx} ({strength.strength || 'weak'})</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    成交量信号: {volMap[volSignal]?.emoji || '➖'} {volMap[volSignal]?.text || '中性'}
+                  </p>
+                </div>
+
+                {/* 波浪理论 */}
+                {elliott && elliott.current_phase && (
+                  <div>
+                    <p className="text-sm font-semibold text-gray-600 mb-1">波浪理论</p>
+                    <p className="text-sm">当前阶段: {elliott.current_phase}</p>
+                    {elliott.structure && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        波动率: {(elliott.structure.volatility_pct ?? 0).toFixed(2)}%
+                      </p>
+                    )}
+                    {elliott.structure?.fib_382 != null && (
+                      <div className="grid grid-cols-3 gap-2 mt-2">
+                        <div className="text-center bg-gray-50 rounded p-2">
+                          <p className="text-xs text-gray-500">38.2%</p>
+                          <p className="font-bold">{elliott.structure.fib_382.toFixed(0)}</p>
+                        </div>
+                        <div className="text-center bg-gray-50 rounded p-2">
+                          <p className="text-xs text-gray-500">50.0%</p>
+                          <p className="font-bold">{elliott.structure.fib_500.toFixed(0)}</p>
+                        </div>
+                        <div className="text-center bg-gray-50 rounded p-2">
+                          <p className="text-xs text-gray-500">61.8%</p>
+                          <p className="font-bold">{elliott.structure.fib_618.toFixed(0)}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* 跨指数验证 */}
+      {interValidation && activePeriod === 'daily' && (
+        <div className="metric-card mb-6">
+          <h3 className="text-md font-bold mb-2">指数验证</h3>
+          <p className="text-sm mb-2">
+            {({ CONFIRMED: '✅', PARTIAL: '⚠️', DIVERGENCE: '❌' })[interValidation.validation] || '➖'} {interValidation.note || ''}
+          </p>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-gray-500">一致性:</span>
+            <div className="flex-1 bg-gray-200 rounded-full h-2 max-w-xs">
+              <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(interValidation.consistency ?? 0) * 100}%` }} />
+            </div>
+            <span className="font-medium">{((interValidation.consistency ?? 0) * 100).toFixed(0)}%</span>
+          </div>
+        </div>
+      )}
+
+      {/* 热点板块 */}
+      <h2 className="text-lg font-bold mb-3">🔥 热点板块</h2>
+      {hotSectors.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+          {hotSectors.map(sector => (
+            <div className="hot-sector-card" key={sector.sector}>
+              <div className="flex justify-between items-start mb-2">
+                <h3 className="font-bold text-lg">{sector.sector}</h3>
+                <span className="bg-white/20 px-2 py-1 rounded text-sm">
+                  涨停 {sector.zt_count} 家
+                </span>
+              </div>
+              <div className="text-sm opacity-90 mb-2">
+                龙头股: {sector.lead_stock_code} {sector.lead_stock_name ? `(${sector.lead_stock_name})` : ''}
+              </div>
+              <div className="text-sm opacity-80">
+                个股: {sector.stocks?.slice(0, 5).join(', ')}
+                {sector.stocks?.length > 5 && ` 等${sector.stocks.length}只`}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-gray-500 mb-8">暂无热点板块数据</p>
+      )}
+
+      {/* 涨停信号列表 */}
+      <h2 className="text-lg font-bold mb-3">📋 涨停信号列表</h2>
+      {signals.length > 0 ? (
+        <div className="metric-card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-gray-600">
+                <th className="px-3 py-2 text-left font-semibold">代码</th>
+                <th className="px-3 py-2 text-left font-semibold">名称</th>
+                <th className="px-3 py-2 text-left font-semibold">信号</th>
+                <th className="px-3 py-2 text-right font-semibold">价格</th>
+                <th className="px-3 py-2 text-right font-semibold">涨跌幅</th>
+                <th className="px-3 py-2 text-left font-semibold">描述</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signals.map((sig, i) => (
+                <tr key={i} className="border-b border-gray-100">
+                  <td className="px-3 py-2 font-medium">{sig.symbol}</td>
+                  <td className="px-3 py-2">{sig.name}</td>
+                  <td className="px-3 py-2">
+                    <span className={`px-2 py-0.5 rounded text-xs ${sig.signal_type === 'left' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {sig.signal_type === 'left' ? '📉 左侧' : '📈 右侧'} {sig.signal_name}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">{formatPrice(sig.close_price)}</td>
+                  <td className={`px-3 py-2 text-right font-mono ${getChangeColor(sig.change_pct)}`}>
+                    {formatPercent(sig.change_pct)}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-600">{sig.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-gray-500">暂无涨停信号</p>
+      )}
+    </div>
+  );
+}
