@@ -95,7 +95,7 @@ class AdjustFactorSync(BaseSyncService):
                 }
             
             # 3. 直接覆盖保存（简化：无需合并）
-            df.to_parquet(file_path, index=False, compression='zstd')
+            df.to_parquet(file_path, index=False, compression='snappy')
             
             logger.info(f"✓ {symbol} 复权因子同步完成: {len(df)} 条")
             

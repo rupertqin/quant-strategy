@@ -145,7 +145,7 @@ class ParquetDataManager:
         df = df.sort_values("trade_date").reset_index(drop=True)
 
         fp = self._file_path(symbol)
-        df.to_parquet(fp, index=False, compression="zstd")
+        df.to_parquet(fp, index=False, compression="snappy")
         self.logger.info(f"全量保存 {symbol}: {len(df)} 条")
 
     # ── Append (安全追加) ─────────────────────
@@ -173,7 +173,7 @@ class ParquetDataManager:
 
         if not fp.exists():
             df = df.sort_values("trade_date").reset_index(drop=True)
-            df.to_parquet(fp, index=False, compression="zstd")
+            df.to_parquet(fp, index=False, compression="snappy")
             self.logger.info(f"新建 {symbol}: {len(df)} 条")
             return
 
@@ -184,7 +184,7 @@ class ParquetDataManager:
         combined = combined.drop_duplicates(subset=["trade_date"], keep="last")
         combined = combined.sort_values("trade_date").reset_index(drop=True)
 
-        combined.to_parquet(fp, index=False, compression="zstd")
+        combined.to_parquet(fp, index=False, compression="snappy")
         self.logger.info(
             f"追加 {symbol}: 新增 {len(combined) - len(old_df)} 条，总计 {len(combined)} 条"
         )

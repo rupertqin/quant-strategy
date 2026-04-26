@@ -263,7 +263,7 @@ class StockRepository(BaseRepository):
                 
                 # 保存到Parquet（按日期排序）
                 combined_df = combined_df.sort_values('trade_date').reset_index(drop=True)
-                combined_df.to_parquet(parquet_path, index=False, compression='zstd')
+                combined_df.to_parquet(parquet_path, index=False, compression='snappy')
                 
                 total_saved += saved_count
                 

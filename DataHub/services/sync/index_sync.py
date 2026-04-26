@@ -160,7 +160,7 @@ class IndexSync(BaseSyncService):
                 combined['change_pct'] = np.nan
 
             # 保存
-            combined.to_parquet(file_path, index=False, compression='zstd')
+            combined.to_parquet(file_path, index=False, compression='snappy')
             
             logger.info(color_log('success', f"✓ {symbol} 同步完成: {len(new_df)} 条新数据，共 {len(combined)} 条"))
             

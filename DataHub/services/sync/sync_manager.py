@@ -166,7 +166,7 @@ class SyncManager:
                 
                 # 排序并保存
                 combined_df = combined_df.sort_values('trade_date').reset_index(drop=True)
-                combined_df.to_parquet(file_path, index=False, compression='zstd')
+                combined_df.to_parquet(file_path, index=False, compression='snappy')
                 updated += 1
                 
             except Exception as e:

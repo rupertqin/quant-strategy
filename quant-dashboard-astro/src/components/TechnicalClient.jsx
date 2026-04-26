@@ -20,7 +20,6 @@ const MACRO_ITEMS = [
 ];
 
 const PERIODS = [
-  { label: '日线', key: 'daily' },
   { label: '周线', key: 'weekly' },
   { label: '月线', key: 'monthly' },
 ];
@@ -44,10 +43,94 @@ function safeJsonParse(text) {
   );
 }
 
-export default function TechnicalClient() {
+function toDateString(row) {
+  return String(row?.date || row?.trade_date || row?.time || '');
+}
+
+function takeLastRows(rows, limit) {
+  if (!Array.isArray(rows)) return [];
+  if (!limit || limit <= 0) return rows;
+  return rows.slice(-limit);
+}
+
+function getWeekKey(dateStr) {
+  const date = new Date(dateStr);
+  const day = date.getDay();
+  const diff = day === 0 ? -2 : day === 6 ? -1 : 5 - day;
+  const friday = new Date(date);
+  friday.setDate(date.getDate() + diff);
+  return friday.toISOString().split('T')[0];
+}
+
+function getMonthKey(dateStr) {
+  const date = new Date(dateStr);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function aggregateToPeriod(rows, period) {
+  const map = new Map();
+  const sorted = [...rows].sort((a, b) => toDateString(a).localeCompare(toDateString(b)));
+
+  sorted.forEach((d) => {
+    const dateStr = toDateString(d);
+    if (!dateStr) return;
+
+    const key = period === 'weekly' ? getWeekKey(dateStr) : getMonthKey(dateStr);
+    const candleDate = period === 'monthly' ? dateStr : key;
+
+    if (!map.has(key)) {
+      map.set(key, {
+        time: candleDate,
+        date: candleDate,
+        trade_date: candleDate,
+        open: Number(d.open),
+        high: Number(d.high),
+        low: Number(d.low),
+        close: Number(d.close),
+        volume: Number(d.volume || 0),
+      });
+    } else {
+      const item = map.get(key);
+      item.high = Math.max(item.high, Number(d.high));
+      item.low = Math.min(item.low, Number(d.low));
+      item.close = Number(d.close);
+      item.volume += Number(d.volume || 0);
+      if (period === 'monthly') {
+        item.time = dateStr;
+        item.date = dateStr;
+        item.trade_date = dateStr;
+      }
+    }
+  });
+
+  return Array.from(map.values()).sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
+}
+
+function buildPeriodHistory(indexHistoryDaily, dailyLimit, weeklyLimit, monthlyLimit) {
+  const result = { daily: {}, weekly: {}, monthly: {} };
+  const source = indexHistoryDaily || {};
+
+  for (const [name, rows] of Object.entries(source)) {
+    const dailyRows = takeLastRows(rows, dailyLimit);
+    const weeklyRows = aggregateToPeriod(dailyRows, 'weekly');
+    const monthlyRows = aggregateToPeriod(dailyRows, 'monthly');
+
+    result.daily[name] = dailyRows;
+    result.weekly[name] = takeLastRows(weeklyRows, weeklyLimit);
+    result.monthly[name] = takeLastRows(monthlyRows, monthlyLimit);
+  }
+
+  return result;
+}
+
+export default function TechnicalClient({
+  dailyLimit = null,
+  weeklyLimit = null,
+  monthlyLimit = null,
+}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activePeriod, setActivePeriod] = useState('daily');
+  const [activePeriod, setActivePeriod] = useState('weekly');
 
   useEffect(() => {
     fetch('/data/technical/latest.json')
@@ -76,8 +159,7 @@ export default function TechnicalClient() {
 
   const ti = data.technical_indicators || {};
   const indexHistory = data.index_history || {};
-  const indexHistoryWeekly = data.index_history_weekly || {};
-  const indexHistoryMonthly = data.index_history_monthly || {};
+  const periodHistory = buildPeriodHistory(indexHistory, dailyLimit, weeklyLimit, monthlyLimit);
   const indexPerformance = ti.index_performance || {};
   const hotSectors = data.hot_sectors || [];
   const signals = data.signals || [];
@@ -113,12 +195,6 @@ export default function TechnicalClient() {
     if (ratio >= 2) return 'text-green-600';
     if (ratio >= 1) return 'text-yellow-600';
     return 'text-red-600';
-  };
-
-  const periodHistory = {
-    daily: indexHistory,
-    weekly: indexHistoryWeekly,
-    monthly: indexHistoryMonthly,
   };
 
   // 过滤掉深证成指
@@ -263,7 +339,7 @@ export default function TechnicalClient() {
             <div className="metric-card" key={name}>
               <div className="flex items-center justify-between mb-2">
                 {code ? (
-                  <a href={`/stock-chart/?symbol=${code}`} className="font-bold text-gray-800 hover:text-primary-600 transition-colors">
+                  <a href={`/stock/${code}/`} className="font-bold text-gray-800 hover:text-primary-600 transition-colors">
                     {name}
                   </a>
                 ) : (

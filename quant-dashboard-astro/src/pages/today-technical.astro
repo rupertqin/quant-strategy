@@ -1,8 +1,25 @@
 ---
 import MainLayout from '@layouts/MainLayout.astro';
 import TechnicalClient from '@components/TechnicalClient.jsx';
+
+function parseLimitEnv(value) {
+  if (value === undefined || value === null) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw || raw === 'all' || raw === 'none' || raw === '0') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+const dailyLimit = parseLimitEnv(import.meta.env.CHART_DAILY_LIMIT);
+const weeklyLimit = parseLimitEnv(import.meta.env.CHART_WEEKLY_LIMIT);
+const monthlyLimit = parseLimitEnv(import.meta.env.CHART_MONTHLY_LIMIT);
 ---
 
 <MainLayout title="今日技术面">
-  <TechnicalClient client:only="react" />
+  <TechnicalClient
+    client:only="react"
+    dailyLimit={dailyLimit}
+    weeklyLimit={weeklyLimit}
+    monthlyLimit={monthlyLimit}
+  />
 </MainLayout>

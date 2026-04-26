@@ -1,0 +1,298 @@
+---
+import MainLayout from '@layouts/MainLayout.astro';
+import StockChart from '@components/StockChart.jsx';
+import StockSignals from '@components/StockSignals.jsx';
+import { DEFAULT_POOL } from '@utils/defaultPool.js';
+import { readParquetAllRows, readParquetLastRows, toDateString, toNumber } from '@utils/parquet';
+
+const path = await import('path');
+const fs = await import('fs');
+
+const PRICE_DIR = path.resolve('../DataStorage/raw/stocks/price');
+const FACTOR_DIR = path.resolve('../DataStorage/raw/stocks/adjust_factor');
+
+function parseLimitEnv(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw || raw === 'all' || raw === 'none' || raw === '0') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function getScoreLabel(score: number) {
+  if (score >= 95) return '极品';
+  if (score >= 90) return '优秀';
+  if (score >= 80) return '良好';
+  if (score >= 65) return '一般';
+  return '观察';
+}
+
+function getWeekKey(dateStr: string) {
+  const date = new Date(dateStr);
+  const day = date.getDay();
+  const diff = day === 0 ? -2 : day === 6 ? -1 : 5 - day;
+  const friday = new Date(date);
+  friday.setDate(date.getDate() + diff);
+  return friday.toISOString().split('T')[0];
+}
+
+function getMonthKey(dateStr: string) {
+  const date = new Date(dateStr);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+function adjustToQfq(rows: any[], factors: any[]) {
+  const sortedRows = [...rows].sort((a, b) => toDateString(a.trade_date).localeCompare(toDateString(b.trade_date)));
+  const sortedFactors = [...factors].sort((a, b) => toDateString(a.trade_date).localeCompare(toDateString(b.trade_date)));
+
+  let factorIdx = 0;
+  let currentFactor = 1;
+
+  return sortedRows.map((row: any) => {
+    const tradeDate = toDateString(row.trade_date);
+    while (factorIdx < sortedFactors.length && toDateString(sortedFactors[factorIdx].trade_date) <= tradeDate) {
+      currentFactor = toNumber(sortedFactors[factorIdx].adjust_factor, 1);
+      factorIdx += 1;
+    }
+
+    return {
+      time: tradeDate,
+      date: tradeDate,
+      trade_date: tradeDate,
+      open: +(toNumber(row.open) * currentFactor).toFixed(2),
+      high: +(toNumber(row.high) * currentFactor).toFixed(2),
+      low: +(toNumber(row.low) * currentFactor).toFixed(2),
+      close: +(toNumber(row.close) * currentFactor).toFixed(2),
+      volume: toNumber(row.volume),
+    };
+  });
+}
+
+function aggregateToPeriod(rows: any[], period: 'weekly' | 'monthly') {
+  const map = new Map<string, any>();
+
+  rows.forEach((d) => {
+    const dateStr = toDateString(d.trade_date || d.date || d.time);
+    const key = period === 'weekly' ? getWeekKey(dateStr) : getMonthKey(dateStr);
+    const candleDate = period === 'monthly' ? dateStr : key;
+
+    if (!map.has(key)) {
+      map.set(key, {
+        time: candleDate,
+        date: candleDate,
+        trade_date: candleDate,
+        open: d.open,
+        high: d.high,
+        low: d.low,
+        close: d.close,
+        volume: d.volume || 0,
+      });
+    } else {
+      const item = map.get(key);
+      item.high = Math.max(item.high, d.high);
+      item.low = Math.min(item.low, d.low);
+      item.close = d.close;
+      item.volume += (d.volume || 0);
+      if (period === 'monthly') {
+        item.time = dateStr;
+        item.date = dateStr;
+        item.trade_date = dateStr;
+      }
+    }
+  });
+
+  return Array.from(map.values()).sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
+}
+
+let signalCache: { allSignals: Record<string, any>; stockNames: Record<string, string> } | null = null;
+
+function getSignalMaps() {
+  if (signalCache) return signalCache;
+
+  let allSignals: Record<string, any> = {};
+  let stockNames: Record<string, string> = {};
+
+  try {
+    const signalPath = path.resolve('./public/data/signals/signal_latest.json');
+    if (fs.existsSync(signalPath)) {
+      const signalData = JSON.parse(fs.readFileSync(signalPath, 'utf-8'));
+      if (signalData.stocks) {
+        for (const stock of signalData.stocks) {
+          const sym = stock.symbol;
+          stockNames[sym] = stock.name || '';
+          allSignals[sym] = {
+            name: stock.name || '',
+            signals: stock.signals || [],
+            signalScore: stock.signal_score || 0,
+            riskScore: stock.risk_score ?? 50,
+            riskExplanations: stock.risk_explanations || stock.risk_warnings || [],
+            scoreLabel: getScoreLabel(stock.signal_score || 0),
+            signalCount: stock.signal_count || 0,
+            hasBuySignal: stock.has_buy_signal || false,
+          };
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load signal_latest.json:', (e as Error).message);
+  }
+
+  signalCache = { allSignals, stockNames };
+  return signalCache;
+}
+
+export async function getStaticPaths() {
+  // Astro 的 getStaticPaths 运行在隔离作用域：这里显式声明依赖，避免引用外层变量
+  const pathMod = await import('path');
+  const fsMod = await import('fs');
+
+  const priceDir = pathMod.resolve('../DataStorage/raw/stocks/price');
+  const files = fsMod.readdirSync(priceDir).filter(f => f.endsWith('.parquet'));
+  const symbols = files.map(f => f.replace('.parquet', '')).sort();
+
+  const generateAllStocks = import.meta.env.GENERATE_ALL_STOCKS === '1';
+  const poolSymbols = DEFAULT_POOL.filter(s => symbols.includes(s));
+  const targetSymbols = generateAllStocks ? symbols : poolSymbols;
+
+  console.log(`[stock-chart] Routing ${targetSymbols.length} stock pages (mode=${generateAllStocks ? 'all' : 'pool'})...`);
+
+  return targetSymbols.map(symbol => ({ params: { symbol } }));
+}
+
+const { symbol } = Astro.params;
+
+const dailyLimit = parseLimitEnv(import.meta.env.CHART_DAILY_LIMIT);
+const weeklyLimit = parseLimitEnv(import.meta.env.CHART_WEEKLY_LIMIT);
+const monthlyLimit = parseLimitEnv(import.meta.env.CHART_MONTHLY_LIMIT);
+
+const { allSignals, stockNames } = getSignalMaps();
+
+const defaultSignals = {
+  signals: [], signalScore: 0, riskScore: 50,
+  riskExplanations: [], scoreLabel: '', signalCount: 0, hasBuySignal: false,
+};
+
+const priceColumns = ['trade_date', 'open', 'high', 'low', 'close', 'volume'];
+const priceFile = path.join(PRICE_DIR, `${symbol}.parquet`);
+
+let chartData: any[] = [];
+let weeklyData: any[] = [];
+let monthlyData: any[] = [];
+
+if (fs.existsSync(priceFile)) {
+  let allPricesCache: any[] | null = null;
+  const getAllPrices = async () => {
+    if (!allPricesCache) allPricesCache = await readParquetAllRows(priceFile, priceColumns);
+    return allPricesCache;
+  };
+
+  const dailyRows = dailyLimit
+    ? await readParquetLastRows(priceFile, priceColumns, dailyLimit)
+    : await getAllPrices();
+
+  const weeklySourceRows = weeklyLimit
+    ? await readParquetLastRows(priceFile, priceColumns, weeklyLimit * 5 + 15)
+    : await getAllPrices();
+
+  const monthlySourceRows = monthlyLimit
+    ? await readParquetLastRows(priceFile, priceColumns, monthlyLimit * 21 + 35)
+    : await getAllPrices();
+
+  const factorFile = path.join(FACTOR_DIR, `${symbol}.parquet`);
+  const factors = fs.existsSync(factorFile)
+    ? await readParquetAllRows(factorFile, ['trade_date', 'adjust_factor'])
+    : [];
+
+  chartData = adjustToQfq(dailyRows, factors);
+  weeklyData = aggregateToPeriod(adjustToQfq(weeklySourceRows, factors), 'weekly');
+  monthlyData = aggregateToPeriod(adjustToQfq(monthlySourceRows, factors), 'monthly');
+}
+
+const stockName = stockNames[symbol] || '';
+const stockSignals = allSignals[symbol] || defaultSignals;
+
+const latest = chartData[chartData.length - 1];
+const prev = chartData.length > 1 ? chartData[chartData.length - 2] : latest;
+const change = latest ? latest.close - prev.close : 0;
+const changePct = prev && prev.close ? (change / prev.close) * 100 : 0;
+const isUp = change >= 0;
+const priceColor = isUp ? 'text-[#ff4757]' : 'text-[#2ed573]';
+const bgColor = isUp ? 'bg-[rgba(255,71,87,0.1)]' : 'bg-[rgba(46,213,115,0.1)]';
+const changeSymbol = isUp ? '+' : '';
+---
+
+<MainLayout title={`${symbol} ${stockName} 股票图表`}>
+  <div class="mb-6">
+    <a href="/signal-watch/" class="text-sm text-primary-600 hover:underline">← 返回信号监控</a>
+    <h1 class="text-[28px] font-bold mt-2 tracking-tight">
+      {symbol} {stockName ? `(${stockName})` : ''}
+    </h1>
+  </div>
+
+  <!-- 头部信息区 -->
+  <div class="mb-6 rounded-xl text-white p-5" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+    <div class="flex items-center justify-between flex-wrap gap-4">
+      <div>
+        <div class="text-2xl font-bold">{stockName || symbol} <span class="text-sm font-normal opacity-80 ml-2">{symbol}</span></div>
+        <div class="text-sm opacity-70 mt-1">数据日期: {latest ? latest.date : '--'}</div>
+      </div>
+      <div class="text-right">
+        <div class="text-4xl font-bold">{latest ? latest.close.toFixed(2) : '--'}</div>
+        <span class={`inline-block text-sm px-3 py-1 rounded-full mt-1 ${bgColor} ${priceColor}`}>
+          {changeSymbol}{change.toFixed(2)} ({changeSymbol}{changePct.toFixed(2)}%)
+        </span>
+      </div>
+    </div>
+    <div class="grid grid-cols-5 gap-3 mt-4">
+      <div class="bg-white/10 rounded-lg p-3 text-center">
+        <div class="text-xs opacity-70">今开</div>
+        <div class="text-base font-semibold">{latest ? latest.open.toFixed(2) : '--'}</div>
+      </div>
+      <div class="bg-white/10 rounded-lg p-3 text-center">
+        <div class="text-xs opacity-70">最高</div>
+        <div class="text-base font-semibold">{latest ? latest.high.toFixed(2) : '--'}</div>
+      </div>
+      <div class="bg-white/10 rounded-lg p-3 text-center">
+        <div class="text-xs opacity-70">最低</div>
+        <div class="text-base font-semibold">{latest ? latest.low.toFixed(2) : '--'}</div>
+      </div>
+      <div class="bg-white/10 rounded-lg p-3 text-center">
+        <div class="text-xs opacity-70">昨收</div>
+        <div class="text-base font-semibold">{prev ? prev.close.toFixed(2) : '--'}</div>
+      </div>
+      <div class="bg-white/10 rounded-lg p-3 text-center">
+        <div class="text-xs opacity-70">成交量</div>
+        <div class="text-base font-semibold">{latest ? (latest.volume / 10000).toFixed(1) : '--'}万</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 信号折叠区域 -->
+  <StockSignals
+    client:load
+    signals={stockSignals.signals}
+    signalScore={stockSignals.signalScore}
+    riskScore={stockSignals.riskScore}
+    riskExplanations={stockSignals.riskExplanations}
+    scoreLabel={stockSignals.scoreLabel}
+    signalCount={stockSignals.signalCount}
+  />
+
+  <!-- 图表 -->
+  <div class="metric-card">
+    <StockChart
+      client:only="react"
+      symbol={symbol}
+      dailyData={chartData}
+      weeklyData={weeklyData}
+      monthlyData={monthlyData}
+      dailyLimit={dailyLimit}
+      weeklyLimit={weeklyLimit}
+      monthlyLimit={monthlyLimit}
+      initialVisibleBars={120}
+      zoomOutBars={20}
+    />
+  </div>
+</MainLayout>

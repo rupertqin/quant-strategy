@@ -210,7 +210,7 @@ export default function SignalTable({
                     <td className="px-3 py-3">
                       <div>
                         <a
-                          href={`/stock-chart/?symbol=${stock.symbol}`}
+                          href={`/stock/${stock.symbol}/`}
                           className="font-bold text-primary-600 hover:text-primary-700 hover:underline"
                           onClick={e => e.stopPropagation()}
                         >

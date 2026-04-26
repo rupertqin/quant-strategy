@@ -1318,7 +1318,7 @@ class HistorySyncService:
             return {'status': 'success', 'symbol': symbol, 'records': 0, 'message': 'No valid adjust factors'}
 
         # 保存
-        combined_df.to_parquet(file_path, index=False, compression='zstd')
+        combined_df.to_parquet(file_path, index=False, compression='snappy')
 
         logger.info(color_log('success', f"✓ {symbol} 复权因子同步完成: {len(new_df)} 条新数据，共 {len(combined_df)} 条有效记录"))
 
@@ -1432,7 +1432,7 @@ class HistorySyncService:
             combined_df = new_df
 
         # 保存
-        combined_df.to_parquet(file_path, index=False, compression='zstd')
+        combined_df.to_parquet(file_path, index=False, compression='snappy')
 
         # 同步复权因子（仅股票，ETF直接存储前复权价格，不需要复权因子）
         if asset_type == "stock":
@@ -1683,7 +1683,7 @@ class HistorySyncService:
 
                 # 排序并保存
                 combined_df = combined_df.sort_values('trade_date').reset_index(drop=True)
-                combined_df.to_parquet(file_path, index=False, compression='zstd')
+                combined_df.to_parquet(file_path, index=False, compression='snappy')
                 updated += 1
 
             except Exception as e:
@@ -1834,7 +1834,7 @@ class HistorySyncService:
 
                 # 排序并保存
                 combined_df = combined_df.sort_values('trade_date').reset_index(drop=True)
-                combined_df.to_parquet(file_path, index=False, compression='zstd')
+                combined_df.to_parquet(file_path, index=False, compression='snappy')
                 updated += 1
 
             except Exception as e:
