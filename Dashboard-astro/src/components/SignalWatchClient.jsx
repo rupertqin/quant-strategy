@@ -188,6 +188,8 @@ export default function SignalWatchClient() {
           onAddToPool={add}
           onRemoveFromPool={remove}
           poolSet={poolSet}
+          dataMode={data?.intraday_mode ? '实盘' : '收盘'}
+          updateTime={data?.price_fetch_time || data?.scan_time}
         />
       </div>
     </div>

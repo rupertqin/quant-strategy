@@ -162,11 +162,42 @@ if (stockList.length > 0) {
 
   if (fs.existsSync(signalPath)) {
     const signalData = safeJsonParse(fs.readFileSync(signalPath, 'utf-8'));
-    const signalStocks = signalData.stocks || [];
+    const signalList = Array.isArray(signalData.signals) ? signalData.signals : [];
     const stockNames = safeJsonParse(fs.readFileSync(path.join(DATA_TARGET, 'stock_names.json'), 'utf-8') || '{}');
 
+    const grouped = new Map();
+    for (const sig of signalList) {
+      const symbol = sig?.symbol;
+      if (!symbol) continue;
+
+      if (!grouped.has(symbol)) {
+        grouped.set(symbol, {
+          symbol,
+          name: sig?.name || stockNames[symbol] || '',
+          signals: [],
+          signal_count: 0,
+          signal_score: 0,
+          risk_score: 0,
+          risk_explanations: [],
+          has_buy_signal: false,
+          stage: null,
+          close_price: sig?.close_price ?? null,
+          change_pct: sig?.change_pct ?? null,
+        });
+      }
+
+      const item = grouped.get(symbol);
+      item.signals.push(sig);
+      item.signal_count += 1;
+      item.signal_score = Math.max(item.signal_score, Number(sig?.score || 0));
+      item.has_buy_signal = item.has_buy_signal || sig?.signal_type === 'right';
+      if (item.stage !== 'right') item.stage = sig?.signal_type || item.stage;
+      if (item.close_price == null && sig?.close_price != null) item.close_price = sig.close_price;
+      if (item.change_pct == null && sig?.change_pct != null) item.change_pct = sig.change_pct;
+    }
+
     for (const symbol of stockList) {
-      const stock = signalStocks.find(s => s.symbol === symbol);
+      const stock = grouped.get(symbol);
       if (stock) {
         const signals = stock.signals || [];
         const hasBuy = stock.has_buy_signal || signals.some(s => s.signal_type === 'right');
@@ -177,7 +208,6 @@ if (stockList.length > 0) {
         else if (poolSignal === 'sell') poolSummary.sell_count++;
         else poolSummary.watch_count++;
 
-        // 保留完整信号数据结构，直接复用 SignalTable 组件
         poolStocks.push({
           ...stock,
           pool_signal: poolSignal,
@@ -241,16 +271,24 @@ if (fs.existsSync(longtermSrc)) {
 console.log('\n🏷️ 同步股票名称映射...');
 const stockBasicPath = path.join(PROJECT_ROOT, STORAGE_DIR, 'stock_basic_info.csv');
 if (fs.existsSync(stockBasicPath)) {
-  const lines = fs.readFileSync(stockBasicPath, 'utf-8').split('\n');
+  const lines = fs.readFileSync(stockBasicPath, 'utf-8').split('\n').filter(Boolean);
   const names = {};
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',');
-    if (cols.length >= 3) {
-      const symbol = cols[0]?.trim();
-      const name = cols[2]?.trim();
-      if (symbol && name) names[symbol] = name;
+
+  if (lines.length > 0) {
+    const headers = lines[0].split(',').map(h => h.trim());
+    const symbolIdx = headers.indexOf('symbol');
+    const nameIdx = headers.indexOf('name');
+
+    if (symbolIdx >= 0 && nameIdx >= 0) {
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',');
+        const symbol = cols[symbolIdx]?.trim();
+        const name = cols[nameIdx]?.trim();
+        if (symbol && name) names[symbol] = name;
+      }
     }
   }
+
   fs.writeFileSync(path.join(DATA_TARGET, 'stock_names.json'), JSON.stringify(names, null, 2));
   console.log(`   已生成 ${Object.keys(names).length} 条名称映射`);
 } else {

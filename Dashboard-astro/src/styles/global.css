@@ -4,85 +4,85 @@
 
 @layer base {
   body {
-    @apply bg-white text-gray-800 antialiased;
+    @apply bg-[#f8fafc] text-slate-800 antialiased;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif;
   }
 }
 
 @layer components {
-  /* 统一卡片风格：白底、细边框、小圆角、轻微阴影 */
+  /* 统一卡片风格：白底、细边框、大圆角、轻微阴影 */
   .metric-card {
-    @apply bg-white rounded-xl p-5 border border-gray-200 shadow-card transition-shadow;
+    @apply bg-white rounded-2xl p-6 border border-slate-100 shadow-sm transition-all duration-300;
   }
   .metric-card:hover {
-    @apply shadow-card-hover;
+    @apply shadow-md border-slate-200 transform -translate-y-0.5;
   }
 
   /* 信号卡片 */
   .signal-card {
-    @apply bg-white rounded-lg p-4 border-l-4 shadow-card mb-3;
+    @apply bg-white rounded-xl p-5 border border-slate-100 shadow-sm mb-4 transition-all hover:shadow-md;
   }
   .signal-card-left {
-    @apply border-amber-400 bg-amber-50/50;
+    @apply border-l-4 border-l-amber-400 bg-amber-50/30;
   }
   .signal-card-right {
-    @apply border-emerald-400 bg-emerald-50/50;
+    @apply border-l-4 border-l-emerald-400 bg-emerald-50/30;
   }
 
   /* 热点板块卡片：渐变 */
   .hot-sector-card {
-    @apply bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-xl p-5 shadow-md;
+    @apply bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-2xl p-6 shadow-md transition-transform hover:scale-[1.02];
   }
 
   /* 按钮 */
   .btn-primary {
-    @apply bg-primary-600 text-white px-4 py-2 rounded-md font-medium hover:bg-primary-700 transition-colors;
+    @apply bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 hover:shadow-md transition-all active:scale-95;
   }
   .btn-secondary {
-    @apply bg-gray-100 text-gray-700 px-4 py-2 rounded-md font-medium hover:bg-gray-200 transition-colors;
+    @apply bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-lg font-medium hover:bg-slate-50 hover:text-blue-600 transition-all active:scale-95 shadow-sm;
   }
 
   /* 页面容器 */
   .page-container {
-    @apply max-w-[1440px] mx-auto px-6 py-10;
+    @apply max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12;
   }
 
   /* 导航链接 */
   .nav-link {
-    @apply flex items-center gap-2 px-5 py-2 rounded-md text-[15px] font-semibold transition-all duration-200;
+    @apply flex items-center gap-2 px-3 py-2 rounded-lg text-[15px] font-medium transition-all duration-200 text-slate-600;
   }
   .nav-link.active {
-    @apply bg-primary-50 text-primary-700 shadow-[inset_0_-2px_0_0_#2563eb];
+    @apply text-blue-600 font-semibold;
   }
-  .nav-link:not(.active) {
-    @apply text-gray-600 hover:text-primary-700 hover:bg-gray-50;
+  .nav-link:not(.active):hover {
+    @apply text-slate-900 bg-slate-50;
   }
 
   /* 表格统一风格 */
   .data-table {
-    @apply w-full text-sm;
+    @apply w-full text-sm text-slate-600;
   }
   .data-table thead tr {
-    @apply bg-gray-50 text-gray-600;
+    @apply bg-slate-50/80 text-slate-500 border-b border-slate-200;
   }
   .data-table th {
-    @apply px-3 py-2 text-left font-semibold;
+    @apply px-4 py-3 text-left font-medium tracking-wider whitespace-nowrap;
   }
   .data-table tbody tr {
-    @apply border-b border-gray-100 hover:bg-gray-50/50;
+    @apply border-b border-slate-100 hover:bg-blue-50/30 transition-colors;
   }
   .data-table td {
-    @apply px-3 py-2;
+    @apply px-4 py-3;
   }
 
   /* Tab 按钮 */
   .tab-btn {
-    @apply px-4 py-1.5 text-sm rounded-md transition-colors;
+    @apply px-5 py-2 text-sm font-medium rounded-lg transition-all duration-200;
   }
   .tab-btn.active {
-    @apply bg-primary-600 text-white;
+    @apply bg-white text-blue-600 shadow-sm border border-slate-200;
   }
   .tab-btn:not(.active) {
-    @apply bg-gray-100 text-gray-600 hover:bg-gray-200;
+    @apply text-slate-500 hover:text-slate-800 hover:bg-slate-100;
   }
 }

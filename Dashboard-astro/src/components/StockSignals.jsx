@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 function getScoreStyle(score) {
   if (score >= 70) return { bg: '#27ae60', text: 'white' };
@@ -18,90 +18,176 @@ function getRiskEmoji(riskScore) {
   return '🔴';
 }
 
-export default function StockSignals({ signals, signalScore, riskScore, riskExplanations, scoreLabel, signalCount }) {
-  const [expanded, setExpanded] = useState(false);
+export default function StockSignals({
+  symbol,
+  signals,
+  signalScore,
+  riskScore,
+  riskExplanations,
+  scoreLabel,
+  signalCount,
+  dataMode,
+  updateTime,
+  hideHeader = false,
+  forceExpanded = false,
+}) {
+  const [expanded, setExpanded] = useState(forceExpanded);
+  const [live, setLive] = useState(null);
 
-  const hasSignals = signals && signals.length > 0;
-  const showSection = hasSignals || riskScore >= 60;
-  if (!showSection) return null;
+  useEffect(() => {
+    if (!symbol) return;
 
-  const sStyle = getScoreStyle(signalScore || 0);
-  const rStyle = getRiskStyle(riskScore || 0);
-  const count = signalCount !== undefined ? signalCount : (signals?.length || 0);
+    fetch('/data/signals/signal_latest.json')
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((text) => text
+        .replace(/: NaN/g, ': null')
+        .replace(/: -NaN/g, ': null')
+        .replace(/: Infinity/g, ': null')
+        .replace(/: -Infinity/g, ': null'))
+      .then((text) => JSON.parse(text))
+      .then((json) => {
+        const list = Array.isArray(json?.signals) ? json.signals : [];
+        const stockSignals = list.filter((x) => x?.symbol === symbol);
+        const liveScore = stockSignals.reduce((m, x) => Math.max(m, Number(x?.score || 0)), 0);
+        const liveCount = stockSignals.length;
+        const hasBuy = stockSignals.some((x) => x?.signal_type === 'right');
+        const liveLabel = liveScore >= 95 ? '极品'
+          : liveScore >= 90 ? '优秀'
+          : liveScore >= 80 ? '良好'
+          : liveScore >= 65 ? '一般'
+          : '观察';
+
+        setLive({
+          signals: stockSignals,
+          signalScore: liveScore,
+          signalCount: liveCount,
+          scoreLabel: liveLabel,
+          hasBuySignal: hasBuy,
+        });
+      })
+      .catch(() => {
+      });
+  }, [symbol]);
+
+  const merged = useMemo(() => ({
+    signals: live?.signals ?? signals ?? [],
+    signalScore: live?.signalScore ?? (signalScore || 0),
+    signalCount: live?.signalCount ?? (signalCount !== undefined ? signalCount : (signals?.length || 0)),
+    scoreLabel: live?.scoreLabel ?? (scoreLabel || ''),
+    riskScore: riskScore || 0,
+    riskExplanations: riskExplanations || [],
+  }), [live, signals, signalScore, signalCount, scoreLabel, riskScore, riskExplanations]);
+
+  const hasSignals = merged.signals && merged.signals.length > 0;
+
+  const sStyle = getScoreStyle(merged.signalScore || 0);
+  const rStyle = getRiskStyle(merged.riskScore || 0);
+  const count = merged.signalCount;
 
   const periodMap = { daily: '日线', weekly: '周线', monthly: '月线' };
   const typeMap = { right: '右侧', left: '左侧' };
 
   return (
-    <div className="mb-6">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between bg-gray-50 hover:bg-gray-100 px-4 py-3 rounded-lg border border-gray-200 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          <span className="text-base font-semibold text-gray-800">
-            📡 当前信号 ({count}个)
+    <div className={hideHeader ? '' : 'mb-6'}>
+      {!hideHeader && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center justify-between bg-white hover:bg-slate-50 px-5 py-4 rounded-xl border border-slate-200 transition-colors shadow-sm"
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[15px] font-bold text-slate-800">
+              📡 当前信号 ({count}个)
+            </span>
+            {(dataMode || updateTime) && (
+              <span className="text-xs text-slate-500 font-medium">
+                {dataMode ? `模式:${dataMode}` : ''}{dataMode && updateTime ? ' | ' : ''}{updateTime ? `时间:${updateTime}` : ''}
+              </span>
+            )}
+            <span
+              className="text-[11px] font-bold px-2.5 py-1 rounded-md"
+              style={{ background: sStyle.bg, color: sStyle.text }}
+            >
+              信号分: {merged.signalScore || 0} · {merged.scoreLabel || '无信号'}
+            </span>
+            <span
+              className="text-[11px] font-bold px-2.5 py-1 rounded-md"
+              style={{ background: rStyle.bg, color: rStyle.text }}
+            >
+              风险分: {merged.riskScore || 0} {getRiskEmoji(merged.riskScore || 0)}
+            </span>
+          </div>
+          <span className="text-sm font-medium text-slate-400">
+            {expanded ? '▲ 收起' : '▼ 展开'}
           </span>
-          <span
-            className="text-xs font-semibold px-2 py-0.5 rounded"
-            style={{ background: sStyle.bg, color: sStyle.text }}
-          >
-            信号分:{signalScore || 0}·{scoreLabel || '无信号'}
-          </span>
-          <span
-            className="text-xs font-semibold px-2 py-0.5 rounded"
-            style={{ background: rStyle.bg, color: rStyle.text }}
-          >
-            风险分:{riskScore || 0}{getRiskEmoji(riskScore || 0)}
-          </span>
-        </div>
-        <span className="text-sm text-gray-500">
-          {expanded ? '▲ 收起' : '▼ 展开'}
-        </span>
-      </button>
+        </button>
+      )}
 
       {expanded && (
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* 信号详情 */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-sm font-semibold text-gray-700 mb-3">📈 信号详情</div>
-            {!hasSignals ? (
-              <div className="text-xs text-gray-500">无买入信号</div>
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* 左侧：风险详情 */}
+          <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm">
+            <div className="text-[13px] font-bold tracking-wide uppercase text-slate-600 mb-4 flex items-center gap-2">
+              ⚠️ 风险评估
+            </div>
+            {(!merged.riskExplanations || merged.riskExplanations.length === 0) ? (
+              <div className="text-sm text-slate-500 py-4 text-center border border-dashed border-slate-200 rounded-lg">暂无风险评估</div>
             ) : (
               <div className="space-y-3">
-                {signals.map((sig, idx) => {
-                  const sigScore = sig.score || 0;
-                  let scoreColor = '#e74c3c';
-                  if (sigScore >= 70) scoreColor = '#27ae60';
-                  else if (sigScore >= 50) scoreColor = '#f39c12';
-                  return (
-                    <div key={idx} className="border-b border-gray-100 last:border-0 pb-2 last:pb-0">
-                      <div className="flex justify-between items-center text-xs">
-                        <span>
-                          {sig.signal_type === 'right' ? '📈' : '📉'} [{typeMap[sig.signal_type] || '未知'}] {sig.signal_name} ({periodMap[sig.period] || sig.period})
-                        </span>
-                        <span style={{ color: scoreColor, fontWeight: 600 }}>{sigScore}分</span>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1 leading-relaxed">
-                        {sig.description}
-                      </div>
-                    </div>
-                  );
-                })}
+                {merged.riskExplanations.slice(0, 5).map((exp, idx) => (
+                  <div key={idx} className="text-sm px-4 py-3 rounded-lg bg-red-50 text-red-700 border border-red-100/50 leading-relaxed">{exp}</div>
+                ))}
               </div>
             )}
           </div>
 
-          {/* 风险评估 */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-sm font-semibold text-gray-700 mb-3">⚠️ 风险评估</div>
-            {(!riskExplanations || riskExplanations.length === 0) ? (
-              <div className="text-xs text-gray-500">暂无风险评估</div>
+          {/* 右侧：信号详情 */}
+          <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm">
+            <div className="text-[13px] font-bold tracking-wide uppercase text-slate-600 mb-4 flex items-center gap-2">
+              📋 触发信号 <span className="text-slate-400 font-normal">({merged.signals.length})</span>
+            </div>
+            {!hasSignals ? (
+              <div className="text-sm text-slate-500 py-4 text-center border border-dashed border-slate-200 rounded-lg">无买入信号</div>
             ) : (
-              <div className="space-y-1">
-                {riskExplanations.slice(0, 5).map((exp, idx) => (
-                  <div key={idx} className="text-xs text-gray-600 py-0.5">{exp}</div>
-                ))}
+              <div className="space-y-3">
+                {merged.signals.map((sig, idx) => {
+                  const sigScore = sig.score || 0;
+                  return (
+                    <div key={idx} className="bg-slate-50 rounded-xl p-4 border border-slate-100 transition-all hover:bg-slate-50/80">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {sig.signal_type === 'left' ? (
+                            <span className="px-2 py-1 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200/50">📉 左侧</span>
+                          ) : (
+                            <span className="px-2 py-1 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/50">📈 右侧</span>
+                          )}
+                          <span className="font-bold text-[14px] text-slate-800 tracking-tight">{sig.signal_name}</span>
+                          {sig.strength === 'strong' && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">强</span>}
+                          {sig.strength === 'medium' && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700">中</span>}
+                          {sig.strength === 'weak' && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-600">弱</span>}
+                          <span className="text-[11px] px-2 py-1 rounded-md bg-white text-slate-500 border border-slate-200 font-medium">
+                            {periodMap[sig.period] || sig.period}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400 font-medium">
+                          {dataMode === '实盘' && updateTime && sig.trigger_date && updateTime.startsWith(sig.trigger_date)
+                            ? updateTime
+                            : (sig.trigger_date || '')}
+                        </span>
+                      </div>
+                      <p className="text-[13px] text-slate-600 leading-relaxed mb-3">{sig.description}</p>
+                      <div className="flex flex-wrap gap-4 text-[12px] text-slate-500 bg-white px-3 py-2 rounded-lg border border-slate-100">
+                        <span className="flex items-center gap-1">信号分: <b className={sigScore >= 70 ? 'text-emerald-600' : sigScore >= 50 ? 'text-amber-600' : 'text-red-600'}>{sigScore}</b></span>
+                        {sig.volume_ratio != null && <span className="flex items-center gap-1">量比: <b className="text-slate-700">{Number(sig.volume_ratio).toFixed(2)}</b></span>}
+                        {sig.close_price != null && <span className="flex items-center gap-1">价格: <span className="text-slate-700 font-mono">{Number(sig.close_price).toFixed(2)}</span></span>}
+                        {sig.change_pct != null && (
+                          <span className={`font-mono font-medium ${sig.change_pct > 0 ? 'text-red-500' : sig.change_pct < 0 ? 'text-emerald-500' : ''}`}>
+                            {sig.change_pct > 0 ? '+' : ''}{Number(sig.change_pct).toFixed(2)}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

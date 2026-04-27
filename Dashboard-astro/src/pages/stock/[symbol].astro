@@ -20,6 +20,38 @@ function parseLimitEnv(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 }
 
+function formatDateTime(value: unknown): string {
+  if (!value) return '';
+  const date = new Date(String(value));
+  if (!Number.isNaN(date.getTime())) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${d} ${hh}:${mm}`;
+  }
+
+  const raw = String(value).trim();
+  if (raw.length >= 16) return raw.slice(0, 16);
+  return raw;
+}
+
+function toDayString(value: unknown): string {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+
+  const raw = String(value).trim();
+  const matched = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (matched) return matched[1];
+
+  const normalized = raw.replace(' ', 'T');
+  const date = new Date(normalized);
+  if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+
+  return toDateString(raw);
+}
+
 function getScoreLabel(score: number) {
   if (score >= 95) return '极品';
   if (score >= 90) return '优秀';
@@ -129,10 +161,10 @@ async function loadLatestRealtimeRow(symbol: string) {
 }
 
 function mergeRealtimeIntoDailyRows(rows: any[], realtimeRow: any) {
-  if (!realtimeRow) return rows;
+  if (!realtimeRow) return { rows, merged: false };
 
-  const rtDate = toDateString(realtimeRow.timestamp || realtimeRow.trade_date || realtimeRow.date || realtimeRow.time);
-  if (!rtDate) return rows;
+  const rtDate = toDayString(realtimeRow.timestamp || realtimeRow.trade_date || realtimeRow.date || realtimeRow.time);
+  if (!rtDate) return { rows, merged: false };
 
   const normalizedRow = {
     trade_date: rtDate,
@@ -143,49 +175,97 @@ function mergeRealtimeIntoDailyRows(rows: any[], realtimeRow: any) {
     volume: toNumber(realtimeRow.volume),
   };
 
-  if (!rows.length) return [normalizedRow];
+  if (!rows.length) return { rows: [normalizedRow], merged: true };
 
-  const sorted = [...rows].sort((a, b) => toDateString(a.trade_date).localeCompare(toDateString(b.trade_date)));
-  const lastDate = toDateString(sorted[sorted.length - 1].trade_date);
+  const sorted = [...rows].sort((a, b) => toDayString(a.trade_date).localeCompare(toDayString(b.trade_date)));
+  const lastDate = toDayString(sorted[sorted.length - 1].trade_date);
 
-  if (rtDate <= lastDate) return sorted;
-  return [...sorted, normalizedRow];
+  if (rtDate < lastDate) return { rows: sorted, merged: false };
+  if (rtDate === lastDate) {
+    return { rows: [...sorted.slice(0, -1), normalizedRow], merged: true };
+  }
+  return { rows: [...sorted, normalizedRow], merged: true };
 }
 
-let signalCache: { allSignals: Record<string, any>; stockNames: Record<string, string> } | null = null;
+let signalCache: {
+  allSignals: Record<string, any>;
+  stockNames: Record<string, string>;
+  signalMeta: { scanTime: string; priceFetchTime: string };
+} | null = null;
 
 function getSignalMaps() {
   if (signalCache) return signalCache;
 
   let allSignals: Record<string, any> = {};
   let stockNames: Record<string, string> = {};
+  let signalMeta = { scanTime: '', priceFetchTime: '' };
 
   try {
+    const namesPath = path.resolve('./public/data/stock_names.json');
+    if (fs.existsSync(namesPath)) {
+      const allNames = JSON.parse(fs.readFileSync(namesPath, 'utf-8'));
+      if (allNames && typeof allNames === 'object') {
+        stockNames = { ...allNames };
+      }
+    }
+
     const signalPath = path.resolve('./public/data/signals/signal_latest.json');
     if (fs.existsSync(signalPath)) {
       const signalData = JSON.parse(fs.readFileSync(signalPath, 'utf-8'));
-      if (signalData.stocks) {
-        for (const stock of signalData.stocks) {
-          const sym = stock.symbol;
-          stockNames[sym] = stock.name || '';
-          allSignals[sym] = {
-            name: stock.name || '',
-            signals: stock.signals || [],
-            signalScore: stock.signal_score || 0,
-            riskScore: stock.risk_score ?? 50,
-            riskExplanations: stock.risk_explanations || stock.risk_warnings || [],
-            scoreLabel: getScoreLabel(stock.signal_score || 0),
-            signalCount: stock.signal_count || 0,
-            hasBuySignal: stock.has_buy_signal || false,
+      signalMeta = {
+        scanTime: String(signalData.scan_time || '').trim(),
+        priceFetchTime: String(signalData.price_fetch_time || '').trim(),
+      };
+
+      const stocksArray = Array.isArray(signalData.stocks) ? signalData.stocks : [];
+      const stockMeta = {};
+      for (const st of stocksArray) {
+        if (st.symbol) {
+          stockMeta[st.symbol] = {
+            riskScore: st.risk_score || 0,
+            riskExplanations: st.risk_explanations || [],
           };
         }
+      }
+
+      for (const sig of (signalData.signals || [])) {
+        const sym = sig.symbol;
+        if (!sym) continue;
+
+        if (!allSignals[sym]) {
+          const meta = stockMeta[sym] || {};
+          allSignals[sym] = {
+            name: sig.name || stockNames[sym] || '',
+            signals: [],
+            signalScore: 0,
+            riskScore: meta.riskScore || 0,
+            riskExplanations: meta.riskExplanations || [],
+            scoreLabel: '',
+            signalCount: 0,
+            hasBuySignal: false,
+          };
+        }
+
+        if (sig.name) {
+          stockNames[sym] = sig.name;
+          allSignals[sym].name = sig.name;
+        }
+
+        allSignals[sym].signals.push(sig);
+        allSignals[sym].signalCount += 1;
+        allSignals[sym].signalScore = Math.max(allSignals[sym].signalScore || 0, Number(sig.score || 0));
+        if (sig.signal_type === 'right') allSignals[sym].hasBuySignal = true;
+      }
+
+      for (const sym of Object.keys(allSignals)) {
+        allSignals[sym].scoreLabel = getScoreLabel(allSignals[sym].signalScore || 0);
       }
     }
   } catch (e) {
     console.warn('Failed to load signal_latest.json:', (e as Error).message);
   }
 
-  signalCache = { allSignals, stockNames };
+  signalCache = { allSignals, stockNames, signalMeta };
   return signalCache;
 }
 
@@ -213,10 +293,10 @@ const dailyLimit = parseLimitEnv(import.meta.env.CHART_DAILY_LIMIT);
 const weeklyLimit = parseLimitEnv(import.meta.env.CHART_WEEKLY_LIMIT);
 const monthlyLimit = parseLimitEnv(import.meta.env.CHART_MONTHLY_LIMIT);
 
-const { allSignals, stockNames } = getSignalMaps();
+const { allSignals, stockNames, signalMeta } = getSignalMaps();
 
 const defaultSignals = {
-  signals: [], signalScore: 0, riskScore: 50,
+  signals: [], signalScore: 0, riskScore: 0,
   riskExplanations: [], scoreLabel: '', signalCount: 0, hasBuySignal: false,
 };
 
@@ -226,6 +306,8 @@ const priceFile = path.join(PRICE_DIR, `${symbol}.parquet`);
 let chartData: any[] = [];
 let weeklyData: any[] = [];
 let monthlyData: any[] = [];
+let realtimeRow: any = null;
+let isRealtimeMerged = false;
 
 if (fs.existsSync(priceFile)) {
   let allPricesCache: any[] | null = null;
@@ -234,7 +316,7 @@ if (fs.existsSync(priceFile)) {
     return allPricesCache;
   };
 
-  const realtimeRow = await loadLatestRealtimeRow(symbol);
+  realtimeRow = await loadLatestRealtimeRow(symbol);
 
   const rawDailyRows = dailyLimit
     ? await readParquetLastRows(priceFile, priceColumns, dailyLimit)
@@ -248,13 +330,15 @@ if (fs.existsSync(priceFile)) {
     ? await readParquetLastRows(priceFile, priceColumns, monthlyLimit * 21 + 35)
     : await getAllPrices();
 
-  const dailyRowsMerged = mergeRealtimeIntoDailyRows(rawDailyRows, realtimeRow);
-  const weeklySourceRowsMerged = mergeRealtimeIntoDailyRows(rawWeeklySourceRows, realtimeRow);
-  const monthlySourceRowsMerged = mergeRealtimeIntoDailyRows(rawMonthlySourceRows, realtimeRow);
+  const dailyMergeResult = mergeRealtimeIntoDailyRows(rawDailyRows, realtimeRow);
+  const weeklyMergeResult = mergeRealtimeIntoDailyRows(rawWeeklySourceRows, realtimeRow);
+  const monthlyMergeResult = mergeRealtimeIntoDailyRows(rawMonthlySourceRows, realtimeRow);
 
-  const dailyRows = dailyLimit ? dailyRowsMerged.slice(-dailyLimit) : dailyRowsMerged;
-  const weeklySourceRows = weeklySourceRowsMerged;
-  const monthlySourceRows = monthlySourceRowsMerged;
+  isRealtimeMerged = dailyMergeResult.merged;
+
+  const dailyRows = dailyLimit ? dailyMergeResult.rows.slice(-dailyLimit) : dailyMergeResult.rows;
+  const weeklySourceRows = weeklyMergeResult.rows;
+  const monthlySourceRows = monthlyMergeResult.rows;
 
   const factorFile = path.join(FACTOR_DIR, `${symbol}.parquet`);
   const factors = fs.existsSync(factorFile)
@@ -277,6 +361,13 @@ const isUp = change >= 0;
 const priceColor = isUp ? 'text-[#ff4757]' : 'text-[#2ed573]';
 const bgColor = isUp ? 'bg-[rgba(255,71,87,0.1)]' : 'bg-[rgba(46,213,115,0.1)]';
 const changeSymbol = isUp ? '+' : '';
+
+const realtimeTimestamp = formatDateTime(realtimeRow?.timestamp || signalMeta.priceFetchTime || signalMeta.scanTime);
+const isRealtimeData = isRealtimeMerged;
+const dataModeText = isRealtimeData ? '实盘' : '收盘';
+const dataTimeText = isRealtimeData
+  ? (realtimeTimestamp || (latest ? latest.date : '--'))
+  : (latest ? latest.date : '--');
 ---
 
 <MainLayout title={`${symbol} ${stockName} 股票图表`}>
@@ -292,7 +383,10 @@ const changeSymbol = isUp ? '+' : '';
     <div class="flex items-center justify-between flex-wrap gap-4">
       <div>
         <div class="text-2xl font-bold">{stockName || symbol} <span class="text-sm font-normal opacity-80 ml-2">{symbol}</span></div>
-        <div class="text-sm opacity-70 mt-1">数据日期: {latest ? latest.date : '--'}</div>
+        <div class="text-sm opacity-70 mt-1 flex items-center gap-2 flex-wrap">
+          <span>数据模式: {dataModeText}</span>
+          <span>更新时间: {dataTimeText}</span>
+        </div>
       </div>
       <div class="text-right">
         <div class="text-4xl font-bold">{latest ? latest.close.toFixed(2) : '--'}</div>
@@ -328,12 +422,15 @@ const changeSymbol = isUp ? '+' : '';
   <!-- 信号折叠区域 -->
   <StockSignals
     client:load
+    symbol={symbol}
     signals={stockSignals.signals}
     signalScore={stockSignals.signalScore}
     riskScore={stockSignals.riskScore}
     riskExplanations={stockSignals.riskExplanations}
     scoreLabel={stockSignals.scoreLabel}
     signalCount={stockSignals.signalCount}
+    dataMode={dataModeText}
+    updateTime={dataTimeText}
   />
 
   <!-- 图表 -->
@@ -349,6 +446,9 @@ const changeSymbol = isUp ? '+' : '';
       monthlyLimit={monthlyLimit}
       initialVisibleBars={120}
       zoomOutBars={20}
+      chartWidth={500}
+      isRealtimeData={isRealtimeData}
+      realtimeTime={dataTimeText}
     />
   </div>
 </MainLayout>

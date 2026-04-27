@@ -20,7 +20,10 @@ export default function StockChart({
   barSpacing = 8,
   zoomOutBars = 0,
   initialVisibleBars = null,
+  isRealtimeData = false,
+  realtimeTime = '',
 }) {
+  const wrapperRef = useRef(null);
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const tooltipRef = useRef(null);
@@ -32,6 +35,8 @@ export default function StockChart({
     monthly: initialMonthly || [],
   });
   const [loading, setLoading] = useState(false);
+  const [chartBootTick, setChartBootTick] = useState(0);
+  const [responsiveWidth, setResponsiveWidth] = useState(chartWidth);
 
   // 若通过 props 传入日线但未传入周线/月线，自动计算
   useEffect(() => {
@@ -79,7 +84,48 @@ export default function StockChart({
   };
 
   useEffect(() => {
+    const updateWidth = () => {
+      const nextWidth = wrapperRef.current?.clientWidth || chartWidth;
+      if (nextWidth > 0) setResponsiveWidth(nextWidth);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        updateWidth();
+        setChartBootTick(t => t + 1);
+      }
+    };
+
+    const onPageShow = () => {
+      updateWidth();
+      setChartBootTick(t => t + 1);
+    };
+
+    updateWidth();
+    const timer = setTimeout(updateWidth, 120);
+    const observer = typeof ResizeObserver !== 'undefined' && wrapperRef.current
+      ? new ResizeObserver(updateWidth)
+      : null;
+    if (observer && wrapperRef.current) observer.observe(wrapperRef.current);
+
+    window.addEventListener('resize', updateWidth);
+    window.addEventListener('orientationchange', updateWidth);
+    window.addEventListener('pageshow', onPageShow);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      clearTimeout(timer);
+      if (observer) observer.disconnect();
+      window.removeEventListener('resize', updateWidth);
+      window.removeEventListener('orientationchange', updateWidth);
+      window.removeEventListener('pageshow', onPageShow);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [chartWidth]);
+
+  useEffect(() => {
     if (!containerRef.current) return;
+    const effectiveWidth = Math.max(280, Math.floor(Math.min(chartWidth, responsiveWidth || chartWidth)));
     const data = dataMap[period];
     if (!data || data.length === 0) return;
 
@@ -105,7 +151,7 @@ export default function StockChart({
       line-height: 1.35;
       box-shadow: 0 2px 6px rgba(0,0,0,0.08);
       pointer-events: none;
-      width: ${chartWidth}px;
+      width: ${effectiveWidth}px;
       margin: 0 auto 8px auto;
       display: none;
       box-sizing: border-box;
@@ -178,7 +224,7 @@ export default function StockChart({
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
       },
-      width: chartWidth,
+      width: effectiveWidth,
       height: 650,
     });
 
@@ -186,7 +232,8 @@ export default function StockChart({
 
     const handleResize = () => {
       if (containerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ width: chartWidth });
+        const nextWidth = Math.max(280, Math.floor(Math.min(chartWidth, wrapperRef.current?.clientWidth || responsiveWidth || chartWidth)));
+        chartRef.current.applyOptions({ width: nextWidth });
       }
     };
     window.addEventListener('resize', handleResize);
@@ -369,7 +416,7 @@ export default function StockChart({
 
     const totalBars = candles.length;
     const configuredLimit = periodLimits[period];
-    const autoVisibleBars = Math.max(30, Math.floor(chartWidth / Math.max(1, barSpacing)));
+    const autoVisibleBars = Math.max(30, Math.floor(effectiveWidth / Math.max(1, barSpacing)));
     const requestedBaseBars = initialVisibleBars && initialVisibleBars > 0 ? initialVisibleBars : autoVisibleBars;
     const limitBaseBars = configuredLimit && configuredLimit > 0
       ? Math.min(configuredLimit, requestedBaseBars)
@@ -400,7 +447,7 @@ export default function StockChart({
     if (candles.length > 0) {
       tooltipEl.style.display = 'block';
       const latest = candles[candles.length - 1];
-      setText('date', latest.time);
+      setText('date', isRealtimeData && realtimeTime ? realtimeTime : latest.time);
       setText('open', latest.open?.toFixed(2) ?? '--');
       setText('high', latest.high?.toFixed(2) ?? '--');
       setText('low', latest.low?.toFixed(2) ?? '--');
@@ -429,7 +476,7 @@ export default function StockChart({
         // 鼠标移出时恢复最新数据
         if (candles.length > 0) {
           const latest = candles[candles.length - 1];
-          setText('date', latest.time);
+          setText('date', isRealtimeData && realtimeTime ? realtimeTime : latest.time);
           setText('open', latest.open?.toFixed(2) ?? '--');
           setText('high', latest.high?.toFixed(2) ?? '--');
           setText('low', latest.low?.toFixed(2) ?? '--');
@@ -439,7 +486,12 @@ export default function StockChart({
       }
       const sd = param.seriesData;
 
-      setText('date', param.time);
+      // 如果选中的是最右边的一根K线，并且是实盘数据，则显示精确时间
+      if (isRealtimeData && realtimeTime && param.time === candles[candles.length - 1].time) {
+        setText('date', realtimeTime);
+      } else {
+        setText('date', param.time);
+      }
 
       const candle = sd.get(candleSeries);
       if (candle) {
@@ -486,6 +538,8 @@ export default function StockChart({
     loadedData.weekly,
     loadedData.monthly,
     chartWidth,
+    responsiveWidth,
+    chartBootTick,
     barSpacing,
     zoomOutBars,
     initialVisibleBars,
@@ -494,18 +548,33 @@ export default function StockChart({
     monthlyLimit,
   ]);
 
+  const displayWidth = Math.max(280, Math.floor(Math.min(chartWidth, responsiveWidth || chartWidth)));
+
   return (
-    <div>
-      <div className="flex justify-end gap-1 mb-2">
-        {['daily', 'weekly', 'monthly'].map(p => (
-          <button
-            key={p}
-            onClick={() => setPeriod(p)}
-            className={`px-3 py-1 text-xs rounded ${period === p ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
-          >
-            {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
-          </button>
-        ))}
+    <div ref={wrapperRef} style={{ width: '100%' }}>
+      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+        <div>
+          {isRealtimeData ? (
+            <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded bg-red-100 text-red-700">
+              实盘中 {realtimeTime ? `· ${realtimeTime}` : ''}
+            </span>
+          ) : (
+            <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded bg-gray-100 text-gray-600">
+              收盘数据
+            </span>
+          )}
+        </div>
+        <div className="flex justify-end gap-1">
+          {['daily', 'weekly', 'monthly'].map(p => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`px-3 py-1 text-xs rounded ${period === p ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
+            >
+              {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
+            </button>
+          ))}
+        </div>
       </div>
       {loading && (
         <div className="flex items-center justify-center h-[650px] text-gray-400">
@@ -515,7 +584,7 @@ export default function StockChart({
       <div ref={tooltipHostRef} />
       <div
         ref={containerRef}
-        style={{ width: chartWidth, margin: '0 auto', height: 650, display: loading ? 'none' : 'block', position: 'relative' }}
+        style={{ width: displayWidth, maxWidth: '100%', margin: '0 auto', height: 650, display: loading ? 'none' : 'block', position: 'relative' }}
       />
     </div>
   );
