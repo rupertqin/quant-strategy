@@ -261,6 +261,8 @@ class RealtimeDataService:
             # 新浪列名
             '最新价': 'close',
             '今开': 'open',
+            '最高': 'high',
+            '最低': 'low',
             '最高价': 'high',
             '最低价': 'low',
             '成交量': 'volume',
@@ -268,14 +270,9 @@ class RealtimeDataService:
             '涨跌幅': 'change_pct',
             '名称': 'name',
             # 东财列名
-            '最新价': 'close',
             '开盘价': 'open',
             '最高价': 'high',
             '最低价': 'low',
-            '成交量': 'volume',
-            '成交额': 'amount',
-            '涨跌幅': 'change_pct',
-            '名称': 'name'
         }
 
         available_cols = {k: v for k, v in column_map.items() if k in df.columns}

@@ -1,11 +1,11 @@
-# Quant Dashboard Astro
+# 秦项投资量化 Astro
 
 量化交易看板的 Astro 纯静态前端版本，完全复制原 Streamlit Dashboard 的功能。
 
 ## 项目结构
 
 ```
-quant-dashboard-astro/
+Dashboard-astro/
 ├── public/data/           # 预生成的静态数据（由 sync-data.js 同步）
 │   ├── signals/           # 个股信号数据
 │   ├── technical/         # 技术面数据（指数、热点板块等）
@@ -24,20 +24,20 @@ quant-dashboard-astro/
 
 ## 页面功能
 
-| 页面 | 路径 | 功能 |
-|------|------|------|
-| 首页 | `/` | 市场状态概览、热点板块、快捷导航 |
-| 今日技术面 | `/today-technical/` | 宏观指标、指数图表（K线/分时）、热点板块、信号列表 |
-| 股票池监控 | `/pool-watch/` | 买入/卖出/观察信号、均线系统、评分排名 |
-| 信号监控 | `/signal-watch/` | 左侧/右侧信号列表、风险雷达、健康度评分、多维度筛选分页 |
-| 股票图表 | `/stock-chart/?symbol=xxx` | TradingView Lightweight Charts K线图（日线/周线/月线） |
+| 页面       | 路径                       | 功能                                                    |
+| ---------- | -------------------------- | ------------------------------------------------------- |
+| 首页       | `/`                        | 市场状态概览、热点板块、快捷导航                        |
+| 今日技术面 | `/today-technical/`        | 宏观指标、指数图表（K线/分时）、热点板块、信号列表      |
+| 股票池监控 | `/pool-watch/`             | 买入/卖出/观察信号、均线系统、评分排名                  |
+| 信号监控   | `/signal-watch/`           | 左侧/右侧信号列表、风险雷达、健康度评分、多维度筛选分页 |
+| 股票图表   | `/stock-chart/?symbol=xxx` | TradingView Lightweight Charts K线图（日线/周线/月线）  |
 
 ## 快速开始
 
 ### 1. 安装依赖
 
 ```bash
-cd quant-dashboard-astro
+cd Dashboard-astro
 npm install
 ```
 
@@ -72,14 +72,14 @@ npm run preview
 
 ## 与原 Streamlit 版本的区别
 
-| 特性 | Streamlit | Astro |
-|------|-----------|-------|
-| 架构 | Python 服务端渲染 | 纯静态前端 |
-| 运行方式 | `streamlit run app.py` | 构建为静态 HTML + JS |
-| 部署方式 | 需要 Python 服务器 | 任何静态托管（Vercel/Netlify/GitHub Pages） |
-| 数据来源 | 直接读取本地文件 | 从 `public/data/` 的 JSON 文件读取 |
-| 图表库 | Streamlit 原生 + HTML 嵌入 | TradingView Lightweight Charts |
-| 交互组件 | Streamlit widgets | React islands |
+| 特性     | Streamlit                  | Astro                                       |
+| -------- | -------------------------- | ------------------------------------------- |
+| 架构     | Python 服务端渲染          | 纯静态前端                                  |
+| 运行方式 | `streamlit run app.py`     | 构建为静态 HTML + JS                        |
+| 部署方式 | 需要 Python 服务器         | 任何静态托管（Vercel/Netlify/GitHub Pages） |
+| 数据来源 | 直接读取本地文件           | 从 `public/data/` 的 JSON 文件读取          |
+| 图表库   | Streamlit 原生 + HTML 嵌入 | TradingView Lightweight Charts              |
+| 交互组件 | Streamlit widgets          | React islands                               |
 
 ## 数据流
 

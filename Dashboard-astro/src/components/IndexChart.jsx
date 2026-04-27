@@ -4,6 +4,13 @@ export default function IndexChart({ histData, intradayData, name }) {
   const [mode, setMode] = useState('daily');
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
+  const hasIntraday = Array.isArray(intradayData) && intradayData.length > 0;
+
+  useEffect(() => {
+    if (!hasIntraday && mode === 'intraday') {
+      setMode('daily');
+    }
+  }, [hasIntraday, mode]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -111,20 +118,22 @@ export default function IndexChart({ histData, intradayData, name }) {
 
   return (
     <div>
-      <div className="flex justify-end gap-1 mb-2">
-        <button
-          onClick={() => setMode('daily')}
-          className={`px-3 py-1 text-xs rounded ${mode === 'daily' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
-        >
-          日线
-        </button>
-        <button
-          onClick={() => setMode('intraday')}
-          className={`px-3 py-1 text-xs rounded ${mode === 'intraday' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
-        >
-          分时
-        </button>
-      </div>
+      {hasIntraday && (
+        <div className="flex justify-end gap-1 mb-2">
+          <button
+            onClick={() => setMode('daily')}
+            className={`px-3 py-1 text-xs rounded ${mode === 'daily' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
+          >
+            日线
+          </button>
+          <button
+            onClick={() => setMode('intraday')}
+            className={`px-3 py-1 text-xs rounded ${mode === 'intraday' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
+          >
+            分时
+          </button>
+        </div>
+      )}
       <div ref={chartContainerRef} style={{ width: '100%', height: 280 }} />
       {mode === 'intraday' && intradayData && intradayData.length > 0 && (
         <div className="text-xs text-gray-500 mt-1">

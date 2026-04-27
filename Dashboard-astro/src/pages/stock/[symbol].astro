@@ -10,6 +10,7 @@ const fs = await import('fs');
 
 const PRICE_DIR = path.resolve('../DataStorage/raw/stocks/price');
 const FACTOR_DIR = path.resolve('../DataStorage/raw/stocks/adjust_factor');
+const REALTIME_STOCK_DIR = path.resolve('../DataStorage/raw/realtime/stock');
 
 function parseLimitEnv(value: unknown): number | null {
   if (value === undefined || value === null) return null;
@@ -106,6 +107,51 @@ function aggregateToPeriod(rows: any[], period: 'weekly' | 'monthly') {
   return Array.from(map.values()).sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
 }
 
+async function loadLatestRealtimeRow(symbol: string) {
+  if (!fs.existsSync(REALTIME_STOCK_DIR)) return null;
+
+  const realtimeFiles = fs.readdirSync(REALTIME_STOCK_DIR)
+    .filter((f) => f.endsWith('.parquet'))
+    .sort();
+
+  if (!realtimeFiles.length) return null;
+
+  const latestFile = path.join(REALTIME_STOCK_DIR, realtimeFiles[realtimeFiles.length - 1]);
+  const rows = await readParquetAllRows(
+    latestFile,
+    ['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
+  );
+
+  const matched = rows.filter((r: any) => String(r.symbol) === symbol);
+  if (!matched.length) return null;
+
+  return matched.sort((a: any, b: any) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')))[matched.length - 1];
+}
+
+function mergeRealtimeIntoDailyRows(rows: any[], realtimeRow: any) {
+  if (!realtimeRow) return rows;
+
+  const rtDate = toDateString(realtimeRow.timestamp || realtimeRow.trade_date || realtimeRow.date || realtimeRow.time);
+  if (!rtDate) return rows;
+
+  const normalizedRow = {
+    trade_date: rtDate,
+    open: toNumber(realtimeRow.open, toNumber(realtimeRow.close)),
+    high: toNumber(realtimeRow.high, toNumber(realtimeRow.close)),
+    low: toNumber(realtimeRow.low, toNumber(realtimeRow.close)),
+    close: toNumber(realtimeRow.close),
+    volume: toNumber(realtimeRow.volume),
+  };
+
+  if (!rows.length) return [normalizedRow];
+
+  const sorted = [...rows].sort((a, b) => toDateString(a.trade_date).localeCompare(toDateString(b.trade_date)));
+  const lastDate = toDateString(sorted[sorted.length - 1].trade_date);
+
+  if (rtDate <= lastDate) return sorted;
+  return [...sorted, normalizedRow];
+}
+
 let signalCache: { allSignals: Record<string, any>; stockNames: Record<string, string> } | null = null;
 
 function getSignalMaps() {
@@ -188,17 +234,27 @@ if (fs.existsSync(priceFile)) {
     return allPricesCache;
   };
 
-  const dailyRows = dailyLimit
+  const realtimeRow = await loadLatestRealtimeRow(symbol);
+
+  const rawDailyRows = dailyLimit
     ? await readParquetLastRows(priceFile, priceColumns, dailyLimit)
     : await getAllPrices();
 
-  const weeklySourceRows = weeklyLimit
+  const rawWeeklySourceRows = weeklyLimit
     ? await readParquetLastRows(priceFile, priceColumns, weeklyLimit * 5 + 15)
     : await getAllPrices();
 
-  const monthlySourceRows = monthlyLimit
+  const rawMonthlySourceRows = monthlyLimit
     ? await readParquetLastRows(priceFile, priceColumns, monthlyLimit * 21 + 35)
     : await getAllPrices();
+
+  const dailyRowsMerged = mergeRealtimeIntoDailyRows(rawDailyRows, realtimeRow);
+  const weeklySourceRowsMerged = mergeRealtimeIntoDailyRows(rawWeeklySourceRows, realtimeRow);
+  const monthlySourceRowsMerged = mergeRealtimeIntoDailyRows(rawMonthlySourceRows, realtimeRow);
+
+  const dailyRows = dailyLimit ? dailyRowsMerged.slice(-dailyLimit) : dailyRowsMerged;
+  const weeklySourceRows = weeklySourceRowsMerged;
+  const monthlySourceRows = monthlySourceRowsMerged;
 
   const factorFile = path.join(FACTOR_DIR, `${symbol}.parquet`);
   const factors = fs.existsSync(factorFile)

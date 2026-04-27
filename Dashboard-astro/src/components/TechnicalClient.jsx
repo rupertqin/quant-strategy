@@ -20,6 +20,7 @@ const MACRO_ITEMS = [
 ];
 
 const PERIODS = [
+  { label: '日线', key: 'daily' },
   { label: '周线', key: 'weekly' },
   { label: '月线', key: 'monthly' },
 ];
@@ -112,8 +113,11 @@ function buildPeriodHistory(indexHistoryDaily, dailyLimit, weeklyLimit, monthlyL
 
   for (const [name, rows] of Object.entries(source)) {
     const dailyRows = takeLastRows(rows, dailyLimit);
-    const weeklyRows = aggregateToPeriod(dailyRows, 'weekly');
-    const monthlyRows = aggregateToPeriod(dailyRows, 'monthly');
+    const weeklySourceRows = weeklyLimit ? takeLastRows(rows, weeklyLimit * 5 + 15) : rows;
+    const monthlySourceRows = monthlyLimit ? takeLastRows(rows, monthlyLimit * 21 + 35) : rows;
+
+    const weeklyRows = aggregateToPeriod(weeklySourceRows, 'weekly');
+    const monthlyRows = aggregateToPeriod(monthlySourceRows, 'monthly');
 
     result.daily[name] = dailyRows;
     result.weekly[name] = takeLastRows(weeklyRows, weeklyLimit);
@@ -130,7 +134,7 @@ export default function TechnicalClient({
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activePeriod, setActivePeriod] = useState('weekly');
+  const [activePeriod, setActivePeriod] = useState('daily');
 
   useEffect(() => {
     fetch('/data/technical/latest.json')
@@ -159,6 +163,7 @@ export default function TechnicalClient({
 
   const ti = data.technical_indicators || {};
   const indexHistory = data.index_history || {};
+  const indexIntraday = data.index_intraday || {};
   const periodHistory = buildPeriodHistory(indexHistory, dailyLimit, weeklyLimit, monthlyLimit);
   const indexPerformance = ti.index_performance || {};
   const hotSectors = data.hot_sectors || [];
@@ -346,7 +351,7 @@ export default function TechnicalClient({
                   <span className="font-bold text-gray-800">{name}</span>
                 )}
               </div>
-              <IndexChart histData={histData} intradayData={[]} name={name} />
+              <IndexChart histData={histData} intradayData={indexIntraday[name] || []} name={name} />
               <div className="mt-2 text-xs text-gray-500 flex gap-3">
                 {peaks.length > 0 && (
                   <span>📈 最近峰值: {peaks[peaks.length - 1][1]?.toFixed(2)} ({peaks[peaks.length - 1][0]})</span>

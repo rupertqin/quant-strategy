@@ -23,7 +23,7 @@ from lib.utils import StockCodeUtil, get_stock_name
 
 # ============= 配置 =============
 st.set_page_config(
-    page_title="Quant Dashboard",
+    page_title="秦项投资量化",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -242,7 +242,7 @@ def refresh_data():
 
 
 # ============= 主界面 =============
-st.title("📈 Quant Dashboard - 量化交易看板")
+st.title("📈 秦项投资量化 - 量化交易看板")
 
 # 获取市场状态和时间戳
 regime = get_market_regime()
@@ -297,7 +297,7 @@ with col_nav1:
     st.markdown("""
     ### 🔥 今日技术面
     全市场涨停板扫描、板块热度分析
-    
+
     - 涨停家数统计
     - 热点板块排名
     - 操作信号生成
@@ -309,7 +309,7 @@ with col_nav2:
     st.markdown("""
     ### 📊 股票池监控
     LongTerm股票池短线技术指标
-    
+
     - MA5/10/20/60均线系统
     - 量价关系分析
     - 综合评分排名
@@ -321,7 +321,7 @@ with col_nav3:
     st.markdown("""
     ### 📈 长线配置
     均值-方差优化、资产配置
-    
+
     - 最优权重计算
     - 风险收益分析
     - 月度调仓建议
@@ -342,7 +342,7 @@ with col_left:
         longterm_weights['display_name'] = longterm_weights['symbol'].apply(
             lambda x: f"{x}({get_stock_name(x)})" if get_stock_name(x) else x
         )
-        
+
         # 饼图
         import plotly.express as px
         fig_pie = px.pie(
@@ -359,7 +359,7 @@ with col_left:
         display_df['名称'] = display_df['symbol'].apply(get_stock_name)
         display_df = display_df[['symbol', '名称', 'weight']]
         display_df.columns = ['代码', '名称', '权重']
-        
+
         st.subheader("目标权重")
         st.dataframe(
             display_df.style.format({'权重': '{:.2%}'}),
@@ -371,28 +371,28 @@ with col_left:
 # ========== 右侧: 短线摘要 ==========
 with col_right:
     st.header("⚡ 短线摘要 (战术)")
-    
+
     # 今日技术面摘要
     signals = load_daily_signals()
     if signals:
         st.subheader("🔥 今日涨停")
         st.metric("涨停家数", signals.get('total_zt_count', 0))
-        
+
         hot_sectors = signals.get('hot_sectors', [])
         if hot_sectors:
             st.write("热点板块:")
             for sector in hot_sectors[:3]:
-                st.markdown(f"<span class='hot-sector'>{sector['sector']} ({sector['zt_count']})</span>", 
+                st.markdown(f"<span class='hot-sector'>{sector['sector']} ({sector['zt_count']})</span>",
                           unsafe_allow_html=True)
     else:
         st.info("今日技术面未运行")
-    
+
     st.divider()
-    
+
     # 股票池监控摘要
     if pool_summary:
         st.subheader("📊 股票池信号")
-        
+
         col_sig1, col_sig2, col_sig3 = st.columns(3)
         with col_sig1:
             st.metric("🟢 买入", pool_summary.get('buy_count', 0))
@@ -400,7 +400,7 @@ with col_right:
             st.metric("🔴 卖出", pool_summary.get('sell_count', 0))
         with col_sig3:
             st.metric("🟡 观察", pool_summary.get('watch_count', 0))
-        
+
         if st.button("查看详情 ➡️", key="goto_pool"):
             st.switch_page("pages/2_pool_watch.py")
     else:
@@ -468,7 +468,7 @@ with col2:
 # ============= 侧边栏 =============
 with st.sidebar:
     st.header("⚡ 快捷操作")
-    
+
     st.subheader("数据管理")
     if st.button("🔄 刷新价格数据"):
         with st.spinner("正在刷新价格数据..."):
@@ -477,11 +477,11 @@ with st.sidebar:
                 st.success("数据刷新完成!")
             else:
                 st.warning(f"刷新失败: {result.get('stderr', '未知错误')}")
-    
+
     st.divider()
-    
+
     st.subheader("策略运行")
-    
+
     if st.button("📈 运行长线优化", type="primary"):
         with st.spinner("正在运行长线优化..."):
             result = run_longterm_optimization()
@@ -501,7 +501,7 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error(f"运行失败: {result.get('stderr', '未知错误')}")
-    
+
     if st.button("📊 运行信号扫描"):
         with st.spinner("正在扫描个股信号..."):
             result = run_signal_scan()
@@ -510,23 +510,23 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error(f"运行失败: {result.get('stderr', '未知错误')}")
-    
+
     st.divider()
-    
+
     if st.button("🔄 刷新看板"):
         st.rerun()
-    
+
     st.divider()
-    
+
     st.write("📚 使用说明")
     st.caption("""
     **导航页面:**
     - 🔥 今日技术面: 涨停板扫描
     - 📊 股票池监控: 技术指标分析
-    
+
     **策略说明:**
     - 长线: 均值-方差优化
     - 短线: 事件驱动 + 技术分析
-    
+
     ⚠️ 仅供参考，不构成投资建议
     """)

@@ -2,6 +2,50 @@ import { useState, useEffect, useMemo } from 'react';
 import SignalTable from './SignalTable.jsx';
 import { useStockPool } from '../hooks/useStockPool.js';
 
+function normalizeSignalPayload(json) {
+  if (Array.isArray(json?.stocks)) return json;
+
+  const rawSignals = Array.isArray(json?.signals) ? json.signals : [];
+  const grouped = new Map();
+
+  rawSignals.forEach((sig) => {
+    const symbol = sig?.symbol;
+    if (!symbol) return;
+
+    if (!grouped.has(symbol)) {
+      grouped.set(symbol, {
+        symbol,
+        name: sig?.name || '',
+        signals: [],
+        signal_count: 0,
+        signal_score: 0,
+        risk_score: 0,
+        risk_explanations: [],
+        has_buy_signal: false,
+        stage: null,
+        close_price: sig?.close_price ?? null,
+        change_pct: sig?.change_pct ?? null,
+      });
+    }
+
+    const item = grouped.get(symbol);
+    item.signals.push(sig);
+    item.signal_count += 1;
+    item.signal_score = Math.max(item.signal_score, Number(sig?.score || 0));
+    item.has_buy_signal = item.has_buy_signal || sig?.signal_type === 'right';
+    if (item.stage !== 'right') item.stage = sig?.signal_type || item.stage;
+    if (item.close_price == null && sig?.close_price != null) item.close_price = sig.close_price;
+    if (item.change_pct == null && sig?.change_pct != null) item.change_pct = sig.change_pct;
+  });
+
+  return {
+    ...json,
+    stocks: Array.from(grouped.values()),
+    total_signals: Number(json?.total_signals || rawSignals.length || 0),
+    total_stocks: Number(json?.total_stocks || grouped.size || 0),
+  };
+}
+
 export default function SignalWatchClient() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -24,9 +68,10 @@ export default function SignalWatchClient() {
         return JSON.parse(cleaned);
       })
       .then(json => {
-        console.log('[SignalWatch] loaded data, stocks count:', json?.stocks?.length);
-        console.log('[SignalWatch] total_signals:', json?.total_signals);
-        setData(json);
+        const normalized = normalizeSignalPayload(json);
+        console.log('[SignalWatch] loaded data, stocks count:', normalized?.stocks?.length);
+        console.log('[SignalWatch] total_signals:', normalized?.total_signals);
+        setData(normalized);
         setLoading(false);
       })
       .catch(err => {

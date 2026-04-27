@@ -40,7 +40,7 @@ def load_signals_data() -> dict:
 
 
 st.set_page_config(
-    page_title="今日技术面 - Quant Dashboard",
+    page_title="今日技术面 - 秦项投资量化",
     page_icon="🔥",
     layout="wide"
 )
