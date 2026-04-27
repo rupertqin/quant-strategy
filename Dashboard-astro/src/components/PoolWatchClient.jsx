@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { RotateCcw, Trash2, Plus } from 'lucide-react';
 import SignalTable from './SignalTable.jsx';
+import LoadingSpinner from './LoadingSpinner.jsx';
 import { useStockPool } from '../hooks/useStockPool.js';
 
 function normalizeSignalPayload(json) {
@@ -169,7 +170,7 @@ export default function PoolWatchClient() {
   const poolRiskCount = validStocks.filter(s => (s.risk_score ?? 0) >= 60 && !s.has_buy_signal).length;
 
   if (loading || !initialized) {
-    return <p className="text-gray-500 py-8">加载中...</p>;
+    return <LoadingSpinner text="正在加载股票池数据..." />;
   }
 
   return (
@@ -177,7 +178,7 @@ export default function PoolWatchClient() {
       <div className="mb-8">
         <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">股票池监控</h1>
         <p className="text-sm text-gray-500 mt-1">
-          数据时间: {data?.date || data?.scan_time?.split(' ')?.[0] || '未知'}
+          数据时间: {data?.price_fetch_time?.split(' ')?.[0] || data?.date || '未知'}
           {' '}| 股票池共 {pool.length} 只（有数据 {validStocks.length} 只）
         </p>
       </div>

@@ -157,7 +157,7 @@ export async function loadTechnicalData(): Promise<TechnicalData | null> {
     const res = await fetch(`${DATA_BASE}/technical/latest.json`);
     if (!res.ok) return null;
     const data = await res.json();
-    data._generated_at = data.scan_time || data.date;
+    data._generated_at = data.price_fetch_time || data.date;
     return data;
   } catch {
     return null;

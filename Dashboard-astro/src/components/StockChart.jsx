@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import LoadingSpinner from './LoadingSpinner.jsx';
 
 const MA_COLORS = {
   ma5: '#000000',
@@ -577,9 +578,7 @@ export default function StockChart({
         </div>
       </div>
       {loading && (
-        <div className="flex items-center justify-center h-[650px] text-gray-400">
-          <span>加载图表数据...</span>
-        </div>
+        <LoadingSpinner text="加载图表数据..." className="h-[650px] !py-0" />
       )}
       <div ref={tooltipHostRef} />
       <div

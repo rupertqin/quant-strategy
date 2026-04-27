@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import SignalTable from './SignalTable.jsx';
+import LoadingSpinner from './LoadingSpinner.jsx';
 import { useStockPool } from '../hooks/useStockPool.js';
 
 function normalizeSignalPayload(json) {
@@ -111,7 +112,7 @@ export default function SignalWatchClient() {
   const weeklyCount = signals.filter(s => s.period === 'weekly').length;
 
   if (loading) {
-    return <p className="text-gray-500 py-8">加载中...</p>;
+    return <LoadingSpinner text="正在扫描市场信号..." />;
   }
 
   if (!data) {
@@ -128,7 +129,7 @@ export default function SignalWatchClient() {
         <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">个股信号监控</h1>
         <p className="text-sm text-gray-500 mt-1">
           扫描 {totalStocks} 只股票，发现 {totalSignals} 个信号
-          {data?.scan_time && ` | 扫描时间: ${data.scan_time}`}
+          {data?.price_fetch_time && ` | 数据时间: ${data.price_fetch_time}`}
         </p>
       </div>
 

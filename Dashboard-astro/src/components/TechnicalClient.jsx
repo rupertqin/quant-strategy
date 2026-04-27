@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import IndexChart from './IndexChart.jsx';
+import LoadingSpinner from './LoadingSpinner.jsx';
 import { formatPercent, getChangeColor, formatPrice } from '../utils/formatters';
 
 const INDEX_CODE_MAP = {
@@ -154,7 +155,7 @@ export default function TechnicalClient({
   }, []);
 
   if (loading) {
-    return <p className="text-gray-500 py-8">加载中...</p>;
+    return <LoadingSpinner text="正在加载技术面数据..." />;
   }
 
   if (!data) {
@@ -228,9 +229,8 @@ export default function TechnicalClient({
         <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">🔥 今日技术面</h1>
         <p className="text-sm text-gray-500 mt-1">
           涨停板扫描 | 板块热度分析 | 市场状态监控
-          {data.market_close_time && ` | 数据时间: ${data.market_close_time}`}
+          {data.date && ` | 数据时间: ${String(data.date).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')}`}
           {data.data_status && ` [${data.data_status}]`}
-          {data.generated_at && ` | 生成时间: ${data.generated_at}`}
         </p>
       </div>
 

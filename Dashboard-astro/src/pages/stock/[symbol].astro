@@ -362,20 +362,18 @@ const priceColor = isUp ? 'text-[#ff4757]' : 'text-[#2ed573]';
 const bgColor = isUp ? 'bg-[rgba(255,71,87,0.1)]' : 'bg-[rgba(46,213,115,0.1)]';
 const changeSymbol = isUp ? '+' : '';
 
-const realtimeTimestamp = formatDateTime(realtimeRow?.timestamp || signalMeta.priceFetchTime || signalMeta.scanTime);
 const isRealtimeData = isRealtimeMerged;
 const dataModeText = isRealtimeData ? '实盘' : '收盘';
+// 实盘数据时间优先用 price_fetch_time（数据获取时间），而非 scan_time 或实时文件生成时间
+const dataFetchTime = formatDateTime(signalMeta.priceFetchTime || signalMeta.scanTime);
 const dataTimeText = isRealtimeData
-  ? (realtimeTimestamp || (latest ? latest.date : '--'))
+  ? (dataFetchTime || (latest ? latest.date : '--'))
   : (latest ? latest.date : '--');
 ---
 
 <MainLayout title={`${symbol} ${stockName} 股票图表`}>
   <div class="mb-6">
     <a href="/signal-watch/" class="text-sm text-primary-600 hover:underline">← 返回信号监控</a>
-    <h1 class="text-[28px] font-bold mt-2 tracking-tight">
-      {symbol} {stockName ? `(${stockName})` : ''}
-    </h1>
   </div>
 
   <!-- 头部信息区 -->
