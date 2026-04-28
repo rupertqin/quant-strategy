@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { RotateCcw, Trash2, Plus } from 'lucide-react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { RotateCcw, Trash2, Plus, Search, ChevronDown } from 'lucide-react';
 import SignalTable from './SignalTable.jsx';
 import LoadingSpinner from './LoadingSpinner.jsx';
 import { useStockPool } from '../hooks/useStockPool.js';
@@ -51,8 +51,11 @@ function normalizeSignalPayload(json) {
 
 export default function PoolWatchClient() {
   const [data] = useState(() => normalizeSignalPayload(SIGNAL_DATA));
-  const [inputSymbol, setInputSymbol] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [addMsg, setAddMsg] = useState('');
+  const dropdownRef = useRef(null);
 
   const { pool, poolSet, add, remove, reset, clear, initialized } = useStockPool();
 
@@ -106,24 +109,64 @@ export default function PoolWatchClient() {
     }));
   }, [poolStocks]);
 
-  const handleAdd = () => {
-    const s = inputSymbol.trim().toUpperCase();
-    if (!s) return;
-    if (!s.includes('.')) {
-      setAddMsg('格式错误，请输入完整代码如 600519.SH');
-      setTimeout(() => setAddMsg(''), 2000);
-      return;
-    }
-    const ok = add(s);
+  const candidates = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const matched = allSignalStocks.filter(s => {
+      if (!q) return true;
+      return (
+        s.symbol.toLowerCase().includes(q) ||
+        (s.name && s.name.toLowerCase().includes(q))
+      );
+    });
+    // 未添加的排在前面，已添加的排在后面
+    return matched
+      .sort((a, b) => {
+        const aAdded = poolSet.has(a.symbol) ? 1 : 0;
+        const bAdded = poolSet.has(b.symbol) ? 1 : 0;
+        return aAdded - bAdded;
+      })
+      .slice(0, 100);
+  }, [allSignalStocks, poolSet, searchQuery]);
+
+  const handleSelect = (symbol) => {
+    if (poolSet.has(symbol)) return;
+    const ok = add(symbol);
     if (ok) {
-      setAddMsg(`已添加 ${s}`);
-      setInputSymbol('');
-      setTimeout(() => setAddMsg(''), 2000);
-    } else {
-      setAddMsg(`${s} 已在股票池中`);
+      setAddMsg(`已添加 ${symbol}`);
+      setSearchQuery('');
+      setShowDropdown(false);
+      setHighlightedIndex(0);
       setTimeout(() => setAddMsg(''), 2000);
     }
   };
+
+  const handleKeyDown = (e) => {
+    if (!showDropdown) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedIndex(i => Math.min(i + 1, candidates.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedIndex(i => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (candidates[highlightedIndex]) {
+        handleSelect(candidates[highlightedIndex].symbol);
+      }
+    } else if (e.key === 'Escape') {
+      setShowDropdown(false);
+    }
+  };
+
+  useEffect(() => {
+    const onClick = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
 
   const handleReset = () => {
     if (confirm('确定要重置为默认股票池吗？当前自定义股票将丢失。')) {
@@ -156,22 +199,76 @@ export default function PoolWatchClient() {
 
       <div className="metric-card mb-6">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="输入代码如 600519.SH"
-              value={inputSymbol}
-              onChange={e => setInputSymbol(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAdd()}
-              className="px-3 py-2 border border-gray-200 rounded-md text-sm w-48 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            />
-            <button
-              onClick={handleAdd}
-              className="inline-flex items-center gap-1 px-3 py-2 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700 transition-colors"
-            >
-              <Plus size={16} />
-              添加
-            </button>
+          <div className="relative" ref={dropdownRef}>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  readOnly
+                  placeholder="搜索股票代码/名称"
+                  value={searchQuery}
+                  onChange={e => {
+                    setSearchQuery(e.target.value);
+                    setShowDropdown(true);
+                    setHighlightedIndex(0);
+                  }}
+                  onFocus={e => {
+                    setTimeout(() => {
+                      e.target.removeAttribute('readOnly');
+                    });
+                    setShowDropdown(true);
+                  }}
+                  onBlur={e => {
+                    e.target.setAttribute('readOnly', true);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  className="pl-8 pr-3 py-2 border border-gray-200 rounded-md text-sm w-56 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+              </div>
+              <button
+                onClick={() => setShowDropdown(v => !v)}
+                className="inline-flex items-center gap-1 px-3 py-2 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700 transition-colors"
+              >
+                <Plus size={16} />
+                添加
+                <ChevronDown size={14} />
+              </button>
+            </div>
+            {showDropdown && (
+              <div className="absolute z-20 mt-1 w-72 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-md shadow-lg">
+                {candidates.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-gray-400">无匹配结果</div>
+                ) : (
+                  candidates.map((s, idx) => {
+                    const isAdded = poolSet.has(s.symbol);
+                    return (
+                      <div
+                        key={s.symbol}
+                        onClick={() => handleSelect(s.symbol)}
+                        className={`px-3 py-2 text-sm flex items-center justify-between ${
+                          isAdded
+                            ? 'cursor-default text-gray-300'
+                            : idx === highlightedIndex
+                              ? 'bg-primary-50 text-primary-700 cursor-pointer'
+                              : 'hover:bg-gray-50 text-gray-700 cursor-pointer'
+                        }`}
+                      >
+                        <span className={`font-medium ${isAdded ? 'text-gray-300' : ''}`}>{s.symbol}</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs truncate max-w-[8rem] ${isAdded ? 'text-gray-300' : 'text-gray-400'}`}>
+                            {s.name}
+                          </span>
+                          {isAdded && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-gray-100 text-gray-400">已添加</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
           {addMsg && (
             <span className="text-xs text-gray-500">{addMsg}</span>
