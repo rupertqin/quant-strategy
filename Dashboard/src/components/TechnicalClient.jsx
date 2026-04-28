@@ -303,13 +303,20 @@ export default function TechnicalClient({
           return (
             <div className="metric-card" key={name}>
               <div className="flex items-center justify-between mb-2">
-                {code ? (
-                  <a href={`/stock/${code}/`} className="font-bold text-gray-800 hover:text-primary-600 transition-colors">
-                    {name}
-                  </a>
-                ) : (
-                  <span className="font-bold text-gray-800">{name}</span>
-                )}
+                <div className="flex items-center gap-2">
+                  {code ? (
+                    <a href={`/stock/${code}/`} className="font-bold text-gray-800 hover:text-primary-600 transition-colors">
+                      {name}
+                    </a>
+                  ) : (
+                    <span className="font-bold text-gray-800">{name}</span>
+                  )}
+                  {idx?.change_pct !== undefined && (
+                    <span className={`text-sm font-medium ${getChangeColor(idx.change_pct)}`}>
+                      {idx.change_pct > 0 ? '+' : ''}{idx.change_pct.toFixed(2)}%
+                    </span>
+                  )}
+                </div>
               </div>
               <IndexChart histData={histData} intradayData={indexIntraday[name] || []} name={name} />
               <div className="mt-2 text-xs text-gray-500 flex gap-3">
