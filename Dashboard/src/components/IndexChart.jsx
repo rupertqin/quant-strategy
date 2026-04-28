@@ -78,8 +78,8 @@ export default function IndexChart({ histData, intradayData, name }) {
       const ma10 = ma(closes, 10);
       const ma20 = ma(closes, 20);
 
-      const addMaSeries = (data, color, title) => {
-        const line = chart.addSeries(LineSeries, { color, lineWidth: 1, title });
+      const addMaSeries = (data, color) => {
+        const line = chart.addSeries(LineSeries, { color, lineWidth: 1, title: '', lastValueVisible: false });
         const lineData = histData.map((row, i) => ({
           time: row.date || row.trade_date,
           value: data[i],
@@ -87,9 +87,9 @@ export default function IndexChart({ histData, intradayData, name }) {
         line.setData(lineData);
       };
 
-      addMaSeries(ma5, '#333', 'MA5');
-      addMaSeries(ma10, '#f59e0b', 'MA10');
-      addMaSeries(ma20, '#8b5cf6', 'MA20');
+      addMaSeries(ma5, '#333');
+      addMaSeries(ma10, '#f59e0b');
+      addMaSeries(ma20, '#8b5cf6');
 
     } else if (mode === 'intraday' && intradayData && intradayData.length > 0) {
       // 分时 - 蓝色折线
