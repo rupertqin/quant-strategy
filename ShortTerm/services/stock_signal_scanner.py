@@ -1729,7 +1729,7 @@ class StockSignalScanner:
             rt_row = realtime_df[realtime_df['symbol'] == symbol]
             if not rt_row.empty:
                 try:
-                    from Dashboard.utils.data_access import merge_realtime_to_history
+                    from lib.utils.data_access import merge_realtime_to_history
                     df_daily = merge_realtime_to_history(df_daily, rt_row.iloc[0], adjust="qfq")
                 except Exception:
                     pass
@@ -2214,7 +2214,7 @@ class StockSignalScanner:
         # 尝试加载当天实时数据（热数据），用于合并到历史K线
         realtime_df = pd.DataFrame()
         try:
-            from Dashboard.utils.data_access import load_realtime_data
+            from lib.utils.data_access import load_realtime_data
             realtime_df = load_realtime_data()
             if not realtime_df.empty:
                 logger.info(f"已加载实时数据: {len(realtime_df)} 只")
@@ -2229,7 +2229,7 @@ class StockSignalScanner:
             if not realtime_df.empty:
                 rt_sh = realtime_df[realtime_df['symbol'] == '000001.SH']
                 if not rt_sh.empty:
-                    from Dashboard.utils.data_access import merge_realtime_to_history
+                    from lib.utils.data_access import merge_realtime_to_history
                     df_sh = merge_realtime_to_history(df_sh, rt_sh.iloc[0], adjust="qfq")
             if not df_sh.empty and len(df_sh) >= 2:
                 self.market_change_pct = (df_sh.iloc[-1]['close'] - df_sh.iloc[-2]['close']) / df_sh.iloc[-2]['close'] * 100

@@ -34,7 +34,7 @@ from DataHub.config import (
     RAW_ETF_ADJUST_FACTOR_DIR,
     INTRADAY_DIR,
 )
-from Dashboard.utils.adjustment import convert_to_qfq, load_adjust_factor
+from lib.utils.adjustment import convert_to_qfq, load_adjust_factor
 
 logger = logging.getLogger(__name__)
 

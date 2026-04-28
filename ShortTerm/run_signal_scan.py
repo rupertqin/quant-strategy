@@ -156,11 +156,11 @@ class StockRealtimeLoader(RealtimeDataLoader):
     """股票实时数据加载器"""
     
     def load(self) -> Tuple[Optional[pd.DataFrame], str]:
-        from Dashboard.utils.data_access import get_latest_realtime_data
+        from lib.utils.data_access import get_latest_realtime_data
         return get_latest_realtime_data(force_fetch=False, full_format=True, asset_type='stock')
     
     def check_exists(self) -> bool:
-        from Dashboard.utils.data_access import get_todays_realtime_file
+        from lib.utils.data_access import get_todays_realtime_file
         return get_todays_realtime_file(asset_type='stock') is not None
 
 
@@ -259,7 +259,7 @@ def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame,
         return []
 
     # 合并实时数据到历史K线（历史数据为前复权，需同步转换实时价格）
-    from Dashboard.utils.data_access import merge_realtime_to_history
+    from lib.utils.data_access import merge_realtime_to_history
     merged_df = merge_realtime_to_history(hist_df, realtime, adjust="qfq")
     
     # 3. 使用完整的检测器进行信号检测（日线）
@@ -455,7 +455,7 @@ def print_scan_summary(result: Dict, asset_config: AssetConfig):
             print(f"    {sig_name}: {count}")
 
     print(f"\n💾 数据已保存: signal_latest.json")
-    print(f"🌐 请在 Dashboard 中查看: streamlit run Dashboard/app.py")
+    print(f"🌐 请构建看板查看: cd Dashboard && npm run build")
 
 
 def scan_single_symbol_intraday(scanner, symbol: str, realtime_df: pd.DataFrame, 

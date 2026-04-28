@@ -1,28 +1,24 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-*.egg-info/
+# Astro
+node_modules/
 dist/
-build/
-.streamlit/secrets.toml
+.astro/
 
-# Data files (从父目录读取)
-data/
-cache/
-signals.db
+# Data (synced from storage/outputs)
+public/data/
+
+# Generated modules (built from DataStorage)
+src/generated/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.production
 
 # OS
 .DS_Store
 Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo

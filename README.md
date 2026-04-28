@@ -59,7 +59,7 @@ quant-strategy/
 | DataHub  | 统一数据管理，akshare + baostock | akshare, baostock    |
 | 长线策略 | 均值-方差优化，计算最优资产配置  | scipy, numpy, pandas |
 | 短线策略 | 双模块：今日技术面 + 股票池监控  | pandas, numpy        |
-| 看板     | 整合展示，信号汇总               | streamlit, plotly    |
+| 看板     | 整合展示，信号汇总               | Astro, React, Tailwind |
 
 ## ShortTerm 短线策略 (双模块)
 
@@ -159,18 +159,6 @@ storage/outputs/shortterm/pool_watch/
 | 🟡MAxx | 较平缓   | ≥0.80 |
 | 🟢MAxx | 平缓     | ≥0.70 |
 
-**模块化设计**:
-指标格式化逻辑封装在 `Dashboard/utils/formatters.py`，供信号列表和个股图表页面共用：
-
-```python
-from utils.formatters import (
-    format_technicals,      # 格式化技术指标
-    format_flat_mas,        # 格式化均线走平
-    render_flat_ma_badge,   # 渲染均线走平徽章
-    detect_flat_mas_for_symbol  # 检测指定股票的走平均线
-)
-```
-
 **运行**:
 
 ```bash
@@ -196,19 +184,17 @@ python ShortTerm/run_signal_scan.py --no-multi-period
 **输出文件**:
 
 ```
-storage/outputs/signals/
-├── stock_signals_all_latest.json      # 最新全部信号
-├── stock_signals_left_latest.json     # 最新左侧信号
-├── stock_signals_right_latest.json    # 最新右侧信号
-└── stock_signals_YYYYMMDD.json        # 历史归档
+DataStorage/outputs/shortterm/signals/
+├── signal_latest.json      # 最新全部信号
+└── signal_YYYYMMDD.json    # 历史归档
 ```
 
-**查看结果**:
+**构建看板**:
 
 ```bash
-# 启动 Dashboard 查看信号列表
-streamlit run Dashboard/app.py
-# 然后导航到 "个股信号监控" 页面
+cd Dashboard
+npm install
+npm run build
 ```
 
 ## DataHub 数据中台
@@ -345,8 +331,8 @@ pip install -r LongTerm/requirements.txt
 # 短线策略
 pip install -r ShortTerm/requirements.txt
 
-# 看板
-pip install -r Dashboard/requirements.txt
+# 看板 (Astro 静态站点)
+cd Dashboard && npm install
 ```
 
 ### 2. 运行策略
@@ -370,11 +356,11 @@ python ShortTerm/run_today_technical.py daily
 python ShortTerm/run_signal_scan.py
 ```
 
-**启动看板**
+**构建看板**
 
 ```bash
 cd Dashboard
-streamlit run app.py
+npm run build
 ```
 
 ### 3. 数据迁移
