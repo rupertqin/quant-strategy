@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { createChart, CrosshairMode } from 'lightweight-charts';
 
 export default function IndexChart({ histData, intradayData, name }) {
   const [mode, setMode] = useState('daily');
@@ -22,13 +23,10 @@ export default function IndexChart({ histData, intradayData, name }) {
     }
     chartContainerRef.current.innerHTML = '';
 
-    const tv = window.LightweightCharts;
-    if (!tv) return;
-
-    const chart = tv.createChart(chartContainerRef.current, {
+    const chart = createChart(chartContainerRef.current, {
       layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#333' },
       grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
-      crosshair: { mode: tv.CrosshairMode.Magnet },
+      crosshair: { mode: CrosshairMode.Magnet },
       rightPriceScale: { borderColor: '#e0e0e0' },
       timeScale: { borderColor: '#e0e0e0', timeVisible: mode === 'intraday' },
       width: chartContainerRef.current.clientWidth,

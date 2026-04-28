@@ -18,7 +18,7 @@ Dashboard/
 │   ├── utils/               # 工具函数
 │   └── styles/              # 全局样式
 ├── scripts/
-│   └── generate-signals-module.js  # 数据模块生成脚本
+│   └── generate-data.js            # 数据模块生成脚本
 ├── public/
 │   └── favicon.svg
 └── astro.config.mjs         # Astro 配置
@@ -49,7 +49,7 @@ npm install
 npm run dev
 ```
 
-> `predev` 会自动运行 `generate-signals-module.js`，从 `DataStorage/` 生成 `src/generated/` 数据模块。
+> `predev` 会自动运行 `generate-data.js`，从 `DataStorage/` 生成 `src/generated/` 数据模块。
 
 ### 3. 构建静态站点
 

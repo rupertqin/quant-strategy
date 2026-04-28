@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createChart, CrosshairMode } from 'lightweight-charts';
 import LoadingSpinner from './LoadingSpinner.jsx';
 
 const MA_COLORS = {
@@ -52,31 +53,7 @@ export default function StockChart({
     }
   }, [initialDaily, initialWeekly, initialMonthly]);
 
-  // 客户端加载数据（兜底）
-  useEffect(() => {
-    if (!symbol) return;
-    if (loadedData.daily.length > 0) return;
 
-    async function fetchData() {
-      setLoading(true);
-      try {
-        const res = await fetch(`/data/prices/${symbol}.json`);
-        if (res.ok) {
-          const allData = await res.json();
-          setLoadedData({
-            daily: allData,
-            weekly: resampleWeekly(allData),
-            monthly: resampleMonthly(allData),
-          });
-        }
-      } catch (e) {
-        console.error('加载股票数据失败:', e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchData();
-  }, [symbol]);
 
   const dataMap = {
     daily: loadedData.daily,
@@ -136,8 +113,7 @@ export default function StockChart({
     }
     containerRef.current.innerHTML = '';
 
-    const tv = window.LightweightCharts;
-    if (!tv) return;
+
 
     // 创建 tooltip DOM
     const tooltipEl = document.createElement('div');
@@ -188,7 +164,7 @@ export default function StockChart({
     }
     tooltipRef.current = tooltipEl;
 
-    const chart = tv.createChart(containerRef.current, {
+    const chart = createChart(containerRef.current, {
       layout: {
         background: { type: 'solid', color: '#ffffff' },
         textColor: '#333333',
@@ -198,7 +174,7 @@ export default function StockChart({
         horzLines: { color: '#f0f0f0' },
       },
       crosshair: {
-        mode: tv.CrosshairMode.Magnet,
+        mode: CrosshairMode.Magnet,
         vertLine: {
           color: '#758696',
           labelBackgroundColor: '#758696',

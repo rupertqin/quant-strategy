@@ -3,10 +3,10 @@
   "type": "module",
   "version": "0.0.1",
   "scripts": {
-    "predev": "node scripts/generate-signals-module.js",
+    "predev": "node scripts/generate-data.js",
     "dev": "astro dev",
     "start": "astro dev",
-    "prebuild": "node scripts/generate-signals-module.js",
+    "prebuild": "node scripts/generate-data.js",
     "build": "astro build",
     "preview": "astro preview",
     "deploy": "bash scripts/deploy.sh"
