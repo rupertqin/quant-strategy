@@ -113,20 +113,27 @@ const currentPath = Astro.url.pathname;
   </footer>
 
   <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      const btn = document.getElementById('mobile-menu-button');
-      const menu = document.getElementById('mobile-menu');
-      if (btn && menu) {
-        btn.addEventListener('click', () => {
+    (function () {
+      // 点击按钮：切换菜单显示
+      document.addEventListener('click', function (e) {
+        const menu = document.getElementById('mobile-menu');
+        if (!menu) return;
+        const btn = e.target.closest('#mobile-menu-button');
+        if (btn) {
+          e.preventDefault();
           menu.classList.toggle('hidden');
-        });
-        document.addEventListener('click', (e) => {
-          if (!menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) {
-            menu.classList.add('hidden');
-          }
-        });
-      }
-    });
+          // 打开时禁止背景滚动
+          document.body.style.overflow = menu.classList.contains('hidden') ? '' : 'hidden';
+          return;
+        }
+
+        // 点击菜单外部：关闭菜单
+        if (!menu.classList.contains('hidden') && !menu.contains(e.target)) {
+          menu.classList.add('hidden');
+          document.body.style.overflow = '';
+        }
+      });
+    })();
   </script>
 </body>
 </html>

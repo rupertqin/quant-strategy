@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, Minus } from 'lucide-react';
 import StockSignals from './StockSignals.jsx';
 
@@ -201,9 +201,8 @@ export default function SignalTable({
               const inPool = poolSet.has(stock.symbol);
 
               return (
-                <>
+                <Fragment key={stock.symbol}>
                   <tr
-                    key={stock.symbol}
                     className="cursor-pointer group"
                     onClick={() => toggleExpand(stock.symbol)}
                   >
@@ -288,7 +287,7 @@ export default function SignalTable({
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
           </tbody>

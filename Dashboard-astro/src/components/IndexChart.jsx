@@ -55,13 +55,15 @@ export default function IndexChart({ histData, intradayData, name }) {
         wickDownColor: '#2ed573',
       });
 
-      const candles = histData.map(row => ({
-        time: row.date || row.trade_date,
-        open: row.open,
-        high: row.high,
-        low: row.low,
-        close: row.close,
-      }));
+      const candles = histData
+        .map(row => ({
+          time: row.date || row.trade_date,
+          open: row.open,
+          high: row.high,
+          low: row.low,
+          close: row.close,
+        }))
+        .filter(c => c.time != null && c.open != null && c.high != null && c.low != null && c.close != null);
       candleSeries.setData(candles);
 
       // 计算均线
@@ -98,10 +100,12 @@ export default function IndexChart({ histData, intradayData, name }) {
         lineWidth: 2,
       });
 
-      const lineData = intradayData.map(row => ({
-        time: row.time || row.trade_time || row.timestamp,
-        value: row.price || row.close,
-      }));
+      const lineData = intradayData
+        .map(row => ({
+          time: row.time || row.trade_time || row.timestamp,
+          value: row.price || row.close,
+        }))
+        .filter(d => d.time != null && d.value != null);
       lineSeries.setData(lineData);
     }
 

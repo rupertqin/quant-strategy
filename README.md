@@ -425,11 +425,14 @@ python DataHub/scripts/migrate_data.py
 ### 常用命令
 
 ```
-# 实时数据服务与短线信号扫描
-python DataHub/services/realtime_service.py && python ShortTerm/run_signal_scan.py && python ShortTerm/run_today_technical.py
+# 实时数据服务与
+python DataHub/services/realtime_service.py
 
 # 每日数据入库
 python -m DataHub.services.sync --today && python -m DataHub.services.sync --daily --symbol etf --workers 1 && python -m DataHub.services.sync --daily --symbol index --workers 1
+
+#短线信号扫描
+python ShortTerm/run_signal_scan.py && python ShortTerm/run_today_technical.py
 ```
 
 ## TODO
