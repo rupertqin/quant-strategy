@@ -279,7 +279,7 @@ export default function StockChart({
     addMaSeries(ma120, MA_COLORS.ma120, 'ma120');
 
     candleSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.18, bottom: 0.55 },
+      scaleMargins: { top: 0.05, bottom: 0.55 },
     });
 
     // ========== 成交量（副图1）==========

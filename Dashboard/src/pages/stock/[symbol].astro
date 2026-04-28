@@ -5,12 +5,12 @@ import StockSignals from '@components/StockSignals.jsx';
 import { DEFAULT_POOL } from '@utils/defaultPool.js';
 import { readParquetAllRows, readParquetLastRows, toDateString, toNumber } from '@utils/parquet';
 import { getStorageDir } from '@utils/env';
+import { detectAssetType } from '@utils/assetType';
 
 const path = await import('path');
 const fs = await import('fs');
 
 const storageDir = getStorageDir();
-const PRICE_DIR = path.resolve(storageDir, 'raw/stocks/price');
 const FACTOR_DIR = path.resolve(storageDir, 'raw/stocks/adjust_factor');
 const REALTIME_STOCK_DIR = path.resolve(storageDir, 'raw/realtime/stock');
 
@@ -277,13 +277,25 @@ export async function getStaticPaths() {
   const fsMod = await import('fs');
   const { getStorageDir } = await import('../../utils/env');
 
-  const priceDir = pathMod.resolve(getStorageDir(), 'raw/stocks/price');
-  const files = fsMod.readdirSync(priceDir).filter(f => f.endsWith('.parquet'));
-  const symbols = files.map(f => f.replace('.parquet', '')).sort();
+  const dirs = [
+    pathMod.resolve(getStorageDir(), 'raw/stocks/price'),
+    pathMod.resolve(getStorageDir(), 'raw/etf/price'),
+    pathMod.resolve(getStorageDir(), 'raw/index/price'),
+  ];
 
+  const symbols = new Set<string>();
+  for (const dir of dirs) {
+    if (!fsMod.existsSync(dir)) continue;
+    const files = fsMod.readdirSync(dir).filter(f => f.endsWith('.parquet'));
+    for (const f of files) {
+      symbols.add(f.replace('.parquet', ''));
+    }
+  }
+
+  const allSymbols = Array.from(symbols).sort();
   const generateAllStocks = import.meta.env.GENERATE_ALL_STOCKS === '1';
-  const poolSymbols = DEFAULT_POOL.filter(s => symbols.includes(s));
-  const targetSymbols = generateAllStocks ? symbols : poolSymbols;
+  const poolSymbols = DEFAULT_POOL.filter(s => allSymbols.includes(s));
+  const targetSymbols = generateAllStocks ? allSymbols : poolSymbols;
 
   console.log(`[stock-chart] Routing ${targetSymbols.length} stock pages (mode=${generateAllStocks ? 'all' : 'pool'})...`);
 
@@ -291,6 +303,9 @@ export async function getStaticPaths() {
 }
 
 const { symbol } = Astro.params;
+
+const assetType = detectAssetType(symbol);
+const PRICE_DIR = path.resolve(storageDir, `raw/${assetType === 'stock' ? 'stocks' : assetType}/price`);
 
 const dailyLimit = parseLimitEnv(import.meta.env.CHART_DAILY_LIMIT);
 const weeklyLimit = parseLimitEnv(import.meta.env.CHART_WEEKLY_LIMIT);

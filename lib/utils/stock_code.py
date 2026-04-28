@@ -607,6 +607,10 @@ def is_index(symbol: str) -> bool:
     if symbol.endswith('.SZ') and code.startswith('399'):
         return True
 
+    # 硬编码规则：000/001/002/003 开头 + .SZ 是深市主板/中小板股票，不是指数
+    if symbol.endswith('.SZ') and any(code.startswith(p) for p in ('000', '001', '002', '003')):
+        return False
+
     # 其他情况必须用带后缀的完整 symbol 查表，避免 000001.SH / 000001.SZ 冲突
     return symbol in _get_index_symbols()
 

@@ -225,6 +225,32 @@ def get_realtime_loader(asset_type: str, project_root: Path) -> Optional[Realtim
     return loader_factory(project_root) if loader_factory else None
 
 
+def _get_latest_history_date() -> Optional[datetime.date]:
+    """获取历史数据最新日期（从3个样本文件验证）"""
+    sample_symbols = ['600519.SH', '510300.SH', '000001.SH']
+    dates = []
+    for symbol in sample_symbols:
+        try:
+            df = load_stock_prices(symbol)
+            if not df.empty and 'trade_date' in df.columns:
+                d = pd.to_datetime(df['trade_date'].iloc[-1]).date()
+                dates.append(d)
+        except Exception:
+            pass
+    return max(dates) if dates else None
+
+
+def _get_realtime_date(df: pd.DataFrame) -> Optional[datetime.date]:
+    """从实时数据DataFrame提取日期"""
+    if df is None or df.empty:
+        return None
+    if 'timestamp' in df.columns:
+        return pd.to_datetime(df['timestamp'].iloc[0]).date()
+    if 'trade_date' in df.columns:
+        return pd.to_datetime(df['trade_date'].iloc[0]).date()
+    return None
+
+
 def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame, 
                           multi_period: bool = True, signal_type: str = "all") -> list:
     """
@@ -877,7 +903,7 @@ def run_all_intraday_scan(args, include_index: bool = True):
         print("\n❌ 未找到当天实时数据文件")
         print("   请先运行: python DataHub/services/realtime_service.py")
         return 1
-    
+
     if stock_df is not None and not stock_df.empty:
         print(f"   ✓ 股票实时数据 ({stock_time}): {len(stock_df)} 只")
     if etf_df is not None and not etf_df.empty:
@@ -1042,13 +1068,38 @@ def main():
     stock_loader = get_realtime_loader('stock', project_root)
     etf_loader = get_realtime_loader('etf', project_root)
     index_loader = get_realtime_loader('index', project_root)
-    
+
     has_stock_data = stock_loader.check_exists() if stock_loader else False
     has_etf_data = etf_loader.check_exists() if etf_loader else False
     has_index_data = index_loader.check_exists() if index_loader else False
-    
+
+    # 决策：历史数据日期 vs 实时数据日期
+    history_date = _get_latest_history_date()
+    realtime_date = None
+    if has_stock_data:
+        df, _ = stock_loader.load()
+        realtime_date = _get_realtime_date(df)
+    elif has_etf_data:
+        df, _ = etf_loader.load()
+        realtime_date = _get_realtime_date(df)
+    elif has_index_data:
+        df, _ = index_loader.load()
+        realtime_date = _get_realtime_date(df)
+
+    use_intraday = False
     if has_stock_data or has_etf_data or has_index_data:
-        # 有实时数据：盘中扫描模式
+        if history_date and realtime_date:
+            if realtime_date >= history_date:
+                use_intraday = True
+                print(f"\n💡 实时数据日期 {realtime_date} >= 历史数据日期 {history_date}，使用盘中扫描模式")
+            else:
+                print(f"\n💡 历史数据日期 {history_date} 比实时数据 {realtime_date} 新，使用历史扫描模式")
+        else:
+            use_intraday = True
+    else:
+        print("\n💡 无实时数据，使用历史扫描模式")
+
+    if use_intraday:
         iteration = 0
         while True:
             iteration += 1
@@ -1056,17 +1107,15 @@ def main():
                 print(f"\n{'='*60}")
                 print(f"🔄 刷新时间: {datetime.now().strftime('%H:%M:%S')}")
                 print('='*60)
-            
+
             run_all_intraday_scan(args, include_index=True)
-            
+
             if args.watch > 0:
                 print(f"\n  ⏱️  {args.watch}秒后刷新...")
                 time.sleep(args.watch)
             else:
                 break
     else:
-        # 无实时数据：历史扫描模式
-        print("\n💡 模式: 历史数据模式（无实时数据）")
         run_combined_scan(args, include_index=True)
 
 

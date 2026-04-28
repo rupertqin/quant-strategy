@@ -1,6 +1,7 @@
 import { useState, useMemo, Fragment } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, Minus } from 'lucide-react';
 import StockSignals from './StockSignals.jsx';
+import { detectAssetType } from '../utils/assetType.ts';
 
 export default function SignalTable({
   stocks,
@@ -13,6 +14,7 @@ export default function SignalTable({
   updateTime,
 }) {
   const [filterType, setFilterType] = useState('all');
+  const [filterAssetType, setFilterAssetType] = useState('all');
   const [filterStage, setFilterStage] = useState('all');
   const [sortBy, setSortBy] = useState('score-desc');
   const [currentPage, setCurrentPage] = useState(0);
@@ -46,6 +48,10 @@ export default function SignalTable({
       });
     }
 
+    if (filterAssetType !== 'all') {
+      result = result.filter(s => detectAssetType(s.symbol) === filterAssetType);
+    }
+
     if (filterStage !== 'all') {
       result = result.filter(s => s.stage === filterStage);
     }
@@ -64,7 +70,7 @@ export default function SignalTable({
     });
 
     return result;
-  }, [stocks, filterType, filterStage, sortBy, searchQuery, healthMap]);
+  }, [stocks, filterType, filterAssetType, filterStage, sortBy, searchQuery, healthMap]);
 
   const totalPages = Math.ceil(filtered.length / pageSize);
   const pageData = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
@@ -152,6 +158,16 @@ export default function SignalTable({
           <option value="right">含右侧信号</option>
         </select>
         <select
+          value={filterAssetType}
+          onChange={e => { setFilterAssetType(e.target.value); setCurrentPage(0); }}
+          className="px-4 py-2 border border-slate-200 rounded-lg text-[14px] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white transition-all text-slate-700 shadow-sm cursor-pointer"
+        >
+          <option value="all">全部资产</option>
+          <option value="stock">股票</option>
+          <option value="etf">ETF</option>
+          <option value="index">指数</option>
+        </select>
+        <select
           value={filterStage}
           onChange={e => { setFilterStage(e.target.value); setCurrentPage(0); }}
           className="px-4 py-2 border border-slate-200 rounded-lg text-[14px] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white transition-all text-slate-700 shadow-sm cursor-pointer"
@@ -184,8 +200,8 @@ export default function SignalTable({
               <th className="text-right">价格</th>
               <th className="text-right">涨跌</th>
               <th className="text-center">信号数</th>
-              <th className="text-center">风险分</th>
               <th className="text-center">信号分</th>
+              <th className="text-center">风险分</th>
               <th>维度拆解</th>
               {showPoolActions && (
                 <th className="text-center w-20">操作</th>
@@ -230,12 +246,12 @@ export default function SignalTable({
                       <span className="inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-md bg-slate-100 text-slate-700 font-bold text-xs">{stock.signal_count || signals.length}</span>
                     </td>
                     <td className="text-center">
+                      <span className="font-bold text-blue-600">{stock.signal_score ?? '-'}</span>
+                    </td>
+                    <td className="text-center">
                       <span className={`font-bold ${getRiskColor(health?.risk_score ?? 0)}`}>
                         {health?.risk_score ?? '-'}
                       </span>
-                    </td>
-                    <td className="text-center">
-                      <span className="font-bold text-blue-600">{stock.signal_score ?? '-'}</span>
                     </td>
                     <td className="text-xs">
                       {stock.dimension_breakdown ? (

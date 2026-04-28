@@ -88,23 +88,7 @@ export default function StockSignals({
 
       {expanded && (
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {/* 左侧：风险详情 */}
-          <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm">
-            <div className="text-[13px] font-bold tracking-wide uppercase text-slate-600 mb-4 flex items-center gap-2">
-              ⚠️ 风险评估
-            </div>
-            {(!merged.riskExplanations || merged.riskExplanations.length === 0) ? (
-              <div className="text-sm text-slate-500 py-4 text-center border border-dashed border-slate-200 rounded-lg">暂无风险评估</div>
-            ) : (
-              <div className="space-y-3">
-                {merged.riskExplanations.slice(0, 5).map((exp, idx) => (
-                  <div key={idx} className="text-sm px-4 py-3 rounded-lg bg-red-50 text-red-700 border border-red-100/50 leading-relaxed">{exp}</div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* 右侧：信号详情 */}
+          {/* 左侧：信号详情 */}
           <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm">
             <div className="text-[13px] font-bold tracking-wide uppercase text-slate-600 mb-4 flex items-center gap-2">
               📋 触发信号 <span className="text-slate-400 font-normal">({merged.signals.length})</span>
@@ -152,6 +136,22 @@ export default function StockSignals({
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+
+          {/* 右侧：风险详情 */}
+          <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm">
+            <div className="text-[13px] font-bold tracking-wide uppercase text-slate-600 mb-4 flex items-center gap-2">
+              ⚠️ 风险评估
+            </div>
+            {(!merged.riskExplanations || merged.riskExplanations.length === 0) ? (
+              <div className="text-sm text-slate-500 py-4 text-center border border-dashed border-slate-200 rounded-lg">暂无风险评估</div>
+            ) : (
+              <div className="space-y-3">
+                {merged.riskExplanations.slice(0, 5).map((exp, idx) => (
+                  <div key={idx} className="text-sm px-4 py-3 rounded-lg bg-red-50 text-red-700 border border-red-100/50 leading-relaxed">{exp}</div>
+                ))}
               </div>
             )}
           </div>
