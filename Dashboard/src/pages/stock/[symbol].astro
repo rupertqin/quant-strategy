@@ -365,13 +365,18 @@ const priceColor = isUp ? 'text-[#ff4757]' : 'text-[#2ed573]';
 const bgColor = isUp ? 'bg-[rgba(255,71,87,0.1)]' : 'bg-[rgba(46,213,115,0.1)]';
 const changeSymbol = isUp ? '+' : '';
 
-const isRealtimeData = isRealtimeMerged;
+// 判断是否为盘中实时数据：融合 realtime 且数据时间在 09:30-15:00 之间
+let isRealtimeData = false;
+let dataTimeText = latest ? latest.date : '--';
+if (isRealtimeMerged && realtimeRow?.timestamp) {
+  const rt = new Date(String(realtimeRow.timestamp));
+  const rtHour = rt.getHours();
+  const rtMinute = rt.getMinutes();
+  const isMarketTime = (rtHour === 9 && rtMinute >= 30) || (rtHour > 9 && rtHour < 15) || (rtHour === 15 && rtMinute === 0);
+  isRealtimeData = isMarketTime;
+  dataTimeText = formatDateTime(realtimeRow.timestamp);
+}
 const dataModeText = isRealtimeData ? '实盘' : '收盘';
-// 实盘数据时间优先用 price_fetch_time（数据获取时间），而非 scan_time 或实时文件生成时间
-const dataFetchTime = formatDateTime(signalMeta.priceFetchTime || signalMeta.scanTime);
-const dataTimeText = isRealtimeData
-  ? (dataFetchTime || (latest ? latest.date : '--'))
-  : (latest ? latest.date : '--');
 ---
 
 <MainLayout title={`${symbol} ${stockName} 股票图表`}>

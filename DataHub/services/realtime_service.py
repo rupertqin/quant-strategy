@@ -309,8 +309,13 @@ class RealtimeDataService:
 
         df_out = df.copy()
 
-        # 统一用 timestamp 列（日期+时间），文件名已含日期，列里保留完整时间戳
-        df_out['timestamp'] = pd.Timestamp.now()
+        # 优先使用数据源返回的时间戳（如 "15:30:02"），拼接当前日期
+        if '时间戳' in df_out.columns:
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            df_out['timestamp'] = pd.to_datetime(today_str + ' ' + df_out['时间戳'].astype(str))
+            df_out.drop(columns=['时间戳'], inplace=True)
+        elif 'timestamp' not in df_out.columns:
+            df_out['timestamp'] = pd.Timestamp.now()
 
         # 删除可能混入的旧列
         for col in ('is_realtime', 'trade_time', 'trade_date'):
