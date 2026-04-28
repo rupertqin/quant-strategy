@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { createChart, CrosshairMode } from 'lightweight-charts';
+import { createChart, CrosshairMode, CandlestickSeries, LineSeries } from 'lightweight-charts';
 
 export default function IndexChart({ histData, intradayData, name }) {
   const [mode, setMode] = useState('daily');
@@ -24,7 +24,7 @@ export default function IndexChart({ histData, intradayData, name }) {
     chartContainerRef.current.innerHTML = '';
 
     const chart = createChart(chartContainerRef.current, {
-      layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#333' },
+      layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#333', attributionLogo: false },
       grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
       crosshair: { mode: CrosshairMode.Magnet },
       rightPriceScale: { borderColor: '#e0e0e0' },
@@ -44,7 +44,7 @@ export default function IndexChart({ histData, intradayData, name }) {
 
     if (mode === 'daily' && histData && histData.length > 0) {
       // 日线 - K线 + 均线
-      const candleSeries = chart.addCandlestickSeries({
+      const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: '#ff4757',
         downColor: '#2ed573',
         borderUpColor: '#ff4757',
@@ -79,7 +79,7 @@ export default function IndexChart({ histData, intradayData, name }) {
       const ma20 = ma(closes, 20);
 
       const addMaSeries = (data, color, title) => {
-        const line = chart.addLineSeries({ color, lineWidth: 1, title });
+        const line = chart.addSeries(LineSeries, { color, lineWidth: 1, title });
         const lineData = histData.map((row, i) => ({
           time: row.date || row.trade_date,
           value: data[i],
@@ -93,7 +93,7 @@ export default function IndexChart({ histData, intradayData, name }) {
 
     } else if (mode === 'intraday' && intradayData && intradayData.length > 0) {
       // 分时 - 蓝色折线
-      const lineSeries = chart.addLineSeries({
+      const lineSeries = chart.addSeries(LineSeries, {
         color: '#2196F3',
         lineWidth: 2,
       });

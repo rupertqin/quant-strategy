@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, CrosshairMode } from 'lightweight-charts';
+import { createChart, CrosshairMode, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import LoadingSpinner from './LoadingSpinner.jsx';
 
 const MA_COLORS = {
@@ -168,6 +168,7 @@ export default function StockChart({
       layout: {
         background: { type: 'solid', color: '#ffffff' },
         textColor: '#333333',
+        attributionLogo: false,
       },
       grid: {
         vertLines: { color: '#f0f0f0' },
@@ -233,7 +234,7 @@ export default function StockChart({
     const { k, d, j } = calculateKDJ(data);
 
     // ========== 主图（K线+均线）==========
-    const candleSeries = chart.addCandlestickSeries({
+    const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#ff4757',
       downColor: '#2ed573',
       borderUpColor: '#ff4757',
@@ -253,7 +254,7 @@ export default function StockChart({
 
     const maSeries = {};
     const addMaSeries = (vals, color, key) => {
-      const s = chart.addLineSeries({
+      const s = chart.addSeries(LineSeries, {
         color,
         lineWidth: 1,
         priceScaleId: 'right',
@@ -282,7 +283,7 @@ export default function StockChart({
     });
 
     // ========== 成交量（副图1）==========
-    const volumeSeries = chart.addHistogramSeries({
+    const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     });
@@ -297,7 +298,7 @@ export default function StockChart({
     });
 
     // ========== MACD（副图2）==========
-    const macdDifSeries = chart.addLineSeries({
+    const macdDifSeries = chart.addSeries(LineSeries, {
       color: '#0066cc', lineWidth: 1,
       priceScaleId: 'macd',
       lastValueVisible: false,
@@ -309,7 +310,7 @@ export default function StockChart({
       value: dif[i],
     })).filter(d => d.value !== null && !isNaN(d.value)));
 
-    const macdDeaSeries = chart.addLineSeries({
+    const macdDeaSeries = chart.addSeries(LineSeries, {
       color: '#ff9900', lineWidth: 1,
       priceScaleId: 'macd',
       lastValueVisible: false,
@@ -321,7 +322,7 @@ export default function StockChart({
       value: dea[i],
     })).filter(d => d.value !== null && !isNaN(d.value)));
 
-    const macdBarSeries = chart.addHistogramSeries({
+    const macdBarSeries = chart.addSeries(HistogramSeries, {
       priceScaleId: 'macd',
       lastValueVisible: false,
     });
@@ -336,7 +337,7 @@ export default function StockChart({
     });
 
     // ========== KDJ（副图3）==========
-    const kdjKSeries = chart.addLineSeries({
+    const kdjKSeries = chart.addSeries(LineSeries, {
       color: '#ff6b6b', lineWidth: 1,
       priceScaleId: 'kdj',
       lastValueVisible: false,
@@ -348,7 +349,7 @@ export default function StockChart({
       value: k[i],
     })).filter(d => d.value !== null && !isNaN(d.value)));
 
-    const kdjDSeries = chart.addLineSeries({
+    const kdjDSeries = chart.addSeries(LineSeries, {
       color: '#4ecdc4', lineWidth: 1,
       priceScaleId: 'kdj',
       lastValueVisible: false,
@@ -360,7 +361,7 @@ export default function StockChart({
       value: d[i],
     })).filter(d => d.value !== null && !isNaN(d.value)));
 
-    const kdjJSeries = chart.addLineSeries({
+    const kdjJSeries = chart.addSeries(LineSeries, {
       color: '#45b7d1', lineWidth: 1,
       priceScaleId: 'kdj',
       lastValueVisible: false,
