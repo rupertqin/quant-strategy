@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import IndexChart from './IndexChart.jsx';
 import LoadingSpinner from './LoadingSpinner.jsx';
 import { formatPercent, getChangeColor, formatPrice } from '../utils/formatters';
@@ -34,16 +34,6 @@ const REGIME_MAP = {
 };
 
 const TREND_EMOJI = { BULL: '🟢', BEAR: '🔴', SIDEWAYS: '🟡', UNKNOWN: '⚪' };
-
-function safeJsonParse(text) {
-  return JSON.parse(
-    text
-      .replace(/:\s*NaN/g, ': null')
-      .replace(/:\s*-NaN/g, ': null')
-      .replace(/:\s*Infinity/g, ': null')
-      .replace(/:\s*-Infinity/g, ': null')
-  );
-}
 
 function toDateString(row) {
   return String(row?.date || row?.trade_date || row?.time || '');
@@ -129,34 +119,13 @@ function buildPeriodHistory(indexHistoryDaily, dailyLimit, weeklyLimit, monthlyL
 }
 
 export default function TechnicalClient({
+  initialData,
   dailyLimit = null,
   weeklyLimit = null,
   monthlyLimit = null,
 }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data] = useState(initialData);
   const [activePeriod, setActivePeriod] = useState('daily');
-
-  useEffect(() => {
-    fetch('/data/technical/latest.json')
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then(text => safeJsonParse(text))
-      .then(json => {
-        setData(json);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('加载技术面数据失败:', err);
-        setLoading(false);
-      });
-  }, []);
-
-  if (loading) {
-    return <LoadingSpinner text="正在加载技术面数据..." />;
-  }
 
   if (!data) {
     return <p className="text-gray-500 py-8">暂无技术面数据</p>;
@@ -203,12 +172,10 @@ export default function TechnicalClient({
     return 'text-red-600';
   };
 
-  // 过滤掉深证成指
   const filteredIndexPerf = Object.fromEntries(
     Object.entries(indexPerformance).filter(([k]) => k !== '深证成指' && k !== 'inter_index_validation')
   );
 
-  // 找主要指数（优先沪深300）
   let mainIndex = null;
   let mainIndexName = '';
   for (const name of ['沪深300', '上证指数']) {
@@ -224,7 +191,6 @@ export default function TechnicalClient({
 
   return (
     <div>
-      {/* 标题 */}
       <div className="mb-8">
         <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">🔥 今日技术面</h1>
         <p className="text-sm text-gray-500 mt-1">
@@ -234,7 +200,6 @@ export default function TechnicalClient({
         </p>
       </div>
 
-      {/* 市场状态卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <div className="metric-card text-center">
           <p className="text-xs text-gray-500">市场状态</p>
@@ -262,7 +227,6 @@ export default function TechnicalClient({
         </div>
       </div>
 
-      {/* 宏观指标 */}
       <h2 className="text-lg font-bold mb-3 text-gray-800">🌍 宏观指标</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {MACRO_ITEMS.map(item => {
@@ -285,7 +249,6 @@ export default function TechnicalClient({
         })}
       </div>
 
-      {/* 技术面分析 */}
       <h2 className="text-lg font-bold mb-3 text-gray-800">📊 技术面分析</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <div className="metric-card text-center">
@@ -313,10 +276,8 @@ export default function TechnicalClient({
         </div>
       </div>
 
-      {/* 指数走势 & 技术分析 */}
       <h2 className="text-lg font-bold mb-3 text-gray-800">📈 指数走势 & 技术分析</h2>
 
-      {/* 周期 Tab */}
       <div className="flex gap-2 mb-4">
         {PERIODS.map(p => (
           <button
@@ -329,7 +290,6 @@ export default function TechnicalClient({
         ))}
       </div>
 
-      {/* 指数图表 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         {Object.entries(periodHistory[activePeriod] || {}).map(([name, histData]) => {
           if (name === '深证成指') return null;
@@ -365,7 +325,6 @@ export default function TechnicalClient({
         })}
       </div>
 
-      {/* 道氏理论概览 */}
       <h3 className="text-md font-bold mb-2 text-gray-800">📊 道氏理论概览 ({PERIODS.find(p => p.key === activePeriod)?.label})</h3>
       <div className="metric-card overflow-x-auto mb-6">
         <table className="data-table">
@@ -400,7 +359,6 @@ export default function TechnicalClient({
         </table>
       </div>
 
-      {/* 波浪理论概览 */}
       <h3 className="text-md font-bold mb-2 text-gray-800">🌊 波浪理论概览 ({PERIODS.find(p => p.key === activePeriod)?.label})</h3>
       <div className="metric-card overflow-x-auto mb-6">
         <table className="data-table">
@@ -432,7 +390,6 @@ export default function TechnicalClient({
         </table>
       </div>
 
-      {/* 主要指数详细分析 */}
       {mainIndex && (
         <div className="metric-card mb-6">
           <h3 className="text-md font-bold mb-3 text-gray-800">{mainIndexName} {PERIODS.find(p => p.key === activePeriod)?.label} 详细分析</h3>
@@ -450,7 +407,6 @@ export default function TechnicalClient({
 
             return (
               <div className="space-y-4">
-                {/* 道氏理论 */}
                 <div>
                   <p className="text-sm font-semibold text-gray-700 mb-1">道氏理论</p>
                   <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
@@ -471,7 +427,6 @@ export default function TechnicalClient({
                   </p>
                 </div>
 
-                {/* 波浪理论 */}
                 {elliott && elliott.current_phase && (
                   <div>
                     <p className="text-sm font-semibold text-gray-700 mb-1">波浪理论</p>
@@ -505,7 +460,6 @@ export default function TechnicalClient({
         </div>
       )}
 
-      {/* 跨指数验证 */}
       {interValidation && activePeriod === 'daily' && (
         <div className="metric-card mb-6">
           <h3 className="text-md font-bold mb-2 text-gray-800">指数验证</h3>
@@ -522,7 +476,6 @@ export default function TechnicalClient({
         </div>
       )}
 
-      {/* 热点板块 */}
       <h2 className="text-lg font-bold mb-3 text-gray-800">🔥 热点板块</h2>
       {hotSectors.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
@@ -548,7 +501,6 @@ export default function TechnicalClient({
         <p className="text-gray-500 mb-8">暂无热点板块数据</p>
       )}
 
-      {/* 涨停信号列表 */}
       <h2 className="text-lg font-bold mb-3 text-gray-800">📋 涨停信号列表</h2>
       {signals.length > 0 ? (
         <div className="metric-card overflow-x-auto">

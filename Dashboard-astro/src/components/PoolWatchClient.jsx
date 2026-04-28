@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { RotateCcw, Trash2, Plus } from 'lucide-react';
 import SignalTable from './SignalTable.jsx';
 import LoadingSpinner from './LoadingSpinner.jsx';
 import { useStockPool } from '../hooks/useStockPool.js';
+import SIGNAL_DATA from '../generated/signals.json';
 
 function normalizeSignalPayload(json) {
   if (Array.isArray(json?.stocks)) return json;
@@ -49,54 +50,25 @@ function normalizeSignalPayload(json) {
 }
 
 export default function PoolWatchClient() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data] = useState(() => normalizeSignalPayload(SIGNAL_DATA));
   const [inputSymbol, setInputSymbol] = useState('');
   const [addMsg, setAddMsg] = useState('');
 
   const { pool, poolSet, add, remove, reset, clear, initialized } = useStockPool();
 
-  // 加载信号数据（股票池需要从全量信号中过滤）
-  useEffect(() => {
-    fetch('/data/signals/signal_latest.json')
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then(text => {
-        const cleaned = text
-          .replace(/: NaN/g, ': null')
-          .replace(/: -NaN/g, ': null')
-          .replace(/: Infinity/g, ': null')
-          .replace(/: -Infinity/g, ': null');
-        return JSON.parse(cleaned);
-      })
-      .then(json => {
-        setData(normalizeSignalPayload(json));
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('加载信号数据失败:', err);
-        setLoading(false);
-      });
-  }, []);
-
   const allSignalStocks = data?.stocks || [];
 
-  // 建立全量信号映射表
   const signalStockMap = useMemo(() => {
     const map = {};
     allSignalStocks.forEach(s => { map[s.symbol] = s; });
     return map;
   }, [allSignalStocks]);
 
-  // 构建股票池对应的股票数据
   const poolStocks = useMemo(() => {
     if (!initialized) return [];
     return pool.map(symbol => {
       const s = signalStockMap[symbol];
       if (s) return s;
-      // 信号数据中找不到，返回占位对象
       return {
         symbol,
         name: '',
@@ -112,7 +84,6 @@ export default function PoolWatchClient() {
     });
   }, [pool, signalStockMap, initialized]);
 
-  // 过滤无数据的占位股票（但保留用户在池中手动添加的，只是展示时提示）
   const validStocks = useMemo(() => poolStocks.filter(s => s.close_price != null), [poolStocks]);
   const missingStocks = useMemo(() => poolStocks.filter(s => s.close_price == null), [poolStocks]);
 
@@ -140,6 +111,7 @@ export default function PoolWatchClient() {
     if (!s) return;
     if (!s.includes('.')) {
       setAddMsg('格式错误，请输入完整代码如 600519.SH');
+      setTimeout(() => setAddMsg(''), 2000);
       return;
     }
     const ok = add(s);
@@ -165,11 +137,10 @@ export default function PoolWatchClient() {
     }
   };
 
-  // 统计池内有效股票的信号数
   const poolBuyCount = validStocks.filter(s => s.has_buy_signal).length;
   const poolRiskCount = validStocks.filter(s => (s.risk_score ?? 0) >= 60 && !s.has_buy_signal).length;
 
-  if (loading || !initialized) {
+  if (!initialized) {
     return <LoadingSpinner text="正在加载股票池数据..." />;
   }
 
@@ -183,7 +154,6 @@ export default function PoolWatchClient() {
         </p>
       </div>
 
-      {/* 管理工具栏 */}
       <div className="metric-card mb-6">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
@@ -224,7 +194,6 @@ export default function PoolWatchClient() {
         </div>
       </div>
 
-      {/* 统计卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="metric-card text-center">
           <p className="text-3xl font-bold text-primary-600">{pool.length}</p>
@@ -244,7 +213,6 @@ export default function PoolWatchClient() {
         </div>
       </div>
 
-      {/* 无数据提示 */}
       {missingStocks.length > 0 && (
         <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
           <p className="text-xs text-yellow-700">
@@ -253,7 +221,6 @@ export default function PoolWatchClient() {
         </div>
       )}
 
-      {/* 股票明细 */}
       <div className="metric-card">
         <h2 className="text-lg font-bold mb-4 text-gray-800">股票明细</h2>
         {validStocks.length === 0 && pool.length > 0 ? (

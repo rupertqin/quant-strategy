@@ -1,9 +1,27 @@
 /**
- * 数据加载工具 - 从预生成的 JSON 文件读取数据
- * 纯静态站点，所有数据在构建时或运行前同步到 public/data/
+ * 数据加载工具 - 构建时从文件系统读取数据
+ * 所有数据在 Astro 构建时读取，生成纯静态 HTML
  */
 
-const DATA_BASE = '/data';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { getStorageDir } from './env';
+
+const STORAGE_DIR = resolve(getStorageDir(), 'outputs');
+
+function loadJson<T>(...pathParts: string[]): T | null {
+  try {
+    const fullPath = resolve(STORAGE_DIR, ...pathParts);
+    const text = readFileSync(fullPath, 'utf-8')
+      .replace(/:\s*NaN/g, ': null')
+      .replace(/:\s*-NaN/g, ': null')
+      .replace(/:\s*Infinity/g, ': null')
+      .replace(/:\s*-Infinity/g, ': null');
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
 export interface SignalData {
   status: string;
@@ -140,76 +158,42 @@ export interface PoolStock {
   score: number;
 }
 
-// ===== 数据加载函数 =====
+// ===== 数据加载函数（构建时执行） =====
 
-export async function loadSignalsData(): Promise<SignalData | null> {
-  try {
-    const res = await fetch(`${DATA_BASE}/signals/signal_latest.json`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
+export function loadSignalsData(symbols?: string[]): SignalData | null {
+  const data = loadJson<any>('shortterm', 'signals', 'signal_latest.json');
+  if (!data) return null;
+
+  if (symbols?.length && Array.isArray(data.signals)) {
+    const set = new Set(symbols);
+    const filtered = data.signals.filter((s: any) => set.has(s?.symbol));
+    return {
+      ...data,
+      signals: filtered,
+      total_signals: filtered.length,
+      total_stocks: new Set(filtered.map((s: any) => s?.symbol)).size,
+    };
   }
+
+  return data;
 }
 
-export async function loadTechnicalData(): Promise<TechnicalData | null> {
-  try {
-    const res = await fetch(`${DATA_BASE}/technical/latest.json`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    data._generated_at = data.price_fetch_time || data.date;
-    return data;
-  } catch {
-    return null;
+export function loadTechnicalData(): TechnicalData | null {
+  const data = loadJson<TechnicalData>('shortterm', 'technical_overview', 'latest.json');
+  if (data) {
+    data._generated_at = (data as any).price_fetch_time || data.date;
   }
+  return data;
 }
 
-export async function loadPoolWatchData(): Promise<PoolWatchData | null> {
-  try {
-    const res = await fetch(`${DATA_BASE}/pool-watch/latest.json`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
+export function loadPoolWatchData(): PoolWatchData | null {
+  return loadJson<PoolWatchData>('shortterm', 'pool_watch', 'latest.json');
 }
 
-export async function loadLongTermWeights(): Promise<any[] | null> {
-  try {
-    const res = await fetch(`${DATA_BASE}/longterm/weights.json`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
+export function loadLongTermWeights(): any[] | null {
+  return loadJson<any[]>('longterm', 'weights', 'latest.json');
 }
 
-export async function loadStockHistory(symbol: string): Promise<any[] | null> {
-  try {
-    const res = await fetch(`${DATA_BASE}/prices/${symbol}.json`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-export async function loadIndexHistory(symbol: string): Promise<any[] | null> {
-  try {
-    const res = await fetch(`${DATA_BASE}/index/${symbol}.json`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-export async function loadStockNames(): Promise<Record<string, string>> {
-  try {
-    const res = await fetch(`${DATA_BASE}/stock_names.json`);
-    if (!res.ok) return {};
-    return await res.json();
-  } catch {
-    return {};
-  }
+export function loadStockNames(): Record<string, string> {
+  return loadJson<Record<string, string>>('shortterm', 'stock_names.json') || {};
 }

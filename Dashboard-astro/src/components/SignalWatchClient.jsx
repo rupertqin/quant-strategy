@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import SignalTable from './SignalTable.jsx';
 import LoadingSpinner from './LoadingSpinner.jsx';
 import { useStockPool } from '../hooks/useStockPool.js';
+import SIGNAL_DATA from '../generated/signals.json';
 
 function normalizeSignalPayload(json) {
   if (Array.isArray(json?.stocks)) return json;
@@ -48,38 +49,8 @@ function normalizeSignalPayload(json) {
 }
 
 export default function SignalWatchClient() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
+  const [data] = useState(() => normalizeSignalPayload(SIGNAL_DATA));
   const { poolSet, add, remove } = useStockPool();
-
-  useEffect(() => {
-    fetch('/data/signals/signal_latest.json')
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then(text => {
-        // Python JSON may contain NaN/Infinity which JS JSON.parse doesn't support
-        const cleaned = text
-          .replace(/: NaN/g, ': null')
-          .replace(/: -NaN/g, ': null')
-          .replace(/: Infinity/g, ': null')
-          .replace(/: -Infinity/g, ': null');
-        return JSON.parse(cleaned);
-      })
-      .then(json => {
-        const normalized = normalizeSignalPayload(json);
-        console.log('[SignalWatch] loaded data, stocks count:', normalized?.stocks?.length);
-        console.log('[SignalWatch] total_signals:', normalized?.total_signals);
-        setData(normalized);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('加载信号数据失败:', err);
-        setLoading(false);
-      });
-  }, []);
 
   const stocks = data?.stocks || [];
   const signals = useMemo(() => stocks.flatMap(s => s.signals || []), [stocks]);
@@ -111,16 +82,8 @@ export default function SignalWatchClient() {
   const dailyCount = signals.filter(s => s.period === 'daily').length;
   const weeklyCount = signals.filter(s => s.period === 'weekly').length;
 
-  if (loading) {
-    return <LoadingSpinner text="正在扫描市场信号..." />;
-  }
-
-  if (!data) {
-    return <p className="text-gray-500 py-8">暂无信号数据 (data is null)</p>;
-  }
-
-  if (stocks.length === 0) {
-    return <p className="text-gray-500 py-8">数据已加载但 stocks 为空</p>;
+  if (!data || stocks.length === 0) {
+    return <p className="text-gray-500 py-8">暂无信号数据</p>;
   }
 
   return (

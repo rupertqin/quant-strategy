@@ -30,26 +30,6 @@ export function extractExchange(symbol: string): string {
   return parts[1] || '';
 }
 
-// 名称缓存
-let nameCache: Record<string, string> = {};
-
-export async function getStockName(symbol: string): Promise<string> {
-  if (!symbol) return '';
-  if (nameCache[symbol]) return nameCache[symbol];
-
-  try {
-    const res = await fetch('/data/stock_names.json');
-    if (res.ok) {
-      const names = await res.json();
-      nameCache = names;
-      return names[symbol] || '';
-    }
-  } catch {
-    // ignore
-  }
-  return '';
-}
-
-export function getStockNameSync(symbol: string, names: Record<string, string>): string {
+export function getStockName(symbol: string, names: Record<string, string>): string {
   return names[symbol] || '';
 }

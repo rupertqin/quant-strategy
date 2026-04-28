@@ -6,6 +6,9 @@ dist/
 # Data (synced from storage/outputs)
 public/data/
 
+# Generated modules (built from DataStorage)
+src/generated/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

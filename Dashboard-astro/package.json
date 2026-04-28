@@ -1,16 +1,15 @@
 {
-  "name": "Dashboard-astro",
+  "name": "invest-dashboard",
   "type": "module",
   "version": "0.0.1",
   "scripts": {
-    "predev": "pnpm sync:data",
+    "predev": "node scripts/generate-signals-module.js",
     "dev": "astro dev",
     "start": "astro dev",
-    "prebuild": "pnpm sync:data",
+    "prebuild": "node scripts/generate-signals-module.js",
     "build": "astro build",
     "preview": "astro preview",
-    "sync:data": "node scripts/sync-data.js",
-    "deploy": "sh -c 'set -a; . ./.env; set +a; rsync -avz ./dist/ ${DEPLOY_USER}@${DEPLOY_IP}:${DEPLOY_PATH}'"
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "@astrojs/react": "^5.0.4",

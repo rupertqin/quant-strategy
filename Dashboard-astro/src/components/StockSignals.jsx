@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 function getScoreStyle(score) {
   if (score >= 70) return { bg: '#27ae60', text: 'white' };
@@ -32,51 +32,15 @@ export default function StockSignals({
   forceExpanded = false,
 }) {
   const [expanded, setExpanded] = useState(forceExpanded);
-  const [live, setLive] = useState(null);
-
-  useEffect(() => {
-    if (!symbol) return;
-
-    fetch('/data/signals/signal_latest.json')
-      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((text) => text
-        .replace(/: NaN/g, ': null')
-        .replace(/: -NaN/g, ': null')
-        .replace(/: Infinity/g, ': null')
-        .replace(/: -Infinity/g, ': null'))
-      .then((text) => JSON.parse(text))
-      .then((json) => {
-        const list = Array.isArray(json?.signals) ? json.signals : [];
-        const stockSignals = list.filter((x) => x?.symbol === symbol);
-        const liveScore = stockSignals.reduce((m, x) => Math.max(m, Number(x?.score || 0)), 0);
-        const liveCount = stockSignals.length;
-        const hasBuy = stockSignals.some((x) => x?.signal_type === 'right');
-        const liveLabel = liveScore >= 95 ? '极品'
-          : liveScore >= 90 ? '优秀'
-          : liveScore >= 80 ? '良好'
-          : liveScore >= 65 ? '一般'
-          : '观察';
-
-        setLive({
-          signals: stockSignals,
-          signalScore: liveScore,
-          signalCount: liveCount,
-          scoreLabel: liveLabel,
-          hasBuySignal: hasBuy,
-        });
-      })
-      .catch(() => {
-      });
-  }, [symbol]);
 
   const merged = useMemo(() => ({
-    signals: live?.signals ?? signals ?? [],
-    signalScore: live?.signalScore ?? (signalScore || 0),
-    signalCount: live?.signalCount ?? (signalCount !== undefined ? signalCount : (signals?.length || 0)),
-    scoreLabel: live?.scoreLabel ?? (scoreLabel || ''),
+    signals: signals ?? [],
+    signalScore: signalScore || 0,
+    signalCount: signalCount !== undefined ? signalCount : (signals?.length || 0),
+    scoreLabel: scoreLabel || '',
     riskScore: riskScore || 0,
     riskExplanations: riskExplanations || [],
-  }), [live, signals, signalScore, signalCount, scoreLabel, riskScore, riskExplanations]);
+  }), [signals, signalScore, signalCount, scoreLabel, riskScore, riskExplanations]);
 
   const hasSignals = merged.signals && merged.signals.length > 0;
 

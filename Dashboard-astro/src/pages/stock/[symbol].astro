@@ -4,13 +4,15 @@ import StockChart from '@components/StockChart.jsx';
 import StockSignals from '@components/StockSignals.jsx';
 import { DEFAULT_POOL } from '@utils/defaultPool.js';
 import { readParquetAllRows, readParquetLastRows, toDateString, toNumber } from '@utils/parquet';
+import { getStorageDir } from '@utils/env';
 
 const path = await import('path');
 const fs = await import('fs');
 
-const PRICE_DIR = path.resolve('../DataStorage/raw/stocks/price');
-const FACTOR_DIR = path.resolve('../DataStorage/raw/stocks/adjust_factor');
-const REALTIME_STOCK_DIR = path.resolve('../DataStorage/raw/realtime/stock');
+const storageDir = getStorageDir();
+const PRICE_DIR = path.resolve(storageDir, 'raw/stocks/price');
+const FACTOR_DIR = path.resolve(storageDir, 'raw/stocks/adjust_factor');
+const REALTIME_STOCK_DIR = path.resolve(storageDir, 'raw/realtime/stock');
 
 function parseLimitEnv(value: unknown): number | null {
   if (value === undefined || value === null) return null;
@@ -201,7 +203,7 @@ function getSignalMaps() {
   let signalMeta = { scanTime: '', priceFetchTime: '' };
 
   try {
-    const namesPath = path.resolve('./public/data/stock_names.json');
+    const namesPath = path.resolve('./src/generated/stock_names.json');
     if (fs.existsSync(namesPath)) {
       const allNames = JSON.parse(fs.readFileSync(namesPath, 'utf-8'));
       if (allNames && typeof allNames === 'object') {
@@ -209,7 +211,7 @@ function getSignalMaps() {
       }
     }
 
-    const signalPath = path.resolve('./public/data/signals/signal_latest.json');
+    const signalPath = path.resolve('./src/generated/signals.json');
     if (fs.existsSync(signalPath)) {
       const signalData = JSON.parse(fs.readFileSync(signalPath, 'utf-8'));
       signalMeta = {
@@ -262,7 +264,7 @@ function getSignalMaps() {
       }
     }
   } catch (e) {
-    console.warn('Failed to load signal_latest.json:', (e as Error).message);
+    console.warn('Failed to load signals.json:', (e as Error).message);
   }
 
   signalCache = { allSignals, stockNames, signalMeta };
@@ -273,8 +275,9 @@ export async function getStaticPaths() {
   // Astro 的 getStaticPaths 运行在隔离作用域：这里显式声明依赖，避免引用外层变量
   const pathMod = await import('path');
   const fsMod = await import('fs');
+  const { getStorageDir } = await import('../../utils/env');
 
-  const priceDir = pathMod.resolve('../DataStorage/raw/stocks/price');
+  const priceDir = pathMod.resolve(getStorageDir(), 'raw/stocks/price');
   const files = fsMod.readdirSync(priceDir).filter(f => f.endsWith('.parquet'));
   const symbols = files.map(f => f.replace('.parquet', '')).sort();
 

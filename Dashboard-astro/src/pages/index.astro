@@ -2,9 +2,9 @@
 import MainLayout from '@layouts/MainLayout.astro';
 import { loadTechnicalData, loadPoolWatchData, loadLongTermWeights } from '@utils/dataLoader';
 
-const techData = await loadTechnicalData();
-const poolData = await loadPoolWatchData();
-const weights = await loadLongTermWeights();
+const techData = loadTechnicalData();
+const poolData = loadPoolWatchData();
+const weights = loadLongTermWeights();
 
 const regime = techData?.market_type || 'NEUTRAL';
 const regimeColor = { AGGRESSIVE: 'text-green-600', DEFENSIVE: 'text-red-600', NEUTRAL: 'text-yellow-600' };
