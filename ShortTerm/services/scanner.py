@@ -887,7 +887,8 @@ class LimitUpScanner:
         """
         获取指数当日分时数据
 
-        优先从 DataHub 本地存储读取，如果不存在则实时获取
+        优先从 DataHub realtime 本地存储读取（列名为 timestamp），
+        如果不存在则实时获取
 
         Args:
             code: 指数代码，如 '000001.SH'
@@ -897,26 +898,40 @@ class LimitUpScanner:
             分时数据列表，每个元素包含 time 和 price
         """
         from datetime import datetime
+        from pathlib import Path
 
-        # 1. 优先从 DataHub 本地存储读取
+        # 1. 优先从 DataHub realtime 本地存储读取
         try:
-            from DataHub.core.data_reader import load_index_intraday
-            df = load_index_intraday(code)
-            if df is not None and not df.empty:
-                # 转换为列表格式
-                records = []
-                for _, row in df.iterrows():
-                    records.append({
-                        'time': str(row['time']),
-                        'price': float(row['close']),
-                        'open': float(row['open']) if 'open' in row else float(row['close']),
-                        'high': float(row['high']) if 'high' in row else float(row['close']),
-                        'low': float(row['low']) if 'low' in row else float(row['close']),
-                        'volume': int(row['volume']) if 'volume' in row and pd.notna(row['volume']) else 0
-                    })
-                return records
+            from DataHub.config import get_storage_path
+            realtime_dir = get_storage_path("raw", "realtime", "index")
+            today_str = datetime.now().strftime('%Y%m%d')
+            parquet_file = realtime_dir / f"{today_str}.parquet"
+
+            if parquet_file.exists():
+                df = pd.read_parquet(parquet_file)
+                if df is not None and not df.empty and 'symbol' in df.columns:
+                    df = df[df['symbol'] == code].copy()
+                    if not df.empty:
+                        # 按时间排序
+                        df = df.sort_values('timestamp')
+                        records = []
+                        for _, row in df.iterrows():
+                            ts = row['timestamp']
+                            if hasattr(ts, 'strftime'):
+                                time_str = ts.strftime('%Y-%m-%d %H:%M')
+                            else:
+                                time_str = str(ts)[:16]
+                            records.append({
+                                'time': time_str,
+                                'price': float(row['close']),
+                                'open': float(row['open']) if 'open' in row and pd.notna(row['open']) else float(row['close']),
+                                'high': float(row['high']) if 'high' in row and pd.notna(row['high']) else float(row['close']),
+                                'low': float(row['low']) if 'low' in row and pd.notna(row['low']) else float(row['close']),
+                                'volume': int(row['volume']) if 'volume' in row and pd.notna(row['volume']) else 0
+                            })
+                        return records
         except Exception as e:
-            logger.debug(f"从 DataHub 读取 {name} 分时数据失败: {e}")
+            logger.debug(f"从 DataHub realtime 读取 {name} 分时数据失败: {e}")
 
         # 2. 本地没有，实时获取
         try:
@@ -1406,6 +1421,34 @@ class LimitUpScanner:
             except Exception as e:
                 print(f"  ✗ {name}: 获取失败 - {e}")
 
+        # 7. 获取指数当日分时数据（用于盘中实时图表）
+        print("\n📈 获取指数分时数据...")
+        index_intraday = {}
+        price_fetch_time = None
+        for code, name in self.CORE_INDICES.items():
+            try:
+                records = self._get_index_intraday(code, name)
+                if records and len(records) > 0:
+                    index_intraday[name] = records
+                    print(f"  ✓ {name}: {len(records)} 条分时")
+                else:
+                    print(f"  ✗ {name}: 无分时数据")
+            except Exception as e:
+                print(f"  ✗ {name}: 获取分时失败 - {e}")
+
+        # 判断是否为盘中实时模式：当日扫描且有分时数据
+        intraday_mode = is_today and bool(index_intraday)
+        if not price_fetch_time:
+            # 从分时数据最后一条记录提取时间
+            for name, records in index_intraday.items():
+                if records and len(records) > 0:
+                    last_time = records[-1].get('time')
+                    if last_time and isinstance(last_time, str):
+                        price_fetch_time = last_time
+                        break
+        if not price_fetch_time:
+            price_fetch_time = datetime.now().strftime('%Y-%m-%d %H:%M')
+
         # 转换 numpy 类型为 Python 原生类型（用于JSON序列化）
         def convert_to_native(obj):
             if hasattr(obj, 'item'):  # numpy types
@@ -1500,6 +1543,9 @@ class LimitUpScanner:
             'index_history': index_history_daily,
             'index_history_weekly': index_history_weekly,
             'index_history_monthly': index_history_monthly,
+            'index_intraday': index_intraday,
+            'price_fetch_time': price_fetch_time,
+            'intraday_mode': intraday_mode,
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'market_close_time': (close_time := get_data_close_time())[0],
             'data_status': close_time[1]

@@ -99,10 +99,17 @@ export default function IndexChart({ histData, intradayData, name }) {
       });
 
       const lineData = intradayData
-        .map(row => ({
-          time: row.time || row.trade_time || row.timestamp,
-          value: row.price || row.close,
-        }))
+        .map(row => {
+          let t = row.time || row.trade_time || row.timestamp;
+          // lightweight-charts 分时时间格式要求 YYYY-MM-DD HH:MM，去掉秒
+          if (typeof t === 'string' && t.length > 16) {
+            t = t.slice(0, 16);
+          }
+          return {
+            time: t,
+            value: row.price ?? row.close ?? null,
+          };
+        })
         .filter(d => d.time != null && d.value != null);
       lineSeries.setData(lineData);
     }
@@ -140,7 +147,8 @@ export default function IndexChart({ histData, intradayData, name }) {
       {mode === 'intraday' && intradayData && intradayData.length > 0 && (
         <div className="text-xs text-gray-500 mt-1">
           {(() => {
-            const prices = intradayData.map(d => d.price || d.close);
+            const prices = intradayData.map(d => d.price ?? d.close ?? null).filter(v => v != null);
+            if (prices.length === 0) return null;
             const max = Math.max(...prices);
             const min = Math.min(...prices);
             const last = prices[prices.length - 1];

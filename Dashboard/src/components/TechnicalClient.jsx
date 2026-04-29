@@ -195,8 +195,11 @@ export default function TechnicalClient({
         <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">🔥 今日技术面</h1>
         <p className="text-sm text-gray-500 mt-1">
           涨停板扫描 | 板块热度分析 | 市场状态监控
-          {data.date && ` | 数据时间: ${String(data.date).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')}`}
-          {data.data_status && ` [${data.data_status}]`}
+          {data.price_fetch_time
+            ? ` | 数据时间: ${data.price_fetch_time}`
+            : data.date && ` | 数据时间: ${String(data.date).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')}`}
+          {data.intraday_mode && ' [实盘中]'}
+          {!data.intraday_mode && data.data_status && ` [${data.data_status}]`}
         </p>
       </div>
 
@@ -299,6 +302,7 @@ export default function TechnicalClient({
           const elliott = analysis?.elliott_wave;
           const peaks = elliott?.structure?.recent_peaks || [];
           const troughs = elliott?.structure?.recent_troughs || [];
+          const intraday = indexIntraday[name] || [];
 
           return (
             <div className="metric-card" key={name}>
@@ -318,7 +322,12 @@ export default function TechnicalClient({
                   )}
                 </div>
               </div>
-              <IndexChart histData={histData} intradayData={indexIntraday[name] || []} name={name} />
+              <IndexChart histData={histData} intradayData={intraday} name={name} />
+              {intraday.length > 0 && (
+                <div className="mt-1 text-xs text-gray-400">
+                  分时数据: {intraday.length} 条 | 最新: {intraday[intraday.length - 1]?.time}
+                </div>
+              )}
               <div className="mt-2 text-xs text-gray-500 flex gap-3">
                 {peaks.length > 0 && (
                   <span>📈 最近峰值: {peaks[peaks.length - 1][1]?.toFixed(2)} ({peaks[peaks.length - 1][0]})</span>

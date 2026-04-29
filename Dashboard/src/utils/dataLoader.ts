@@ -114,6 +114,8 @@ export interface TechnicalData {
   };
   index_history?: Record<string, any[]>;
   index_intraday?: Record<string, any[]>;
+  price_fetch_time?: string;
+  intraday_mode?: boolean;
   _generated_at?: string;
 }
 

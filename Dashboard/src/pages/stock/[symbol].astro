@@ -22,23 +22,6 @@ function parseLimitEnv(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 }
 
-function formatDateTime(value: unknown): string {
-  if (!value) return '';
-  const date = new Date(String(value));
-  if (!Number.isNaN(date.getTime())) {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    const hh = String(date.getHours()).padStart(2, '0');
-    const mm = String(date.getMinutes()).padStart(2, '0');
-    return `${y}-${m}-${d} ${hh}:${mm}`;
-  }
-
-  const raw = String(value).trim();
-  if (raw.length >= 16) return raw.slice(0, 16);
-  return raw;
-}
-
 function toDayString(value: unknown): string {
   if (!value) return '';
   if (value instanceof Date) return value.toISOString().slice(0, 10);
@@ -192,7 +175,8 @@ function mergeRealtimeIntoDailyRows(rows: any[], realtimeRow: any) {
 let signalCache: {
   allSignals: Record<string, any>;
   stockNames: Record<string, string>;
-  signalMeta: { scanTime: string; priceFetchTime: string };
+  stockPrices: Record<string, { close_price: number; change_pct: number }>;
+  signalMeta: { scanTime: string; priceFetchTime: string; intradayMode: boolean };
 } | null = null;
 
 function getSignalMaps() {
@@ -200,7 +184,8 @@ function getSignalMaps() {
 
   let allSignals: Record<string, any> = {};
   let stockNames: Record<string, string> = {};
-  let signalMeta = { scanTime: '', priceFetchTime: '' };
+  let stockPrices: Record<string, { close_price: number; change_pct: number }> = {};
+  let signalMeta = { scanTime: '', priceFetchTime: '', intradayMode: false };
 
   try {
     const namesPath = path.resolve('./src/generated/stock_names.json');
@@ -217,16 +202,24 @@ function getSignalMaps() {
       signalMeta = {
         scanTime: String(signalData.scan_time || '').trim(),
         priceFetchTime: String(signalData.price_fetch_time || '').trim(),
+        intradayMode: Boolean(signalData.intraday_mode),
       };
 
+      // 优先从 stocks 数组读取价格快照（如果存在）
       const stocksArray = Array.isArray(signalData.stocks) ? signalData.stocks : [];
-      const stockMeta = {};
+      const stockMeta: Record<string, any> = {};
       for (const st of stocksArray) {
         if (st.symbol) {
           stockMeta[st.symbol] = {
             riskScore: st.risk_score || 0,
             riskExplanations: st.risk_explanations || [],
           };
+          if (st.close_price != null && st.close_price !== 0) {
+            stockPrices[st.symbol] = {
+              close_price: Number(st.close_price),
+              change_pct: Number(st.change_pct ?? 0),
+            };
+          }
         }
       }
 
@@ -257,6 +250,14 @@ function getSignalMaps() {
         allSignals[sym].signalCount += 1;
         allSignals[sym].signalScore = Math.max(allSignals[sym].signalScore || 0, Number(sig.score || 0));
         if (sig.signal_type === 'right') allSignals[sym].hasBuySignal = true;
+
+        // 从信号记录补全价格（取第一条非零值，与 SignalTable/SignalWatchClient 保持一致）
+        if (!stockPrices[sym] && sig.close_price != null && sig.close_price !== 0) {
+          stockPrices[sym] = {
+            close_price: Number(sig.close_price),
+            change_pct: Number(sig.change_pct ?? 0),
+          };
+        }
       }
 
       for (const sym of Object.keys(allSignals)) {
@@ -267,7 +268,7 @@ function getSignalMaps() {
     console.warn('Failed to load signals.json:', (e as Error).message);
   }
 
-  signalCache = { allSignals, stockNames, signalMeta };
+  signalCache = { allSignals, stockNames, stockPrices, signalMeta };
   return signalCache;
 }
 
@@ -311,7 +312,7 @@ const dailyLimit = parseLimitEnv(import.meta.env.CHART_DAILY_LIMIT);
 const weeklyLimit = parseLimitEnv(import.meta.env.CHART_WEEKLY_LIMIT);
 const monthlyLimit = parseLimitEnv(import.meta.env.CHART_MONTHLY_LIMIT);
 
-const { allSignals, stockNames, signalMeta } = getSignalMaps();
+const { allSignals, stockNames, stockPrices, signalMeta } = getSignalMaps();
 
 const defaultSignals = {
   signals: [], signalScore: 0, riskScore: 0,
@@ -370,27 +371,23 @@ if (fs.existsSync(priceFile)) {
 
 const stockName = stockNames[symbol] || '';
 const stockSignals = allSignals[symbol] || defaultSignals;
+const priceSnapshot = stockPrices[symbol];
 
 const latest = chartData[chartData.length - 1];
 const prev = chartData.length > 1 ? chartData[chartData.length - 2] : latest;
-const change = latest ? latest.close - prev.close : 0;
-const changePct = prev && prev.close ? (change / prev.close) * 100 : 0;
-const isUp = change >= 0;
+
+// 价格优先从 signals.json 快照读取（与信号监控页面统一），无时 fallback 到 K线
+const currentPrice = priceSnapshot?.close_price ?? (latest ? latest.close : null);
+const priceChangePct = priceSnapshot?.change_pct ?? (prev && prev.close && latest ? ((latest.close - prev.close) / prev.close) * 100 : 0);
+const isUp = (priceChangePct ?? 0) >= 0;
 const priceColor = isUp ? 'text-[#ff4757]' : 'text-[#2ed573]';
 const bgColor = isUp ? 'bg-[rgba(255,71,87,0.1)]' : 'bg-[rgba(46,213,115,0.1)]';
 const changeSymbol = isUp ? '+' : '';
+const priceChange = currentPrice != null && prev ? currentPrice - prev.close : 0;
 
-// 判断是否为盘中实时数据：融合 realtime 且数据时间在 09:30-15:00 之间
-let isRealtimeData = false;
-let dataTimeText = latest ? latest.date : '--';
-if (isRealtimeMerged && realtimeRow?.timestamp) {
-  const rt = new Date(String(realtimeRow.timestamp));
-  const rtHour = rt.getHours();
-  const rtMinute = rt.getMinutes();
-  const isMarketTime = (rtHour === 9 && rtMinute >= 30) || (rtHour > 9 && rtHour < 15) || (rtHour === 15 && rtMinute === 0);
-  isRealtimeData = isMarketTime;
-  dataTimeText = formatDateTime(realtimeRow.timestamp);
-}
+// 判断是否为盘中实时数据及数据时间：与信号监控页面完全一致，只读 signals.json
+const isRealtimeData = signalMeta.intradayMode;
+const dataTimeText = signalMeta.priceFetchTime || (latest ? latest.date : '--');
 const dataModeText = isRealtimeData ? '实盘' : '收盘';
 ---
 
@@ -410,9 +407,9 @@ const dataModeText = isRealtimeData ? '实盘' : '收盘';
         </div>
       </div>
       <div class="text-right">
-        <div class="text-4xl font-bold">{latest ? latest.close.toFixed(2) : '--'}</div>
+        <div class="text-4xl font-bold">{currentPrice != null ? currentPrice.toFixed(2) : '--'}</div>
         <span class={`inline-block text-sm px-3 py-1 rounded-full mt-1 ${bgColor} ${priceColor}`}>
-          {changeSymbol}{change.toFixed(2)} ({changeSymbol}{changePct.toFixed(2)}%)
+          {changeSymbol}{priceChange.toFixed(2)} ({changeSymbol}{priceChangePct.toFixed(2)}%)
         </span>
       </div>
     </div>
