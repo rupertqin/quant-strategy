@@ -133,7 +133,6 @@ export default function TechnicalClient({
 
   const ti = data.technical_indicators || {};
   const indexHistory = data.index_history || {};
-  const indexIntraday = data.index_intraday || {};
   const periodHistory = buildPeriodHistory(indexHistory, dailyLimit, weeklyLimit, monthlyLimit);
   const indexPerformance = ti.index_performance || {};
   const hotSectors = data.hot_sectors || [];
@@ -302,7 +301,6 @@ export default function TechnicalClient({
           const elliott = analysis?.elliott_wave;
           const peaks = elliott?.structure?.recent_peaks || [];
           const troughs = elliott?.structure?.recent_troughs || [];
-          const intraday = indexIntraday[name] || [];
 
           return (
             <div className="metric-card" key={name}>
@@ -322,12 +320,7 @@ export default function TechnicalClient({
                   )}
                 </div>
               </div>
-              <IndexChart histData={histData} intradayData={intraday} name={name} />
-              {intraday.length > 0 && (
-                <div className="mt-1 text-xs text-gray-400">
-                  分时数据: {intraday.length} 条 | 最新: {intraday[intraday.length - 1]?.time}
-                </div>
-              )}
+              <IndexChart histData={histData} name={name} />
               <div className="mt-2 text-xs text-gray-500 flex gap-3">
                 {peaks.length > 0 && (
                   <span>📈 最近峰值: {peaks[peaks.length - 1][1]?.toFixed(2)} ({peaks[peaks.length - 1][0]})</span>

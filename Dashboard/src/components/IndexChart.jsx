@@ -1,17 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { createChart, CrosshairMode, CandlestickSeries, LineSeries } from 'lightweight-charts';
 
-export default function IndexChart({ histData, intradayData, name }) {
-  const [mode, setMode] = useState('daily');
+export default function IndexChart({ histData, name }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
-  const hasIntraday = Array.isArray(intradayData) && intradayData.length > 0;
-
-  useEffect(() => {
-    if (!hasIntraday && mode === 'intraday') {
-      setMode('daily');
-    }
-  }, [hasIntraday, mode]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -28,7 +20,7 @@ export default function IndexChart({ histData, intradayData, name }) {
       grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
       crosshair: { mode: CrosshairMode.Magnet },
       rightPriceScale: { borderColor: '#e0e0e0' },
-      timeScale: { borderColor: '#e0e0e0', timeVisible: mode === 'intraday' },
+      timeScale: { borderColor: '#e0e0e0' },
       width: chartContainerRef.current.clientWidth,
       height: 280,
     });
@@ -42,8 +34,7 @@ export default function IndexChart({ histData, intradayData, name }) {
     };
     window.addEventListener('resize', handleResize);
 
-    if (mode === 'daily' && histData && histData.length > 0) {
-      // 日线 - K线 + 均线
+    if (histData && histData.length > 0) {
       const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: '#ff4757',
         downColor: '#2ed573',
@@ -64,7 +55,6 @@ export default function IndexChart({ histData, intradayData, name }) {
         .filter(c => c.time != null && c.open != null && c.high != null && c.low != null && c.close != null);
       candleSeries.setData(candles);
 
-      // 计算均线
       const closes = histData.map(d => d.close);
       const ma = (arr, n) => {
         return arr.map((_, i) => {
@@ -90,28 +80,6 @@ export default function IndexChart({ histData, intradayData, name }) {
       addMaSeries(ma5, '#333');
       addMaSeries(ma10, '#f59e0b');
       addMaSeries(ma20, '#8b5cf6');
-
-    } else if (mode === 'intraday' && intradayData && intradayData.length > 0) {
-      // 分时 - 蓝色折线
-      const lineSeries = chart.addSeries(LineSeries, {
-        color: '#2196F3',
-        lineWidth: 2,
-      });
-
-      const lineData = intradayData
-        .map(row => {
-          let t = row.time || row.trade_time || row.timestamp;
-          // lightweight-charts 分时时间格式要求 YYYY-MM-DD HH:MM，去掉秒
-          if (typeof t === 'string' && t.length > 16) {
-            t = t.slice(0, 16);
-          }
-          return {
-            time: t,
-            value: row.price ?? row.close ?? null,
-          };
-        })
-        .filter(d => d.time != null && d.value != null);
-      lineSeries.setData(lineData);
     }
 
     chart.timeScale().fitContent();
@@ -123,39 +91,7 @@ export default function IndexChart({ histData, intradayData, name }) {
         chartRef.current = null;
       }
     };
-  }, [mode, histData, intradayData]);
+  }, [histData, name]);
 
-  return (
-    <div>
-      {hasIntraday && (
-        <div className="flex justify-end gap-1 mb-2">
-          <button
-            onClick={() => setMode('daily')}
-            className={`px-3 py-1 text-xs rounded ${mode === 'daily' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
-          >
-            日线
-          </button>
-          <button
-            onClick={() => setMode('intraday')}
-            className={`px-3 py-1 text-xs rounded ${mode === 'intraday' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}
-          >
-            分时
-          </button>
-        </div>
-      )}
-      <div ref={chartContainerRef} style={{ width: '100%', height: 280 }} />
-      {mode === 'intraday' && intradayData && intradayData.length > 0 && (
-        <div className="text-xs text-gray-500 mt-1">
-          {(() => {
-            const prices = intradayData.map(d => d.price ?? d.close ?? null).filter(v => v != null);
-            if (prices.length === 0) return null;
-            const max = Math.max(...prices);
-            const min = Math.min(...prices);
-            const last = prices[prices.length - 1];
-            return `最新: ${last?.toFixed(2)} | 最高: ${max?.toFixed(2)} | 最低: ${min?.toFixed(2)}`;
-          })()}
-        </div>
-      )}
-    </div>
-  );
+  return <div ref={chartContainerRef} style={{ width: '100%', height: 280 }} />;
 }
