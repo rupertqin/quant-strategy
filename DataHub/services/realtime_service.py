@@ -120,17 +120,6 @@ class RealtimeDataService:
         self.logger.info(f"获取到 {len(df)} 个指数实时数据")
         return df
 
-    def _extract_max_timestamp(self, df: pd.DataFrame) -> pd.Timestamp:
-        """
-        从 DataFrame 中提取最大时间戳。
-        优先取 '时间戳' 列，否则取 'trade_date' + 当前时间。
-        """
-        if '时间戳' in df.columns:
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            max_ts = df['时间戳'].astype(str).max()
-            return pd.to_datetime(f"{today_str} {max_ts}")
-        return pd.Timestamp.now()
-
     def fetch_etf_realtime_data(self, symbols: List[str] = None) -> pd.DataFrame:
         """
         获取ETF实时行情数据
@@ -299,19 +288,20 @@ class RealtimeDataService:
         self.logger.info(f"获取到 {len(df)} 只股票实时数据")
         return df
 
-    def _resolve_baseline_timestamp(self, *dfs: pd.DataFrame) -> pd.Timestamp:
+    def _resolve_baseline_timestamp(self, df_stock: pd.DataFrame = None) -> pd.Timestamp:
         """
-        从多个 DataFrame 计算统一基准时间。
+        计算统一基准时间。
 
-        逻辑：取各 DataFrame 最大时间戳的最大值，
+        逻辑：取 stock 数据接口时间戳的最小值，
         若结果超过当前时间则回退到当前时间。
         """
         now = pd.Timestamp.now()
-        candidates = [self._extract_max_timestamp(df) for df in dfs if df is not None and not df.empty]
-        if not candidates:
-            return now
-        baseline = max(candidates)
-        return min(baseline, now)
+        if df_stock is not None and not df_stock.empty and '时间戳' in df_stock.columns:
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            min_ts = df_stock['时间戳'].astype(str).min()
+            baseline = pd.to_datetime(f"{today_str} {min_ts}")
+            return min(baseline, now)
+        return now
 
     def save_intraday_parquet(
         self,
@@ -341,21 +331,12 @@ class RealtimeDataService:
         df_out = df.copy()
         now = timestamp or pd.Timestamp.now()
 
-        # 优先使用数据源返回的时间戳（如 "15:30:02"），拼接当前日期
-        if '时间戳' in df_out.columns:
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            df_out['timestamp'] = pd.to_datetime(today_str + ' ' + df_out['时间戳'].astype(str))
-            df_out.drop(columns=['时间戳'], inplace=True)
-        elif 'timestamp' not in df_out.columns:
-            df_out['timestamp'] = now
+        # 统一使用传入的基准时间，不再从数据源计算
+        df_out['timestamp'] = now
 
-        # 统一校验：时间戳不能超过基准时间（防止数据源返回跨天旧时间）
-        if 'timestamp' in df_out.columns:
-            df_out['timestamp'] = df_out['timestamp'].clip(upper=now)
-
-        # 删除可能混入的旧列
-        for col in ('is_realtime', 'trade_time', 'trade_date'):
-            if col in df_out.columns:
+        # 删除数据源可能带入的旧列
+        for col in ('时间戳', 'timestamp'):
+            if col in df_out.columns and col != 'timestamp':
                 df_out.drop(columns=[col], inplace=True)
 
         # 确保必要列存在
@@ -650,7 +631,7 @@ if __name__ == "__main__":
 
     # all 模式：统一计算基准时间后再保存
     if args.type == 'all':
-        now = service._resolve_baseline_timestamp(df_stock, df_etf, df_index)
+        now = service._resolve_baseline_timestamp(df_stock)
         print(f"\n⏱️  统一基准时间: {now}")
     else:
         now = pd.Timestamp.now()
