@@ -326,7 +326,7 @@ export default function PoolWatchClient() {
           <p className="text-center text-gray-500 py-8">股票池为空，请添加股票或点击「重置默认」</p>
         ) : (
           <SignalTable
-            stocks={poolStocks}
+            stocks={validStocks}
             healthScores={healthScores}
             showPoolActions={true}
             onAddToPool={add}

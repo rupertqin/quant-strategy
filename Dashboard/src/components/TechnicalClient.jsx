@@ -222,11 +222,6 @@ export default function TechnicalClient({
           <p className="text-xs text-gray-500">热点板块</p>
           <p className="text-lg font-bold text-gray-800">{hotSectors.length}</p>
         </div>
-        <div className="metric-card text-center">
-          <p className="text-xs text-gray-500">涨停总数</p>
-          <p className="text-lg font-bold text-gray-800">{data.total_zt_count ?? 0}</p>
-          <p className="text-xs text-gray-500">{data.market_type || ''}</p>
-        </div>
       </div>
 
       <h2 className="text-lg font-bold mb-3 text-gray-800">🌍 宏观指标</h2>
