@@ -252,6 +252,31 @@ def _get_realtime_date(df: pd.DataFrame) -> Optional[datetime.date]:
     return None
 
 
+def _is_realtime_fresh(realtime_df: pd.DataFrame) -> bool:
+    """
+    判断实时数据是否比冷数据更新
+
+    通过比较 realtime DataFrame 的日期与历史数据最新日期来判断。
+    只有当 realtime 数据的日期 > 冷数据日期时，才认为真正使用了实时数据。
+
+    Args:
+        realtime_df: 实时数据DataFrame
+
+    Returns:
+        True: realtime 数据比冷数据新
+        False: realtime 数据不新于冷数据
+    """
+    rt_date = _get_realtime_date(realtime_df)
+    if rt_date is None:
+        return False
+
+    hist_date = _get_latest_history_date()
+    if hist_date is None:
+        return True  # 无冷数据，默认使用实时数据
+
+    return rt_date > hist_date
+
+
 def scan_intraday_signals(scanner, symbol: str, realtime_df: pd.DataFrame, 
                           multi_period: bool = True, signal_type: str = "all") -> list:
     """
@@ -353,16 +378,24 @@ def extract_symbols_from_realtime(realtime_df: pd.DataFrame, asset_type: str,
     return symbols
 
 
-def build_scan_result(signals: list, symbols: List[str], price_time_str: str, 
-                      multi_period: bool) -> Dict:
-    """构建扫描结果字典"""
+def build_scan_result(signals: list, symbols: List[str], price_time_str: str,
+                      multi_period: bool, intraday_mode: bool = False) -> Dict:
+    """构建扫描结果字典
+
+    Args:
+        signals: 信号列表
+        symbols: 扫描的代码列表
+        price_time_str: 价格数据时间字符串
+        multi_period: 是否多周期分析
+        intraday_mode: 是否为盘中实时数据模式（由调用方根据数据来源决定）
+    """
     from collections import Counter
-    
+
     by_signal = Counter([s.signal_name for s in signals])
     left_count = sum(1 for s in signals if s.signal_type == 'left')
     right_count = sum(1 for s in signals if s.signal_type == 'right')
     by_period = Counter([s.period for s in signals])
-    
+
     return {
         'status': 'success',
         'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -370,7 +403,7 @@ def build_scan_result(signals: list, symbols: List[str], price_time_str: str,
         'total_stocks': len(symbols),
         'total_signals': len(signals),
         'multi_period': multi_period,
-        'intraday_mode': True,
+        'intraday_mode': intraday_mode,
         'signals': [s.to_dict() for s in signals],
         'stats': {
             'left': left_count,
@@ -572,9 +605,17 @@ def run_intraday_scan(args, asset_config: AssetConfig, single_mode: bool = True)
                     signals = scan_intraday_signals(scanner, symbol, realtime_df, multi_period)
                     if signals:
                         all_signals.extend(signals)
-                
+
+                # 判断实时数据是否真正新鲜
+                intraday_mode = _is_realtime_fresh(realtime_df)
+                if single_mode:
+                    if intraday_mode:
+                        print(f"\n  ⏱️ 实时数据新鲜度检查: 盘中模式")
+                    else:
+                        print(f"\n  ⏱️ 实时数据新鲜度检查: 收盘模式（实时数据未更新）")
+
                 # 构建并保存结果
-                result = build_scan_result(all_signals, symbols, price_time_str, multi_period)
+                result = build_scan_result(all_signals, symbols, price_time_str, multi_period, intraday_mode=intraday_mode)
                 save_scan_result(result, asset_config.name_en, project_root)
                 
                 # 打印摘要
@@ -684,7 +725,7 @@ def scan_asset_type_historical(asset_type: str, symbol: Optional[str] = None,
         return scanner.scan_all('all', limit, multi_period, save_result=save_result)
 
 
-def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
+def _merge_and_save_combined_results(results: Dict[str, Dict], intraday_mode: bool = False) -> Path:
     """合并股票+ETF+指数的扫描结果，统一保存到 signal_latest.json"""
     from DataHub.config import SHORTTERM_SIGNALS_DIR
     output_dir = SHORTTERM_SIGNALS_DIR
@@ -759,6 +800,7 @@ def _merge_and_save_combined_results(results: Dict[str, Dict]) -> Path:
         'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'total_stocks': total_stocks,
         'total_signals': len(all_signals),
+        'intraday_mode': intraday_mode,
         'stocks': stocks,
     }
 
@@ -801,7 +843,8 @@ def run_combined_scan(args, include_index: bool = True):
         )
     
     # 合并三份结果，统一保存到 signal_latest.json（避免覆盖）
-    _merge_and_save_combined_results(results)
+    # run_combined_scan 是历史数据模式，intraday_mode=False
+    _merge_and_save_combined_results(results, intraday_mode=False)
     
     # 打印结果
     print("\n" + "=" * 60)
@@ -930,8 +973,18 @@ def run_all_intraday_scan(args, include_index: bool = True):
     # 统一价格时间（取最新的一个）
     price_time_str = stock_time or etf_time or index_time or ""
 
+    # 判断实时数据是否真正新鲜（realtime 日期 > 冷数据日期）
+    # 优先使用股票数据判断，其次ETF，最后指数
+    rt_df_for_check = stock_df if stock_df is not None and not stock_df.empty else \
+                      etf_df if etf_df is not None and not etf_df.empty else index_df
+    intraday_mode = _is_realtime_fresh(rt_df_for_check)
+    if intraday_mode:
+        print(f"\n  ⏱️ 实时数据新鲜度检查: 盘中模式（实时数据已更新）")
+    else:
+        print(f"\n  ⏱️ 实时数据新鲜度检查: 收盘模式（实时数据未更新）")
+
     # 保存结果
-    result = build_scan_result(all_signals, all_symbols, price_time_str, multi_period)
+    result = build_scan_result(all_signals, all_symbols, price_time_str, multi_period, intraday_mode=intraday_mode)
     save_all_intraday_results(result, all_signals, stock_df, etf_df, stock_time, etf_time, multi_period, args.limit, index_df, index_time)
     
     # 打印摘要

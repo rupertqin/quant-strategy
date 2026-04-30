@@ -172,7 +172,7 @@ def get_data_close_time(dt: datetime = None) -> tuple[str, str]:
             pass
         # 回退：假设今天是交易日
         close_time = dt.replace(hour=15, minute=0, second=0)
-        return close_time.strftime('%Y-%m-%d %H:%M:%S'), "盘后收盘（本地）"
+        return close_time.strftime('%Y-%m-%d %H:%M:%S'), "收盘"
 
     # 午间休市
     if market_close_noon <= dt < market_open_pm:
@@ -394,6 +394,64 @@ class LimitUpScanner:
         except Exception as e:
             logger.warning(f"从本地数据计算涨跌家数失败: {e}")
             return {'up': 0, 'down': 0, 'flat': 0, 'total': 0, 'up_ratio': 0.5, 'breadth_score': 0}
+
+    def _is_realtime_data_fresh(self, date: str = None, benchmark_symbol: str = '000001.SZ') -> bool:
+        """
+        判断实时数据是否比冷数据更新
+
+        通过比较 realtime parquet 和冷数据中同一只基准股票的最新日期来判断。
+        只有当 realtime 数据的日期 > 冷数据日期时，才认为真正使用了实时数据。
+
+        Args:
+            date: 日期 YYYYMMDD，默认今天
+            benchmark_symbol: 基准股票代码，默认 000001.SZ
+
+        Returns:
+            True: realtime 数据比冷数据新（真正使用了实时数据）
+            False: realtime 数据不新于冷数据（未使用实时数据或数据已过时）
+        """
+        from DataHub.config import RAW_PRICE_DIR
+        from DataHub.services.realtime_service import RealtimeDataService
+        from datetime import datetime
+
+        today = date if date else datetime.now().strftime('%Y%m%d')
+
+        # 1. 获取冷数据中基准股票的最新日期
+        cold_latest_date = None
+        cold_file = RAW_PRICE_DIR / f"{benchmark_symbol}.parquet"
+        if cold_file.exists():
+            try:
+                df_cold = pd.read_parquet(cold_file)
+                if not df_cold.empty and 'trade_date' in df_cold.columns:
+                    cold_latest_date = pd.to_datetime(df_cold['trade_date']).max().date()
+            except Exception as e:
+                logger.debug(f"读取冷数据最新日期失败: {e}")
+
+        # 2. 获取 realtime 数据中基准股票的最新日期
+        rt_latest_date = None
+        try:
+            rt_df = RealtimeDataService().load_intraday_parquet(
+                date_str=today, asset_type='stock', latest_snapshot=True
+            )
+            if rt_df is not None and not rt_df.empty:
+                rt_row = rt_df[rt_df['symbol'] == benchmark_symbol]
+                if not rt_row.empty and 'timestamp' in rt_row.columns:
+                    rt_timestamp = pd.to_datetime(rt_row['timestamp'].iloc[0])
+                    rt_latest_date = rt_timestamp.date()
+        except Exception as e:
+            logger.debug(f"读取实时数据最新日期失败: {e}")
+
+        # 3. 比较日期
+        if rt_latest_date is None:
+            print(f"  ⏱️ 实时数据新鲜度检查: 无实时数据")
+            return False
+        if cold_latest_date is None:
+            print(f"  ⏱️ 实时数据新鲜度检查: 无冷数据，默认使用实时数据")
+            return True
+
+        is_fresh = rt_latest_date > cold_latest_date
+        print(f"  ⏱️ 实时数据新鲜度检查: 冷数据{cold_latest_date} vs 实时数据{rt_latest_date} -> {'新鲜' if is_fresh else '不新鲜'}")
+        return is_fresh
 
     def _calculate_market_breadth_from_realtime(self, date: str = None) -> dict:
         """
@@ -1076,6 +1134,10 @@ class LimitUpScanner:
         # ========== 1. 技术面指标采集（优先使用实时数据）==========
         print("\n📊 从实时数据计算技术面指标...")
 
+        # 判断实时数据是否真正新鲜（realtime 日期 > 冷数据日期）
+        # 这是 intraday_mode 判断的核心：只有数据真正更新了才算盘中模式
+        has_realtime_data = self._is_realtime_data_fresh(date)
+
         # 1.1 市场涨跌家数（广度）- 优先从实时数据计算
         breadth = self._calculate_market_breadth_from_realtime(date)
         if breadth['total'] == 0:
@@ -1387,7 +1449,8 @@ class LimitUpScanner:
 
         # 7. 指数分时图表功能已移除，仅保留日期+时分格式的时间戳
         index_intraday = {}
-        intraday_mode = False
+        # intraday_mode 基于是否成功获取实时数据判断
+        intraday_mode = has_realtime_data
         price_fetch_time = datetime.now().strftime('%Y-%m-%d %H:%M')
 
         # 转换 numpy 类型为 Python 原生类型（用于JSON序列化）

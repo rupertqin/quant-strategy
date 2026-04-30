@@ -192,8 +192,13 @@ export default function PoolWatchClient() {
       <div className="mb-8">
         <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">股票池监控</h1>
         <p className="text-sm text-gray-500 mt-1">
-          数据时间: {data?.price_fetch_time?.split(' ')?.[0] || data?.date || '未知'}
-          {' '}| 股票池共 {pool.length} 只（有数据 {validStocks.length} 只）
+          股票池共 {pool.length} 只（有数据 {validStocks.length} 只）| {' '}
+          {data?.price_fetch_time
+            ? `数据时间: ${data.price_fetch_time}`
+            : data?.scan_time
+              ? `数据时间: ${data.scan_time}`
+              : `数据时间: ${data?.date || '未知'}`}
+          {data?.intraday_mode ? ' [实盘中]' : ' [收盘]'}
         </p>
       </div>
 

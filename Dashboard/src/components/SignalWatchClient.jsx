@@ -92,7 +92,10 @@ export default function SignalWatchClient() {
         <h1 className="text-[28px] font-bold text-gray-800 tracking-tight">个股信号监控</h1>
         <p className="text-sm text-gray-500 mt-1">
           扫描 {totalStocks} 只股票，发现 {totalSignals} 个信号
-          {data?.price_fetch_time && ` | 数据时间: ${data.price_fetch_time}`}
+          {data?.price_fetch_time
+            ? ` | 数据时间: ${data.price_fetch_time}`
+            : data?.scan_time && ` | 数据时间: ${data.scan_time}`}
+          {data?.intraday_mode ? ' [实盘中]' : ' [收盘]'}
         </p>
       </div>
 
