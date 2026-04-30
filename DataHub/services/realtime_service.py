@@ -120,6 +120,17 @@ class RealtimeDataService:
         self.logger.info(f"获取到 {len(df)} 个指数实时数据")
         return df
 
+    def _extract_max_timestamp(self, df: pd.DataFrame) -> pd.Timestamp:
+        """
+        从 DataFrame 中提取最大时间戳。
+        优先取 '时间戳' 列，否则取 'trade_date' + 当前时间。
+        """
+        if '时间戳' in df.columns:
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            max_ts = df['时间戳'].astype(str).max()
+            return pd.to_datetime(f"{today_str} {max_ts}")
+        return pd.Timestamp.now()
+
     def fetch_etf_realtime_data(self, symbols: List[str] = None) -> pd.DataFrame:
         """
         获取ETF实时行情数据
@@ -288,7 +299,26 @@ class RealtimeDataService:
         self.logger.info(f"获取到 {len(df)} 只股票实时数据")
         return df
 
-    def save_intraday_parquet(self, df: pd.DataFrame, asset_type: str = 'stock') -> str:
+    def _resolve_baseline_timestamp(self, *dfs: pd.DataFrame) -> pd.Timestamp:
+        """
+        从多个 DataFrame 计算统一基准时间。
+
+        逻辑：取各 DataFrame 最大时间戳的最大值，
+        若结果超过当前时间则回退到当前时间。
+        """
+        now = pd.Timestamp.now()
+        candidates = [self._extract_max_timestamp(df) for df in dfs if df is not None and not df.empty]
+        if not candidates:
+            return now
+        baseline = max(candidates)
+        return min(baseline, now)
+
+    def save_intraday_parquet(
+        self,
+        df: pd.DataFrame,
+        asset_type: str = 'stock',
+        timestamp: pd.Timestamp = None,
+    ) -> str:
         """
         保存实时数据到 parquet（增量写入，自动去重）
 
@@ -297,6 +327,7 @@ class RealtimeDataService:
         Args:
             df: 实时数据 DataFrame
             asset_type: 资产类型 stock/etf/index
+            timestamp: 统一使用的基准时间，默认当前时间
 
         Returns:
             保存的文件路径
@@ -308,6 +339,7 @@ class RealtimeDataService:
         filepath = intraday_dir / f"{today_str}.parquet"
 
         df_out = df.copy()
+        now = timestamp or pd.Timestamp.now()
 
         # 优先使用数据源返回的时间戳（如 "15:30:02"），拼接当前日期
         if '时间戳' in df_out.columns:
@@ -315,7 +347,11 @@ class RealtimeDataService:
             df_out['timestamp'] = pd.to_datetime(today_str + ' ' + df_out['时间戳'].astype(str))
             df_out.drop(columns=['时间戳'], inplace=True)
         elif 'timestamp' not in df_out.columns:
-            df_out['timestamp'] = pd.Timestamp.now()
+            df_out['timestamp'] = now
+
+        # 统一校验：时间戳不能超过基准时间（防止数据源返回跨天旧时间）
+        if 'timestamp' in df_out.columns:
+            df_out['timestamp'] = df_out['timestamp'].clip(upper=now)
 
         # 删除可能混入的旧列
         for col in ('is_realtime', 'trade_time', 'trade_date'):
@@ -484,25 +520,19 @@ if __name__ == "__main__":
     service = RealtimeDataService()
 
     # 股票实时数据
+    df_stock = None
     if args.type in ['stock', 'all']:
         print("=" * 60)
         print("📡 DataHub 股票实时数据获取")
         print("=" * 60)
 
         try:
-            # 获取并保存股票实时数据（分钟级 parquet）
-            df = service.fetch_realtime_data()
-            filepath = service.save_intraday_parquet(df, asset_type='stock')
-            print(f"\n✅ 股票实时数据已保存: {filepath}")
-
-            # 显示数据统计
-            print(f"\n📊 数据统计:")
-            print(f"   股票数量: {len(df)}")
-            print(f"   数据列: {list(df.columns)}")
+            df_stock = service.fetch_realtime_data()
+            print(f"\n✅ 股票实时数据已获取: {len(df_stock)} 只")
 
             # 显示前5条
             print(f"\n📈 前5只股票:")
-            print(df[['symbol', 'name', 'close', 'change_pct']].head().to_string(index=False))
+            print(df_stock[['symbol', 'name', 'close', 'change_pct']].head().to_string(index=False))
 
         except Exception as e:
             print(f"\n❌ 股票数据获取失败: {e}")
@@ -510,6 +540,7 @@ if __name__ == "__main__":
             traceback.print_exc()
 
     # ETF实时数据
+    df_etf = None
     if args.type in ['etf', 'all']:
         if args.type == 'all':
             print("\n")
@@ -519,19 +550,12 @@ if __name__ == "__main__":
         print("=" * 60)
 
         try:
-            # 获取并保存ETF实时数据（分钟级 parquet）
-            df = service.fetch_etf_realtime_data()
-            filepath = service.save_intraday_parquet(df, asset_type='etf')
-            print(f"\n✅ ETF实时数据已保存: {filepath}")
-
-            # 显示数据统计
-            print(f"\n📊 数据统计:")
-            print(f"   ETF数量: {len(df)}")
-            print(f"   数据列: {list(df.columns)}")
+            df_etf = service.fetch_etf_realtime_data()
+            print(f"\n✅ ETF实时数据已获取: {len(df_etf)} 只")
 
             # 显示前5条
             print(f"\n📈 前5只ETF:")
-            print(df[['symbol', 'name', 'close', 'change_pct']].head().to_string(index=False))
+            print(df_etf[['symbol', 'name', 'close', 'change_pct']].head().to_string(index=False))
 
         except Exception as e:
             print(f"\n❌ ETF数据获取失败: {e}")
@@ -539,6 +563,7 @@ if __name__ == "__main__":
             traceback.print_exc()
 
     # 指数实时数据
+    df_index = None
     if args.type in ['index', 'all']:
         if args.type == 'all':
             print("\n")
@@ -548,19 +573,12 @@ if __name__ == "__main__":
         print("=" * 60)
 
         try:
-            # 获取并保存指数实时数据（分钟级 parquet）
-            df = service.fetch_index_realtime_data()
-            filepath = service.save_intraday_parquet(df, asset_type='index')
-            print(f"\n✅ 指数实时数据已保存: {filepath}")
-
-            # 显示数据统计
-            print(f"\n📊 数据统计:")
-            print(f"   指数数量: {len(df)}")
-            print(f"   数据列: {list(df.columns)}")
+            df_index = service.fetch_index_realtime_data()
+            print(f"\n✅ 指数实时数据已获取: {len(df_index)} 个")
 
             # 显示主要指数
             main_indices = ['000001.SH', '399006.SZ', '000300.SH', '000688.SH']
-            main_df = df[df['symbol'].isin(main_indices)]
+            main_df = df_index[df_index['symbol'].isin(main_indices)]
             if not main_df.empty:
                 print(f"\n📈 主要指数:")
                 print(main_df[['symbol', 'name', 'close', 'change_pct']].to_string(index=False))
@@ -569,3 +587,25 @@ if __name__ == "__main__":
             print(f"\n❌ 指数数据获取失败: {e}")
             import traceback
             traceback.print_exc()
+
+    # all 模式：统一计算基准时间后再保存
+    if args.type == 'all':
+        now = service._resolve_baseline_timestamp(df_stock, df_etf, df_index)
+        print(f"\n⏱️  统一基准时间: {now}")
+    else:
+        now = pd.Timestamp.now()
+
+    # 保存股票
+    if df_stock is not None and not df_stock.empty:
+        filepath = service.save_intraday_parquet(df_stock, asset_type='stock', timestamp=now)
+        print(f"\n💾 股票实时数据已保存: {filepath}")
+
+    # 保存ETF
+    if df_etf is not None and not df_etf.empty:
+        filepath = service.save_intraday_parquet(df_etf, asset_type='etf', timestamp=now)
+        print(f"\n💾 ETF实时数据已保存: {filepath}")
+
+    # 保存指数
+    if df_index is not None and not df_index.empty:
+        filepath = service.save_intraday_parquet(df_index, asset_type='index', timestamp=now)
+        print(f"\n💾 指数实时数据已保存: {filepath}")

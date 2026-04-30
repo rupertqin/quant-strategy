@@ -141,7 +141,7 @@ def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = Fals
                 df = rt_service.fetch_index_realtime_data()
             else:
                 df = rt_service.fetch_realtime_data()
-            rt_service.save_intraday_parquet(df, asset_type=asset_type or 'stock')
+            rt_service.save_intraday_parquet(df, asset_type=asset_type or 'stock', timestamp=pd.Timestamp.now())
 
             # 取最新快照返回
             if 'timestamp' in df.columns and 'symbol' in df.columns:
