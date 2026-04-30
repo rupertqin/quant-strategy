@@ -125,15 +125,19 @@ function aggregateToPeriod(rows: any[], period: 'weekly' | 'monthly') {
 }
 
 async function loadLatestRealtimeRow(symbol: string) {
-  if (!fs.existsSync(REALTIME_STOCK_DIR)) return null;
+  const assetType = detectAssetType(symbol);
+  const dirName = assetType === 'stock' ? 'stock' : assetType;
+  const realtimeDir = path.resolve(storageDir, `raw/realtime/${dirName}`);
 
-  const realtimeFiles = fs.readdirSync(REALTIME_STOCK_DIR)
+  if (!fs.existsSync(realtimeDir)) return null;
+
+  const realtimeFiles = fs.readdirSync(realtimeDir)
     .filter((f) => f.endsWith('.parquet'))
     .sort();
 
   if (!realtimeFiles.length) return null;
 
-  const latestFile = path.join(REALTIME_STOCK_DIR, realtimeFiles[realtimeFiles.length - 1]);
+  const latestFile = path.join(realtimeDir, realtimeFiles[realtimeFiles.length - 1]);
   const rows = await readParquetAllRows(
     latestFile,
     ['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
@@ -158,6 +162,7 @@ function mergeRealtimeIntoDailyRows(rows: any[], realtimeRow: any) {
     low: toNumber(realtimeRow.low, toNumber(realtimeRow.close)),
     close: toNumber(realtimeRow.close),
     volume: toNumber(realtimeRow.volume),
+    change_pct: toNumber(realtimeRow.change_pct),
   };
 
   if (!rows.length) return { rows: [normalizedRow], merged: true };
@@ -319,7 +324,7 @@ const defaultSignals = {
   riskExplanations: [], scoreLabel: '', signalCount: 0, hasBuySignal: false,
 };
 
-const priceColumns = ['trade_date', 'open', 'high', 'low', 'close', 'volume'];
+const priceColumns = ['trade_date', 'open', 'high', 'low', 'close', 'volume', 'change_pct'];
 const priceFile = path.join(PRICE_DIR, `${symbol}.parquet`);
 
 let chartData: any[] = [];
@@ -378,7 +383,10 @@ const prev = chartData.length > 1 ? chartData[chartData.length - 2] : latest;
 
 // 价格优先从 signals.json 快照读取（与信号监控页面统一），无时 fallback 到 K线
 const currentPrice = priceSnapshot?.close_price ?? (latest ? latest.close : null);
-const priceChangePct = priceSnapshot?.change_pct ?? (prev && prev.close && latest ? ((latest.close - prev.close) / prev.close) * 100 : 0);
+// 涨跌幅优先顺序: 实时/历史 parquet 里的 change_pct > signals.json > 相邻 K线计算
+const priceChangePct = latest?.change_pct != null && !Number.isNaN(latest.change_pct)
+  ? Number(latest.change_pct)
+  : (priceSnapshot?.change_pct ?? (prev && prev.close && latest ? ((latest.close - prev.close) / prev.close) * 100 : 0));
 const isUp = (priceChangePct ?? 0) >= 0;
 const priceColor = isUp ? 'text-[#ff4757]' : 'text-[#2ed573]';
 const bgColor = isUp ? 'bg-[rgba(255,71,87,0.1)]' : 'bg-[rgba(46,213,115,0.1)]';

@@ -181,6 +181,11 @@ class ETFSync(BaseSyncService):
             else:
                 combined = new_df
             
+            # 兜底补全 change_pct（yfinance 不返回该字段，或增量只有一行算不出）
+            if 'change_pct' not in combined.columns or combined['change_pct'].isna().any():
+                combined = combined.sort_values('trade_date').reset_index(drop=True)
+                combined['change_pct'] = combined['close'].pct_change() * 100
+            
             # 保存
             combined.to_parquet(file_path, index=False, compression='snappy')
             
@@ -313,10 +318,13 @@ class ETFSync(BaseSyncService):
                 logger.warning(f"{symbol} 无历史数据（返回的只有今天的实时数据）")
                 return pd.DataFrame()
         
-        # Yahoo 数据没有 amount/change_pct，设为 NaN（保持 float64 类型一致）
+        # Yahoo 数据没有 amount，设为 NaN（保持 float64 类型一致）
         df['amount'] = np.nan
-        df['change_pct'] = np.nan
-        
+
+        # Yahoo 没有 change_pct，基于前一日 close 自行计算
+        df = df.sort_values('trade_date').reset_index(drop=True)
+        df['change_pct'] = df['close'].pct_change() * 100
+
         # 选择需要的列
         keep_cols = ['symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
         df = df[[c for c in keep_cols if c in df.columns]]

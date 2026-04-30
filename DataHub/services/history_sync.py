@@ -108,6 +108,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import logging
+import numpy as np
 import pandas as pd
 import baostock as bs
 import socket
@@ -608,7 +609,12 @@ class HistorySyncService:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
 
-            keep_cols = ['symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume']
+            # Yahoo 没有 amount/change_pct，需自行计算
+            df['amount'] = np.nan
+            df = df.sort_values('trade_date').reset_index(drop=True)
+            df['change_pct'] = df['close'].pct_change() * 100
+
+            keep_cols = ['symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
             df = df[[c for c in keep_cols if c in df.columns]]
 
             logger.info(f"获取 {symbol} ETF数据: {len(df)} 条 (Yahoo)")
@@ -1430,6 +1436,11 @@ class HistorySyncService:
             combined_df = combined_df.sort_values('trade_date').reset_index(drop=True)
         else:
             combined_df = new_df
+
+        # 兜底补全 change_pct（yfinance 等数据源不返回该字段，或增量只有一行算不出）
+        if asset_type == 'etf' and ('change_pct' not in combined_df.columns or combined_df['change_pct'].isna().any()):
+            combined_df = combined_df.sort_values('trade_date').reset_index(drop=True)
+            combined_df['change_pct'] = combined_df['close'].pct_change() * 100
 
         # 保存
         combined_df.to_parquet(file_path, index=False, compression='snappy')

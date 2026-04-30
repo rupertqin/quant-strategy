@@ -197,8 +197,7 @@ export default function TechnicalClient({
           {data.price_fetch_time
             ? ` | 数据时间: ${data.price_fetch_time}`
             : data.date && ` | 数据时间: ${String(data.date).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')}`}
-          {data.intraday_mode && ' [实盘中]'}
-          {!data.intraday_mode && data.data_status && ` [${data.data_status}]`}
+          {data?.intraday_mode ? ' [实盘中]' : ' [收盘]'}
         </p>
       </div>
 
