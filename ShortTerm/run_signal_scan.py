@@ -156,8 +156,9 @@ class StockRealtimeLoader(RealtimeDataLoader):
     """股票实时数据加载器"""
     
     def load(self) -> Tuple[Optional[pd.DataFrame], str]:
-        from lib.utils.data_access import get_latest_realtime_data
-        return get_latest_realtime_data(force_fetch=False, full_format=True, asset_type='stock')
+        from DataHub.services.realtime_service import RealtimeDataService
+        rt_service = RealtimeDataService()
+        return rt_service.get_latest_realtime_data(force_fetch=False, full_format=True, asset_type='stock')
     
     def check_exists(self) -> bool:
         from lib.utils.data_access import get_todays_realtime_file

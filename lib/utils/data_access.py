@@ -119,51 +119,6 @@ def has_realtime_data() -> bool:
     return get_todays_realtime_file() is not None
 
 
-def get_latest_realtime_data(force_fetch: bool = False, full_format: bool = False, asset_type: str = None) -> tuple[pd.DataFrame, str]:
-    """
-    获取最新实时数据（统一入口）
-
-    Args:
-        force_fetch: 是否强制获取最新数据（True=总是fetch，False=优先用缓存）
-        full_format: 时间格式（True=YYYY-MM-DD HH:MM，False=HH:MM）
-        asset_type: 'stock'|'etf'|'index'|None
-
-    Returns:
-        (DataFrame, fetch_time_str)
-    """
-    if force_fetch:
-        try:
-            from DataHub.services.realtime_service import RealtimeDataService
-            rt_service = RealtimeDataService()
-            if asset_type == 'etf':
-                df = rt_service.fetch_etf_realtime_data()
-            elif asset_type == 'index':
-                df = rt_service.fetch_index_realtime_data()
-            else:
-                df = rt_service.fetch_realtime_data()
-            rt_service.save_intraday_parquet(df, asset_type=asset_type or 'stock', timestamp=pd.Timestamp.now())
-
-            # 取最新快照返回
-            if 'timestamp' in df.columns and 'symbol' in df.columns:
-                df = df.sort_values('timestamp').groupby('symbol').tail(1).reset_index(drop=True)
-            latest_time = df['timestamp'].iloc[0] if 'timestamp' in df.columns and not df.empty else None
-            return df, _fmt_ts(latest_time)
-        except Exception:
-            pass
-
-    # 使用已有最新数据
-    filepath = get_todays_realtime_file(asset_type=asset_type)
-    if filepath:
-        df = load_realtime_data(filepath)
-        try:
-            latest_time = df['timestamp'].iloc[0] if 'timestamp' in df.columns and not df.empty else None
-            return df, _fmt_ts(latest_time)
-        except Exception:
-            return df, ""
-
-    return pd.DataFrame(), ""
-
-
 def _rt_val(realtime: pd.Series, key: str, fallback_key: str = 'close') -> float:
     """安全读取实时数据字段，None/NaN 时回退"""
     import pandas as pd

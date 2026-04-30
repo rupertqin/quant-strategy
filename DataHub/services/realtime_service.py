@@ -411,6 +411,66 @@ class RealtimeDataService:
 
         return df.reset_index(drop=True)
 
+    def get_latest_realtime_data(
+        self,
+        force_fetch: bool = False,
+        full_format: bool = False,
+        asset_type: str = None,
+    ) -> tuple[pd.DataFrame, str]:
+        """
+        获取最新实时数据（统一入口）
+
+        Args:
+            force_fetch: 是否强制获取最新数据（True=总是fetch，False=优先用缓存）
+            full_format: 时间格式（True=YYYY-MM-DD HH:MM，False=HH:MM）
+            asset_type: 'stock'|'etf'|'index'|None
+
+        Returns:
+            (DataFrame, fetch_time_str)
+        """
+        if force_fetch:
+            try:
+                if asset_type == 'etf':
+                    df = self.fetch_etf_realtime_data()
+                elif asset_type == 'index':
+                    df = self.fetch_index_realtime_data()
+                else:
+                    df = self.fetch_realtime_data()
+                self.save_intraday_parquet(df, asset_type=asset_type or 'stock', timestamp=pd.Timestamp.now())
+
+                # 取最新快照返回
+                if 'timestamp' in df.columns and 'symbol' in df.columns:
+                    df = df.sort_values('timestamp').groupby('symbol').tail(1).reset_index(drop=True)
+                latest_time = df['timestamp'].iloc[0] if 'timestamp' in df.columns and not df.empty else None
+                return df, self._fmt_ts(latest_time, full_format)
+            except Exception:
+                pass
+
+        # 使用已有最新数据
+        df = self.load_intraday_parquet(asset_type=asset_type or 'stock')
+        if df is not None and not df.empty:
+            try:
+                latest_time = df['timestamp'].iloc[0] if 'timestamp' in df.columns else None
+                return df, self._fmt_ts(latest_time, full_format)
+            except Exception:
+                return df, ""
+
+        return pd.DataFrame(), ""
+
+    @staticmethod
+    def _fmt_ts(ts, full_format: bool = False) -> str:
+        """格式化 timestamp 为显示字符串"""
+        if ts is None or (isinstance(ts, float) and pd.isna(ts)):
+            return ""
+        if isinstance(ts, str):
+            return ts
+        try:
+            if full_format:
+                return ts.strftime('%Y-%m-%d %H:%M')
+            return ts.strftime('%H:%M')
+        except Exception:
+            return str(ts)
+
     def archive_realtime_data(self, date_str: str = None) -> None:
         """
         归档实时数据：日终日线同步完成后，删除当天 realtime 文件。
