@@ -9,7 +9,6 @@
     "prebuild": "node scripts/generate-data.js",
     "build": "astro build",
     "preview": "astro preview",
-    "predeploy": "astro build",
     "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
