@@ -108,9 +108,20 @@ def parse_scan_date(date_str: str) -> Optional[str]:
     return None
 
 
+def _get_sample_symbols() -> List[str]:
+    """从 config 常量获取样本代码（股票、ETF、指数各取第一个）"""
+    from DataHub.config import ETF_BASIC_INFO, OFFICIAL_INDICES
+    samples = ['600519.SH']
+    if ETF_BASIC_INFO:
+        samples.append(next(iter(ETF_BASIC_INFO)))
+    if OFFICIAL_INDICES:
+        samples.append(next(iter(OFFICIAL_INDICES)))
+    return samples
+
+
 def get_latest_market_date() -> Optional[str]:
     """获取本地价格数据的最新市场交易日（用于未指定--date时）"""
-    for symbol in ['000001.SH', '000001.SZ', '600519.SH', '510300.SH']:
+    for symbol in _get_sample_symbols():
         try:
             df = load_stock_prices(symbol)
             if not df.empty and 'trade_date' in df.columns:
@@ -227,10 +238,9 @@ def get_realtime_loader(asset_type: str, project_root: Path) -> Optional[Realtim
 
 
 def _get_latest_history_date() -> Optional[datetime.date]:
-    """获取历史数据最新日期（从3个样本文件验证）"""
-    sample_symbols = ['600519.SH', '510300.SH', '000001.SH']
+    """获取历史数据最新日期（从样本文件验证）"""
     dates = []
-    for symbol in sample_symbols:
+    for symbol in _get_sample_symbols():
         try:
             df = load_stock_prices(symbol)
             if not df.empty and 'trade_date' in df.columns:

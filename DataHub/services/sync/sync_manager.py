@@ -446,41 +446,20 @@ class SyncManager:
         return self._stock_list
     
     def _get_etf_list(self) -> List[str]:
-        """获取ETF列表"""
+        """获取ETF列表（从 config 常量）"""
         if self._etf_list is None:
-            etf_csv = STORAGE_DIR / "etf_basic_info.csv"
-            if etf_csv.exists():
-                df = pd.read_csv(etf_csv)
-                self._etf_list = df['symbol'].tolist()
-            else:
+            from DataHub.config import ETF_BASIC_INFO
+            self._etf_list = list(ETF_BASIC_INFO.keys())
+            if not self._etf_list:
                 # 从已有文件推断
                 self._etf_list = [f.stem for f in RAW_ETF_PRICE_DIR.glob("*.parquet")]
         return self._etf_list
-    
+
     def _get_index_list(self) -> List[str]:
-        """获取指数列表"""
+        """获取指数列表（从 config 常量）"""
         if self._index_list is None:
-            index_csv = STORAGE_DIR / "official_indices.csv"
-            if index_csv.exists():
-                df = pd.read_csv(index_csv)
-                self._index_list = df['symbol'].tolist()
-            else:
-                # 默认常用指数 + 从已有文件推断
-                default_indices = [
-                    '000001.SH',  # 上证指数
-                    '000002.SH',  # 上证A指
-                    '000003.SH',  # 上证B指
-                    '000016.SH',  # 上证50
-                    '000300.SH',  # 沪深300
-                    '000688.SH',  # 科创50
-                    '000905.SH',  # 中证500
-                    '000852.SH',  # 中证1000
-                    '399002.SZ',  # 深证A指
-                    '399003.SZ',  # 深证B指
-                    '399006.SZ',  # 创业板指
-                    '399300.SZ',  # 沪深300(深圳)
-                    '399673.SZ',  # 创业板50
-                ]
+            from DataHub.config import OFFICIAL_INDICES
+            self._index_list = list(OFFICIAL_INDICES.keys())
                 existing = [f.stem for f in RAW_INDEX_PRICE_DIR.glob("*.parquet")]
                 self._index_list = list(set(default_indices + existing))
         return self._index_list

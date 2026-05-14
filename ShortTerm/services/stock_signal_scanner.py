@@ -2385,25 +2385,22 @@ class StockSignalScanner:
         return pd.DataFrame()
 
     def _get_etf_list(self) -> pd.DataFrame:
-        """获取ETF列表"""
-        # 使用环境变量配置的存储路径
-        etf_csv = get_storage_path("etf_basic_info.csv")
-        if etf_csv.exists():
-            df = pd.read_csv(etf_csv)
-            return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
-        return pd.DataFrame()
+        """获取ETF列表（从 config 常量）"""
+        from DataHub.config import ETF_BASIC_INFO
+        if not ETF_BASIC_INFO:
+            return pd.DataFrame()
+        return pd.DataFrame([
+            {'symbol': k, 'name': v} for k, v in ETF_BASIC_INFO.items()
+        ])
 
     def _get_index_list(self) -> pd.DataFrame:
-        """获取指数列表（从 official_indices.csv）"""
-        # 使用环境变量配置的存储路径
-        index_csv = get_storage_path("official_indices.csv")
-        if index_csv.exists():
-            df = pd.read_csv(index_csv)
-            # 确保列名正确（处理BOM）
-            if 'symbol' not in df.columns and '\ufeffsymbol' in df.columns:
-                df = df.rename(columns={'\ufeffsymbol': 'symbol'})
-            return df[['symbol', 'name']] if 'name' in df.columns else df[['symbol']]
-        return pd.DataFrame()
+        """获取指数列表（从 config 常量）"""
+        from DataHub.config import OFFICIAL_INDICES
+        if not OFFICIAL_INDICES:
+            return pd.DataFrame()
+        return pd.DataFrame([
+            {'symbol': k, 'name': v} for k, v in OFFICIAL_INDICES.items()
+        ])
 
     @staticmethod
     def _sanitize_for_json(obj):

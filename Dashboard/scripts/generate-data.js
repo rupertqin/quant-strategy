@@ -8,6 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -40,7 +41,7 @@ if (fs.existsSync(signalSrc)) {
   fs.writeFileSync(signalDst, '{"signals":[]}');
 }
 
-// 2. 股票名称映射（从 CSV 生成，包含股票、ETF、指数）
+// 2. 股票名称映射（从 CSV + config 常量生成）
 const namesDst = path.join(GEN_DIR, 'stock_names.json');
 const names = {};
 
@@ -67,9 +68,26 @@ function loadNamesFromCsv(csvPath) {
   return count;
 }
 
+function loadNamesFromConfig(varName) {
+  try {
+    const cmd = `cd "${PROJECT_ROOT}" && python3 -c "import sys,json; sys.path.insert(0,'${PROJECT_ROOT}'); from DataHub.config import ${varName}; print(json.dumps(${varName}))"`;
+    const out = execSync(cmd, { encoding: 'utf-8', timeout: 5000 }).trim();
+    const data = JSON.parse(out);
+    let count = 0;
+    for (const [k, v] of Object.entries(data)) {
+      names[k] = v;
+      count++;
+    }
+    return count;
+  } catch (e) {
+    console.warn(`⚠️  从 config 读取 ${varName} 失败: ${e.message}`);
+    return 0;
+  }
+}
+
 const stockCount = loadNamesFromCsv(path.join(PROJECT_ROOT, STORAGE_DIR, 'stock_basic_info.csv'));
-const etfCount = loadNamesFromCsv(path.join(PROJECT_ROOT, STORAGE_DIR, 'etf_basic_info.csv'));
-const indexCount = loadNamesFromCsv(path.join(PROJECT_ROOT, STORAGE_DIR, 'official_indices.csv'));
+const etfCount = loadNamesFromConfig('ETF_BASIC_INFO');
+const indexCount = loadNamesFromConfig('OFFICIAL_INDICES');
 
 fs.writeFileSync(namesDst, JSON.stringify(names));
 console.log(`✓ stock_names.json (${Object.keys(names).length} 条) 股票:${stockCount} ETF:${etfCount} 指数:${indexCount}`);
