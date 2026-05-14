@@ -79,6 +79,8 @@ def convert_to_qfq(
     
     公式: 前复权价格 = 不复权价格 × (当天复权因子 / 最新复权因子)
     
+    注意: 如果 price_df 的 data_source 为 'sina'，表示已经是前复权数据，跳过复权。
+    
     Args:
         price_df: 价格数据DataFrame，必须包含 trade_date, open, high, low, close 列
         factor_df: 复权因子DataFrame，包含 trade_date, adjust_factor 列
@@ -92,6 +94,11 @@ def convert_to_qfq(
     # 确保日期格式正确
     if 'trade_date' in df.columns:
         df['trade_date'] = pd.to_datetime(df['trade_date'])
+    
+    # 如果数据来自新浪（已是前复权），跳过复权
+    if 'data_source' in df.columns and (df['data_source'] == 'sina').any():
+        logger.debug(f"{symbol} 数据来源为新浪（前复权），跳过复权计算")
+        return df
     
     # 加载复权因子
     if factor_df is None and symbol is not None:

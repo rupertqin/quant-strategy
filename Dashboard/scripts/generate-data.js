@@ -40,31 +40,36 @@ if (fs.existsSync(signalSrc)) {
   fs.writeFileSync(signalDst, '{"signals":[]}');
 }
 
-// 2. 股票名称映射（从 CSV 生成）
-const stockBasicPath = path.join(PROJECT_ROOT, STORAGE_DIR, 'stock_basic_info.csv');
+// 2. 股票名称映射（从 CSV 生成，包含股票、ETF、指数）
 const namesDst = path.join(GEN_DIR, 'stock_names.json');
-if (fs.existsSync(stockBasicPath)) {
-  const lines = fs.readFileSync(stockBasicPath, 'utf-8').split('\n').filter(Boolean);
-  const names = {};
+const names = {};
 
-  if (lines.length > 0) {
-    const headers = lines[0].split(',').map(h => h.trim());
-    const symbolIdx = headers.indexOf('symbol');
-    const nameIdx = headers.indexOf('name');
+function loadNamesFromCsv(csvPath) {
+  if (!fs.existsSync(csvPath)) return 0;
+  const lines = fs.readFileSync(csvPath, 'utf-8').split('\n').filter(Boolean);
+  if (lines.length === 0) return 0;
 
-    if (symbolIdx >= 0 && nameIdx >= 0) {
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',');
-        const symbol = cols[symbolIdx]?.trim();
-        const name = cols[nameIdx]?.trim();
-        if (symbol && name) names[symbol] = name;
-      }
+  const headers = lines[0].split(',').map(h => h.trim());
+  const symbolIdx = headers.indexOf('symbol');
+  const nameIdx = headers.indexOf('name');
+  if (symbolIdx < 0 || nameIdx < 0) return 0;
+
+  let count = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    const symbol = cols[symbolIdx]?.trim();
+    const name = cols[nameIdx]?.trim();
+    if (symbol && name) {
+      names[symbol] = name;
+      count++;
     }
   }
-
-  fs.writeFileSync(namesDst, JSON.stringify(names));
-  console.log(`✓ stock_names.json (${Object.keys(names).length} 条)`);
-} else {
-  console.warn('✗ stock_basic_info.csv 不存在');
-  fs.writeFileSync(namesDst, '{}');
+  return count;
 }
+
+const stockCount = loadNamesFromCsv(path.join(PROJECT_ROOT, STORAGE_DIR, 'stock_basic_info.csv'));
+const etfCount = loadNamesFromCsv(path.join(PROJECT_ROOT, STORAGE_DIR, 'etf_basic_info.csv'));
+const indexCount = loadNamesFromCsv(path.join(PROJECT_ROOT, STORAGE_DIR, 'official_indices.csv'));
+
+fs.writeFileSync(namesDst, JSON.stringify(names));
+console.log(`✓ stock_names.json (${Object.keys(names).length} 条) 股票:${stockCount} ETF:${etfCount} 指数:${indexCount}`);

@@ -18,8 +18,8 @@ import random
 
 import numpy as np
 import pandas as pd
-import baostock as bs
 import akshare as ak
+import threading
 
 from DataHub.config import RAW_PRICE_DIR, STORAGE_DIR
 from .base import BaseSyncService, color_log, get_effective_end_date
@@ -29,19 +29,16 @@ logger = logging.getLogger(__name__)
 # 设置全局 socket 超时（防止网络请求无限等待）
 socket.setdefaulttimeout(30)
 
-# 全局 baostock 锁（多线程共享）
-_baostock_lock = logging.getLogger(__name__ + ".lock")  # dummy, 下面用 threading.Lock
-import threading
-_baostock_lock = threading.Lock()
+# akshare 的 py-mini-racer 非线程安全，必须加锁串行调用
+_akshare_lock = threading.Lock()
 
 
 class StockPriceSync(BaseSyncService):
-    """股票价格同步 - 保持原有功能"""
+    """股票价格同步 - akshare 新浪接口（前复权）"""
 
-    def __init__(self, max_workers: int = 1, data_source: str = "baostock"):
+    def __init__(self, max_workers: int = 1, data_source: str = "akshare"):
         super().__init__(max_workers=max_workers, request_delay=(0.5, 2.0))
         self.data_source = data_source
-        self._baostock_logged_in = False
         self.pending_symbols = []
 
     def _is_bj_stock(self, symbol: str) -> bool:
@@ -73,27 +70,7 @@ class StockPriceSync(BaseSyncService):
             }, f, ensure_ascii=False, indent=2)
         logger.info(f"待处理列表已保存: {output_path} ({len(self.pending_symbols)} 只)")
 
-    def _ensure_login(self):
-        """登录 baostock（线程安全，延迟加载）"""
-        if self.data_source != "baostock" or self._baostock_logged_in:
-            return
-        with _baostock_lock:
-            if self._baostock_logged_in:
-                return
-            try:
-                lg = bs.login()
-                error_code = getattr(lg, 'error_code', None)
-                # 非字符串时视为成功（兼容 mock 测试）
-                if isinstance(error_code, str) and error_code != '0':
-                    logger.error(color_log('error', f"❌ baostock 登录失败: {getattr(lg, 'error_msg', 'unknown')}"))
-                else:
-                    logger.info("baostock 登录成功")
-                    self._baostock_logged_in = True
-            except Exception as e:
-                logger.error(f"baostock 登录失败: {e}")
-                raise
-    
-    def sync(self, symbols: List[str], incremental: bool = True, 
+    def sync(self, symbols: List[str], incremental: bool = True,
              start_date: str = None, end_date: str = None, **kwargs) -> Dict:
         """
         同步股票价格（保持原有接口）
@@ -118,10 +95,6 @@ class StockPriceSync(BaseSyncService):
     def _do_sync(self, symbols: List[str], **kwargs) -> List[Dict]:
         """执行同步"""
         RAW_PRICE_DIR.mkdir(parents=True, exist_ok=True)
-        
-        if self.data_source == "baostock":
-            self._ensure_login()
-        
         return self._sync_parallel(symbols, self._sync_single)
     
     def _sync_single(self, symbol: str) -> Dict:
@@ -258,88 +231,12 @@ class StockPriceSync(BaseSyncService):
             return {'status': 'failed', 'symbol': symbol, 'error': str(e)}
 
     def _fetch_stock_history(self, symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
-        """获取单只股票历史数据（与旧版 fetch_stock_history 一致）"""
-        # 股票使用 baostock（不复权）
-        return self._fetch_from_baostock(symbol, start_date, end_date)
-    
-    def _fetch_from_baostock(self, symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
-        """从 baostock 获取数据"""
-        self._ensure_login()
-
-        code = self._format_code(symbol)
-
-        # 检查是否支持该交易所
-        if code is None and self._is_bj_stock(symbol):
-            result = self._fetch_bj_stock_history(symbol, start_date, end_date)
-            if result is None:
-                self._add_to_pending_list(symbol, 'bj_not_supported')
-            return result
-        elif code is None:
-            logger.warning(color_log('warning', f"⚠️  {symbol} 跳过: 不支持的交易所"))
+        """获取单只股票历史数据（akshare 新浪接口，前复权）"""
+        # 北交所跳过
+        if self._is_bj_stock(symbol):
+            self._add_to_pending_list(symbol, 'bj_not_supported')
             return None
-
-        # baostock 要求 YYYY-MM-DD 格式
-        def _fmt_date(d):
-            if len(d) == 8:
-                return f"{d[:4]}-{d[4:6]}-{d[6:]}"
-            return d
-
-        try:
-            with _baostock_lock:
-                rs = bs.query_history_k_data_plus(
-                    code,
-                    "date,code,open,high,low,close,preclose,volume,amount,turn,pctChg",
-                    start_date=_fmt_date(start_date),
-                    end_date=_fmt_date(end_date),
-                    frequency="d",
-                    adjustflag="3"  # 不复权
-                )
-
-                if rs is None:
-                    logger.warning(f"baostock 返回 None（可能未登录或网络异常）: {symbol}")
-                    return None
-
-                if rs.error_code != '0':
-                    logger.warning(color_log('warning', f"⚠️  获取 {symbol} 数据失败: {rs.error_msg}"))
-                    return None
-
-                data_list = []
-                while (rs.error_code == '0') & rs.next():
-                    data_list.append(rs.get_row_data())
-
-            if not data_list:
-                return None
-
-            df = pd.DataFrame(data_list, columns=rs.fields)
-            df['symbol'] = symbol
-
-            column_map = {
-                'date': 'trade_date',
-                'open': 'open',
-                'high': 'high',
-                'low': 'low',
-                'close': 'close',
-                'volume': 'volume',
-                'amount': 'amount',
-                'pctChg': 'change_pct'
-            }
-            df = df.rename(columns=column_map)
-            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
-
-            numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
-            for col in numeric_cols:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-
-            keep_cols = ['symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
-            df = df[[c for c in keep_cols if c in df.columns]]
-
-            logger.info(f"获取 {symbol} 数据: {len(df)} 条 (不复权)")
-            return df
-
-        except Exception as e:
-            logger.error(color_log('error', f"❌ 获取 {symbol} 历史数据失败: {e}"))
-            return None
+        return self._fetch_from_akshare(symbol, start_date, end_date)
 
     def _fetch_bj_stock_history(self, symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
         """使用 akshare 获取北交所股票历史数据"""
@@ -388,65 +285,80 @@ class StockPriceSync(BaseSyncService):
                 logger.warning(color_log('warning', f"⚠️  akshare 获取 {symbol} 失败: {e}"))
             return None
     
-    def _fetch_from_akshare(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """从 akshare 获取数据（备选）"""
-        # 转换代码格式
-        code = symbol.replace('.SH', '').replace('.SZ', '')
-        
-        df = ak.stock_zh_a_hist(
-            symbol=code,
-            period="daily",
-            start_date=start_date,
-            end_date=end_date,
-            adjust=""
-        )
-        
-        if df.empty:
+    def _fetch_from_akshare(self, symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """使用 akshare 东财接口获取股票历史数据（前复权），支持日期范围"""
+        try:
+            # 转换代码格式: 600519.SH -> 600519
+            code = symbol.replace('.SH', '').replace('.SZ', '')
+
+            # py-mini-racer 非线程安全，必须加锁串行调用
+            with _akshare_lock:
+                df = ak.stock_zh_a_hist(
+                    symbol=code,
+                    period="daily",
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="qfq"  # 前复权
+                )
+
+            if df is None or df.empty:
+                logger.warning(f"{symbol} 东财接口未获取到数据")
+                return None
+
+            # 重命名列
+            df['symbol'] = symbol
+            column_map = {
+                '日期': 'trade_date',
+                '开盘': 'open',
+                '最高': 'high',
+                '最低': 'low',
+                '收盘': 'close',
+                '成交量': 'volume',
+                '成交额': 'amount',
+                '涨跌幅': 'change_pct',
+            }
+            df = df.rename(columns=column_map)
+            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+
+            # 转换数值类型
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'amount', 'change_pct']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            # 选择需要的列
+            keep_cols = [
+                'symbol', 'trade_date', 'open', 'high', 'low', 'close',
+                'volume', 'amount', 'change_pct'
+            ]
+            df = df[[c for c in keep_cols if c in df.columns]]
+
+            # 标记数据来源
+            df['data_source'] = 'em'
+
+            logger.info(f"获取 {symbol} 数据: {len(df)} 条 (东财, 前复权)")
             return df
-        
-        # 标准化列名
-        df['trade_date'] = pd.to_datetime(df['日期']).dt.date
-        df = df.rename(columns={
-            '开盘': 'open',
-            '收盘': 'close',
-            '最高': 'high',
-            '最低': 'low',
-            '成交量': 'volume',
-            '成交额': 'amount',
-            '换手率': 'turn'
-        })
-        
-        return df
-    
-    def _format_code(self, symbol: str) -> str:
-        """转换代码格式"""
-        if '.SH' in symbol:
-            return "sh." + symbol.replace('.SH', '')
-        elif '.SZ' in symbol:
-            return "sz." + symbol.replace('.SZ', '')
-        return symbol
-    
-    def sync_all(self, symbols: List[str], incremental: bool = True, 
+
+        except Exception as e:
+            logger.error(color_log('error', f"❌ 东财获取 {symbol} 历史数据失败: {e}"))
+            return None
+
+    def sync_all(self, symbols: List[str], incremental: bool = True,
                  max_workers: int = 1, **kwargs) -> Dict:
         """
         批量同步接口（保持兼容）
-        
+
         Args:
             symbols: 股票代码列表
             incremental: 是否增量
             max_workers: 并发数
-            
+
         Returns:
             同步结果
         """
         self.max_workers = max_workers
         return self.sync(symbols, incremental=incremental, **kwargs)
-    
+
     def logout(self):
-        """登出"""
-        if self._baostock_logged_in:
-            try:
-                bs.logout()
-                self._baostock_logged_in = False
-            except:
-                pass
+        """空方法保持兼容（已不再使用 baostock）"""
+        pass

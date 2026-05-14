@@ -4,6 +4,8 @@ import SignalTable from './SignalTable.jsx';
 import LoadingSpinner from './LoadingSpinner.jsx';
 import { useStockPool } from '../hooks/useStockPool.js';
 import SIGNAL_DATA from '../generated/signals.json';
+import STOCK_NAMES from '../generated/stock_names.json';
+import { getStockName } from '../utils/stockCode.js';
 
 function normalizeSignalPayload(json) {
   if (Array.isArray(json?.stocks)) return json;
@@ -74,7 +76,7 @@ export default function PoolWatchClient() {
       if (s) return s;
       return {
         symbol,
-        name: '',
+        name: getStockName(symbol, STOCK_NAMES),
         signals: [],
         signal_count: 0,
         signal_score: 0,
@@ -318,7 +320,7 @@ export default function PoolWatchClient() {
       {missingStocks.length > 0 && (
         <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
           <p className="text-xs text-yellow-700">
-            以下股票暂无信号数据：{missingStocks.map(s => s.symbol).join('、')}
+            以下股票暂无信号数据：{missingStocks.map(s => `${s.name} (${s.symbol})`).join('、')}
           </p>
         </div>
       )}

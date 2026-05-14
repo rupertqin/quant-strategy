@@ -129,6 +129,9 @@ logger = logging.getLogger(__name__)
 # 全局baostock锁（多线程共享，保护所有baostock操作）
 _baostock_lock = Lock()
 
+# 全局akshare锁（py-mini-racer 非线程安全，多线程调用会崩溃）
+_akshare_lock = Lock()
+
 
 # ANSI 颜色代码（用于终端高亮显示）
 class Colors:
@@ -349,8 +352,102 @@ class HistorySyncService:
         if asset_type == "index":
             return self._fetch_index_history(symbol, start_date, end_date)
 
-        # 股票使用 baostock（不复权，复权因子单独存储）
-        return self._fetch_stock_history_from_baostock(symbol, start_date, end_date)
+        # 股票使用 akshare 新浪接口（前复权）
+        # 北交所股票跳过（新浪接口不支持 .BJ）
+        if self._is_bj_stock(symbol):
+            self._add_to_pending_list(symbol, 'bj_not_supported')
+            return None
+        return self._fetch_stock_history_from_akshare(symbol, start_date, end_date)
+
+    def _fetch_stock_history_from_akshare(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        使用 akshare 新浪接口获取股票历史数据（前复权）
+
+        Args:
+            symbol: 股票代码，如 '600519.SH'
+            start_date: 开始日期 'YYYYMMDD'
+            end_date: 结束日期 'YYYYMMDD'
+
+        Returns:
+            DataFrame with columns: symbol, trade_date, open, high, low, close, volume, amount, change_pct
+        """
+        try:
+            import akshare as ak
+
+            # 转换代码格式: 600519.SH -> sh600519, 000001.SZ -> sz000001
+            if symbol.endswith('.SH'):
+                sina_symbol = f"sh{symbol.replace('.SH', '')}"
+            elif symbol.endswith('.SZ'):
+                sina_symbol = f"sz{symbol.replace('.SZ', '')}"
+            else:
+                sina_symbol = symbol
+
+            # py-mini-racer 非线程安全，必须加锁串行调用
+            with _akshare_lock:
+                df = ak.stock_zh_a_daily(symbol=sina_symbol)
+
+            if df is None or df.empty:
+                logger.warning(f"{symbol} 新浪接口未获取到数据")
+                return None
+
+            # 添加symbol列
+            df['symbol'] = symbol
+
+            # 重命名列以统一格式
+            column_map = {
+                'date': 'trade_date',
+                'open': 'open',
+                'high': 'high',
+                'low': 'low',
+                'close': 'close',
+                'volume': 'volume',
+                'amount': 'amount',
+            }
+            df = df.rename(columns=column_map)
+
+            # 转换日期格式
+            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+
+            # 按日期过滤
+            start_dt = datetime.strptime(start_date, "%Y%m%d").date()
+            end_dt = datetime.strptime(end_date, "%Y%m%d").date()
+            df = df[(df['trade_date'] >= start_dt) & (df['trade_date'] <= end_dt)]
+
+            if df.empty:
+                logger.warning(f"{symbol} 新浪接口无指定日期范围数据")
+                return None
+
+            # 转换数值类型
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'amount']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            # 新浪没有 change_pct，自行计算
+            df = df.sort_values('trade_date').reset_index(drop=True)
+            df['change_pct'] = df['close'].pct_change() * 100
+
+            # 选择需要的列
+            keep_cols = [
+                'symbol', 'trade_date', 'open', 'high', 'low', 'close',
+                'volume', 'amount', 'change_pct'
+            ]
+            df = df[[c for c in keep_cols if c in df.columns]]
+
+            # 标记数据来源（新浪返回的是前复权数据）
+            df['data_source'] = 'sina'
+
+            logger.info(f"获取 {symbol} 数据: {len(df)} 条 (新浪, 前复权)")
+            return df
+
+        except Exception as e:
+            logger.error(color_log('error', f"❌ 新浪获取 {symbol} 历史数据失败: {e}"))
+            return None
 
     def _fetch_stock_history_from_baostock(
         self,
@@ -1445,9 +1542,9 @@ class HistorySyncService:
         # 保存
         combined_df.to_parquet(file_path, index=False, compression='snappy')
 
-        # 同步复权因子（仅股票，ETF直接存储前复权价格，不需要复权因子）
-        if asset_type == "stock":
-            factor_result = self.sync_adjust_factor(symbol, start_date, end_date, incremental)
+        # 不复权因子同步（股票使用新浪前复权数据，无需 baostock 复权因子）
+        # if asset_type == "stock":
+        #     factor_result = self.sync_adjust_factor(symbol, start_date, end_date, incremental)
 
         logger.info(color_log('success', f"✓ {symbol} 同步完成: {len(new_df)} 条新数据，共 {len(combined_df)} 条"))
 
