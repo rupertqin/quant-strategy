@@ -1082,7 +1082,20 @@ class LimitUpScanner:
                     except:
                         pass
 
-                if len(date_mismatches) == len(sample_files):
+                # 盘中时段（9:30-15:00）：历史数据最新日期为昨天是正常的，只要有实时数据即可
+                now = datetime.now()
+                in_trading_hours = (9 <= now.hour < 15) or (now.hour == 15 and now.minute == 0)
+                is_today = (date == get_trading_date())
+                if is_today and in_trading_hours:
+                    # 盘中不强制要求冷数据日期为当天，检查实时数据是否可用
+                    has_rt = self._is_realtime_data_fresh(date)
+                    if has_rt:
+                        print(f"  ✓ 价格数据日期检查通过（盘中模式，实时数据可用）")
+                    else:
+                        msg = f"⚠️  价格数据可能未更新（盘中但无实时数据）"
+                        print(f"  {msg}")
+                        issues.append(msg)
+                elif len(date_mismatches) == len(sample_files):
                     msg = f"⚠️  价格数据可能未更新（样本最新日期非当天）"
                     print(f"  {msg}")
                     issues.append(msg)

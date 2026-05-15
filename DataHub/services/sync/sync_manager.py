@@ -459,9 +459,9 @@ class SyncManager:
         """获取指数列表（从 config 常量）"""
         if self._index_list is None:
             from DataHub.config import OFFICIAL_INDICES
-            self._index_list = list(OFFICIAL_INDICES.keys())
-                existing = [f.stem for f in RAW_INDEX_PRICE_DIR.glob("*.parquet")]
-                self._index_list = list(set(default_indices + existing))
+            default_indices = list(OFFICIAL_INDICES.keys())
+            existing = [f.stem for f in RAW_INDEX_PRICE_DIR.glob("*.parquet")]
+            self._index_list = list(set(default_indices + existing))
         return self._index_list
     
     def get_sync_summary(self) -> Dict:

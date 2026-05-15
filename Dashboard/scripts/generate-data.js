@@ -68,9 +68,27 @@ function loadNamesFromCsv(csvPath) {
   return count;
 }
 
+function resolvePython() {
+  const candidates = ['python3', 'python'];
+  for (const py of candidates) {
+    try {
+      execSync(
+        `${py} -c "from dotenv import load_dotenv"`,
+        { encoding: 'utf-8', timeout: 2000, stdio: ['pipe', 'pipe', 'ignore'] }
+      );
+      return py;
+    } catch {
+      // ignore
+    }
+  }
+  return 'python3';
+}
+
+const PYTHON_CMD = resolvePython();
+
 function loadNamesFromConfig(varName) {
   try {
-    const cmd = `cd "${PROJECT_ROOT}" && python3 -c "import sys,json; sys.path.insert(0,'${PROJECT_ROOT}'); from DataHub.config import ${varName}; print(json.dumps(${varName}))"`;
+    const cmd = `cd "${PROJECT_ROOT}" && ${PYTHON_CMD} -c "import sys,json; sys.path.insert(0,'${PROJECT_ROOT}'); from DataHub.config import ${varName}; print(json.dumps(${varName}))"`;
     const out = execSync(cmd, { encoding: 'utf-8', timeout: 5000 }).trim();
     const data = JSON.parse(out);
     let count = 0;

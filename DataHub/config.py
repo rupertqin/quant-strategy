@@ -10,8 +10,11 @@ BASE_DIR = Path(__file__).parent.parent
 # 优先从项目根目录加载
 _env_file = BASE_DIR / ".env"
 if _env_file.exists():
-    from dotenv import load_dotenv
-    load_dotenv(_env_file, override=True)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(_env_file, override=True)
+    except ImportError:
+        pass
 
 # Storage paths - 支持环境变量配置
 # 使用方式（按优先级排序）：
