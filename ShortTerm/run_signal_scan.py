@@ -1115,58 +1115,58 @@ def main():
     print("=" * 60)
 
     # 单只标扫描模式
+    # 统一决策：历史数据最新日期 vs 当天实时数据日期
+    history_date = _get_latest_history_date()
+
+    # 获取当天实时数据日期（loader.load() 只加载当天文件，不加载历史文件）
+    realtime_date = None
+    for asset_type in ['stock', 'etf', 'index']:
+        loader = get_realtime_loader(asset_type, project_root)
+        if loader:
+            df, _ = loader.load()
+            rt_date = _get_realtime_date(df)
+            if rt_date is not None:
+                realtime_date = rt_date
+                break
+
+    today = datetime.now().date()
+
+    # 盘中模式条件：实时数据日期 == 当天，且历史数据还没有当天的
+    use_intraday = (
+        realtime_date is not None
+        and realtime_date == today
+        and (history_date is None or history_date < today)
+    )
+
     if args.symbol:
         # 自动检测资产类型
         asset_type = detect_asset_type(args.symbol)
         asset_config = get_asset_config(asset_type)
-
         print(f"\n📌 检测到: {asset_config.name} ({args.symbol})")
 
-        # 检查是否有实时数据
-        loader = get_realtime_loader(asset_type, project_root)
-        has_today_data = loader.check_exists() if loader else False
-
-        if has_today_data:
+        if use_intraday:
+            print(f"\n💡 实时数据日期 {realtime_date} 为当天，历史数据最新 {history_date}，使用盘中扫描模式")
             return run_intraday_scan(args, asset_config)
         else:
+            if realtime_date is not None and realtime_date != today:
+                print(f"\n💡 实时数据日期 {realtime_date} 非当天，使用历史扫描模式")
+            elif history_date is not None and history_date >= today:
+                print(f"\n💡 历史数据已包含当天 ({history_date})，使用历史扫描模式")
+            else:
+                print("\n💡 无当天实时数据，使用历史扫描模式")
             run_historical_scan(args, asset_config)
             return
 
     # 全市场扫描模式（默认）
-    # 检查是否有实时数据
-    stock_loader = get_realtime_loader('stock', project_root)
-    etf_loader = get_realtime_loader('etf', project_root)
-    index_loader = get_realtime_loader('index', project_root)
-
-    has_stock_data = stock_loader.check_exists() if stock_loader else False
-    has_etf_data = etf_loader.check_exists() if etf_loader else False
-    has_index_data = index_loader.check_exists() if index_loader else False
-
-    # 决策：历史数据日期 vs 实时数据日期
-    history_date = _get_latest_history_date()
-    realtime_date = None
-    if has_stock_data:
-        df, _ = stock_loader.load()
-        realtime_date = _get_realtime_date(df)
-    elif has_etf_data:
-        df, _ = etf_loader.load()
-        realtime_date = _get_realtime_date(df)
-    elif has_index_data:
-        df, _ = index_loader.load()
-        realtime_date = _get_realtime_date(df)
-
-    use_intraday = False
-    if has_stock_data or has_etf_data or has_index_data:
-        if history_date and realtime_date:
-            if realtime_date >= history_date:
-                use_intraday = True
-                print(f"\n💡 实时数据日期 {realtime_date} >= 历史数据日期 {history_date}，使用盘中扫描模式")
-            else:
-                print(f"\n💡 历史数据日期 {history_date} 比实时数据 {realtime_date} 新，使用历史扫描模式")
-        else:
-            use_intraday = True
+    if use_intraday:
+        print(f"\n💡 实时数据日期 {realtime_date} 为当天，历史数据最新 {history_date}，使用盘中扫描模式")
     else:
-        print("\n💡 无实时数据，使用历史扫描模式")
+        if realtime_date is not None and realtime_date != today:
+            print(f"\n💡 实时数据日期 {realtime_date} 非当天，使用历史扫描模式")
+        elif history_date is not None and history_date >= today:
+            print(f"\n💡 历史数据已包含当天 ({history_date})，使用历史扫描模式")
+        else:
+            print("\n💡 无当天实时数据，使用历史扫描模式")
 
     if use_intraday:
         iteration = 0

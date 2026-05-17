@@ -17,18 +17,11 @@ from DataHub.config import INTRADAY_DIR
 
 
 def _get_intraday_parquet_path(asset_type: str = 'stock') -> Optional[Path]:
-    """获取最新可用的 intraday parquet 文件路径（当天没有则回退到最近一天）"""
+    """获取当天的 intraday parquet 文件路径（严格当天，不回退到历史文件）"""
     today_str = datetime.now().strftime('%Y%m%d')
     filepath = INTRADAY_DIR / asset_type / f"{today_str}.parquet"
     if filepath.exists():
         return filepath
-
-    # 回退：查找最近一天的文件（处理跨天场景，如凌晨0点后历史数据未及时更新时）
-    dir_path = INTRADAY_DIR / asset_type
-    if dir_path.exists():
-        files = sorted(dir_path.glob("*.parquet"), reverse=True)
-        if files:
-            return files[0]
     return None
 
 
